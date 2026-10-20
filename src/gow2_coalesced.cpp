@@ -5,7 +5,6 @@
 #include "gow2_widescreen.h"
 #include "gow2_coalesced_text.h"
 #include "gow2_graphics_quality.h"
-#include "gow2_widescreen.h"
 #include "gow2_native_bindings.h"
 
 #include "gow2_mouse_aim.h"
