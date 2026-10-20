@@ -18,6 +18,9 @@ set(GOW2_SOURCES
     src/gow2_sha_table.cpp
     src/gow2_gpu_pick.cpp
     src/gow2_mouse_aim.cpp
+    src/gow2_key_names.cpp
+    src/gow2_native_bindings.cpp
+    src/gow2_native_keys.cpp
     src/gow2_xam_input_guard.cpp
     src/gow2_utf8_guard.cpp
     src/gow2_crash_watch.cpp
@@ -60,6 +63,10 @@ set(GOW2_SOURCES
     src/gow2_fps_cap.cpp
     src/gow2_audio_volume.cpp
     src/gow2_frame_stats.cpp
+    src/gow2_prompt_scan.cpp
+    src/gow2_keycaps.cpp
+    src/gow2_atlas_image.cpp
+    src/gow2_prompt_swap.cpp
 )
 
 # The exe icon. CMake already turns on RC for clang on Windows; enable_language makes it explicit.

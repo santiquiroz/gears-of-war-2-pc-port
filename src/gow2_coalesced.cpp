@@ -4,6 +4,7 @@
 #include "gow2_coalesced.h"
 #include "gow2_coalesced_text.h"
 #include "gow2_graphics_quality.h"
+#include "gow2_native_bindings.h"
 
 #include "gow2_mouse_aim.h"
 
@@ -34,10 +35,14 @@
   "mnk_mode is on), keyboard or controller."
 #else
 #define GOW2_PROMPTS_HELP                                                         \
-  "Menu button prompts: auto (keyboard labels unless a controller is connected at " \
-  "launch), keyboard or controller."
+  "Menu button prompts: auto (keyboard labels while no controller is connected, switching " \
+  "live when one is plugged in or removed), keyboard or controller (both fixed at launch)."
 #endif
 REXCVAR_DEFINE_STRING(gow2_prompts, "auto", "input", GOW2_PROMPTS_HELP);
+REXCVAR_DEFINE_BOOL(gow2_keycaps, true, "input",
+                    "Show keyboard prompts as keycap pictures when the keycap pack is installed "
+                    "(tools/keycaps, scripts/build-keycaps.ps1), else as text such as [Space]. "
+                    "Takes effect on the next start.");
 #undef GOW2_PROMPTS_HELP
 
 REXCVAR_DEFINE_STRING(gow2_system_settings, "", "debug",
@@ -151,7 +156,7 @@ namespace rex::glue {
 
 namespace {
 
-constexpr int kVersion = 9;  // bump when the edit definitions change (invalidates cached copies)
+constexpr int kVersion = 10;  // bump when the edit definitions change (invalidates cached copies)
 
 // Bundle layout: BE u32 file count; per file a name, BE u32 section count; per section a name and
 // BE u32 key count; per key a key and a value. Strings are a BE int32 length, negative = UTF-16LE
@@ -351,11 +356,12 @@ bool ReadAll(const std::filesystem::path& p, std::vector<uint8_t>* out) {
 }
 
 struct Edit {
-  enum Kind { kSet, kReplaceSub } kind;
+  enum Kind { kSet, kReplaceSub, kAppend, kRemove } kind;
   std::string file;     // file name suffix inside the bundle
   std::string section;  // section name
-  std::string key;      // kSet: the key; kReplaceSub: a key prefix
-  std::string value;    // kSet: the new value; kReplaceSub: "from|to"
+  std::string key;      // kSet and kAppend: the key; kReplaceSub: a key prefix; kRemove: the key
+  std::string value;    // kSet: the new value; kReplaceSub: "from|to"; kAppend: a new entry;
+                        // kRemove: the entries whose value starts with this (empty = all)
   std::string match;    // kReplaceSub only: only values containing this text (empty = all)
   std::string locale;   // only bundles with this locale apply the edit (empty = every locale)
   bool optional = false;
@@ -395,6 +401,23 @@ void AddMouseLook(std::vector<Edit>* e) {
                   "DeadZone=0.3|DeadZone=0.0", look});
 }
 
+// Keyboard bindings of the engine itself (SDK-independent): the game's own debug bindings of the
+// keys in use go (an F that freezes rendering, a P that stops physics), then each key gets the
+// command of the pad button it stands for. The retail editor and debug-camera bindings go too:
+// they are unused and make room, because a bundle may not grow past its size in the TOC.
+void AddNativeKeys(std::vector<Edit>* e, const CoalescedOptions& o) {
+  const char* const kFile = "Xe-GearInput.ini";
+  for (const char* section : {"Editor.EditorViewportInput", "UnrealEd.ObjectEditorViewportInput",
+                              "Engine.DebugCameraInput"})
+    e->push_back({Edit::kRemove, kFile, section, "Bindings", "", "", "", false, false});
+  for (const std::string& key : NativeBindingKeys(o.native_bindings))
+    e->push_back({Edit::kRemove, kFile, "Engine.PlayerInput", "Bindings",
+                  "(Name=\"" + key + "\",", "", "", false, false});
+  for (const NativeBinding& b : o.native_bindings)
+    e->push_back({Edit::kAppend, kFile, "Engine.PlayerInput", "Bindings", BindingIniValue(b), "", "",
+                  false, false});
+}
+
 void AddNativeMouse(std::vector<Edit>* e) {
   e->push_back({Edit::kSet, "Xe-GearInput.ini", "Engine.PlayerInput", "bEnableMouseSmoothing",
                 "false"});
@@ -431,6 +454,29 @@ int Apply(std::vector<IniFile>* files, const std::vector<Edit>& edits, const std
       if (!FileMatches(f.name, ed.file, locale)) continue;
       for (Section& s : f.sections) {
         if (!EqFold(s.name, ed.section)) continue;
+        if (ed.kind == Edit::kAppend) {
+          const std::u16string value = W(ed.value);
+          bool present = false;
+          for (const Entry& en : s.entries)
+            if (EqFold(en.key, ed.key) && en.value == value) present = true;
+          if (!present) {
+            s.entries.push_back({W(ed.key), value});
+            ++changed;
+          }
+          continue;
+        }
+        if (ed.kind == Edit::kRemove) {
+          const std::u16string prefix = W(ed.value);
+          const auto removed = std::remove_if(s.entries.begin(), s.entries.end(), [&](const Entry& en) {
+            if (!EqFold(en.key, ed.key) || en.value.size() < prefix.size()) return false;
+            for (size_t i = 0; i < prefix.size(); ++i)
+              if (Fold(en.value[i]) != Fold(prefix[i])) return false;
+            return true;
+          });
+          changed += int(s.entries.end() - removed);
+          s.entries.erase(removed, s.entries.end());
+          continue;
+        }
         if (ed.kind == Edit::kReplaceSub) {
           const size_t bar = ed.value.find('|');
           const std::u16string from = W(ed.value.substr(0, bar)), to = W(ed.value.substr(bar + 1));
@@ -493,6 +539,10 @@ CoalescedResult PrepareCoalescedOverrides(const std::filesystem::path& game_root
       AddMouseLook(&edits);
       groups += "mouse-look ";
     }
+  }
+  if (!options.native_bindings.empty()) {
+    AddNativeKeys(&edits, options);
+    groups += "native-keys ";
   }
   if (!options.prompt_labels.empty()) {
     AddPrompts(&edits, options);
@@ -646,9 +696,6 @@ namespace {
 
 #ifdef _WIN32
 bool AnyPhysicalGamepad() {
-  HMODULE m = LoadLibraryW(L"xinput1_4.dll");
-  if (!m) m = LoadLibraryW(L"xinput9_1_0.dll");
-  if (!m) return false;
   struct State {
     DWORD packet;
     WORD buttons;
@@ -656,16 +703,18 @@ bool AnyPhysicalGamepad() {
     SHORT lx, ly, rx, ry;
   };
   using Fn = DWORD(WINAPI*)(DWORD, State*);
-  auto fn = reinterpret_cast<Fn>(GetProcAddress(m, "XInputGetState"));
-  bool any = false;
-  if (fn) {
-    for (DWORD i = 0; i < 4 && !any; ++i) {
-      State s{};
-      any = fn(i, &s) == ERROR_SUCCESS;
-    }
+  // Loaded once and kept: the live prompts poll this about twice a second.
+  static const Fn fn = [] {
+    HMODULE m = LoadLibraryW(L"xinput1_4.dll");
+    if (!m) m = LoadLibraryW(L"xinput9_1_0.dll");
+    return m ? reinterpret_cast<Fn>(GetProcAddress(m, "XInputGetState")) : nullptr;
+  }();
+  if (!fn) return false;
+  for (DWORD i = 0; i < 4; ++i) {
+    State s{};
+    if (fn(i, &s) == ERROR_SUCCESS) return true;
   }
-  FreeLibrary(m);
-  return any;
+  return false;
 }
 #endif
 
@@ -731,6 +780,9 @@ CoalescedOptions CoalescedOptionsFromCvars() {
   CoalescedOptions o;
   o.mouse_look = rex::cvar::Query<bool>("mnk_mouse");
   o.native_mouse = NativeMouseAimWanted();
+  if (rex::cvar::Query<bool>("gow2_native_keys") && o.native_mouse) {
+    o.native_bindings = NativeKeyBindings([](const char* name) { return rex::cvar::Query<std::string>(name); });
+  }
   o.pc_options_entry = REXCVAR_GET(gow2_pc_options_entry) && HostUiHooksAvailable();
 #if defined(__ANDROID__)
   constexpr bool android = true;
@@ -740,10 +792,61 @@ CoalescedOptions CoalescedOptionsFromCvars() {
   o.system_settings = graphics_quality::Compose(android, [](std::string_view id) {
     return rex::cvar::Query<std::string>(id);
   }, REXCVAR_GET(gow2_system_settings));
+  // The live swap (gow2_prompt_swap.cpp) rewrites the strings in memory: leave the bundles alone.
+  if (PromptsFollowController()) return o;
   const std::string mode = REXCVAR_GET(gow2_prompts);
   const bool keyboard = mode == "keyboard" || (mode != "controller" && AutoPromptsUseKeyboard());
   if (!keyboard) return o;
-  o.prompt_labels = {
+  o.prompt_labels = KeyboardPromptLabels();
+  return o;
+}
+
+bool PromptsFollowController() {
+#ifdef _WIN32
+  return REXCVAR_GET(gow2_prompts) != "controller";  // auto follows the pad, keyboard stays put
+#else
+  return false;
+#endif
+}
+
+bool PhysicalGamepadConnected() {
+#ifdef _WIN32
+  return AnyPhysicalGamepad();
+#else
+  return false;
+#endif
+}
+
+std::vector<ControllerFontSet> ReadControllerFontOriginals(const std::filesystem::path& game_root) {
+  std::vector<ControllerFontSet> sets;
+  std::error_code ec;
+  const std::filesystem::path dir = game_root / "GearGame" / "CookedXenon";
+  for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string name = it->path().filename().string();
+    if (name.rfind("Coalesced_", 0) != 0 || it->path().extension() != ".bin") continue;
+    std::vector<uint8_t> bytes;
+    std::vector<IniFile> files;
+    if (!ReadAll(it->path(), &bytes) || !Parse(bytes, &files)) continue;
+    ControllerFontSet set;
+    set.locale = LowerA(name.substr(10, name.size() - 14));
+    for (const IniFile& f : files) {
+      if (f.name.find(u"GearGameUI") == std::u16string::npos) continue;
+      for (const Section& s : f.sections) {
+        if (!EqFold(s.name, "ControllerFont")) continue;
+        for (const Entry& e : s.entries) {
+          std::string key;
+          for (char16_t c : e.key) key.push_back(char(c));
+          set.values.emplace_back(std::move(key), e.value);
+        }
+      }
+    }
+    if (!set.values.empty()) sets.push_back(std::move(set));
+  }
+  return sets;
+}
+
+std::vector<std::pair<std::string, std::string>> KeyboardPromptLabels() {
+  return {
       {"Controller_A", KeybindLabel("keybind_a", "Space")},
       {"Controller_B", KeybindLabel("keybind_b", "F,V")},
       {"Controller_X", KeybindLabel("keybind_x", "E")},
@@ -771,7 +874,6 @@ CoalescedOptions CoalescedOptionsFromCvars() {
       {"Controller_UpDown", "[W/S]"},
       {"Controller_UpDownLeftRight", "[WASD]"},
   };
-  return o;
 }
 
 }  // namespace rex::glue

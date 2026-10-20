@@ -137,6 +137,10 @@ US$10.
 
 `msvcp140.dll`, `msvcp140_atomic_wait.dll`, `vcruntime140.dll` and `vcruntime140_1.dll` are Microsoft Visual C++ Redistributable files, included unmodified as Distributable Code under the Microsoft Visual Studio license terms.
 
+## DejaVu Sans Bold (keycap labels)
+
+The key labels in `assets/keycaps/svg` are outlines of glyphs from DejaVu Sans Bold, taken from the Matplotlib 3.11 package. DejaVu Sans is derived from Bitstream Vera (Copyright (c) 2003 Bitstream, Inc.) and is free to use, copy and redistribute, with or without modification, under the licence in `tools/keycaps/fonts/LICENSE_DEJAVU` (the font files there are unmodified).
+
 ## NVIDIA DLSS
 
 Not included in the release. The DLSS SDK license does not allow it to become part of an open-source distribution and asks for NVIDIA trademarks in the game's splash and about screens, which this project cannot do. The release's `rexgpu-xenos.dll` is built with `scripts/build-sdk.ps1 -NoDlss`, so it holds no NGX code and cannot run DLSS, and `scripts/package.ps1` refuses any `.dll` or `.exe` that holds an NGX name. A player who builds the SDK DLLs with `scripts/build-sdk.ps1` (without `-NoDlss`) gets the DLSS path for their own use: NGX linked into `rexgpu-xenos.dll` and `nvngx_dlss.dll` from NVIDIA's DLSS SDK next to `gow2.exe`.

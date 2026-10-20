@@ -7,3 +7,10 @@ build/
 *.iso
 pytest-of-*/
 __pycache__/
+
+# Game-derived files must never be committed (texture dumps and packs, unpacked packages, movies)
+textures/
+*.dds
+*.upk
+*.bik
+*.pad

@@ -14,7 +14,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
+#include <vector>
 
 #include <rex/cvar.h>
 #include <rex/input/mnk/mnk_input_driver.h>
@@ -187,6 +189,7 @@ void CountAxisCall(const AxisCall& call, AxisSent& sent) {
   if (call.handled) ++sent.handled;
 }
 
+std::atomic<ProcessInputListener> g_process_input_listener{nullptr};
 PPCFunc* g_process_input_orig = nullptr;
 PPCFunc* g_friction_orig = nullptr;
 PPCFunc* g_axis_orig = nullptr;
@@ -265,6 +268,8 @@ void ProcessInputHook(PPCContext& ctx, uint8_t* base) {
   if (!HostUiOpen() && (counts.dx != 0 || counts.dy != 0) && viewport != 0)
     sent = InjectMouseLook(ctx, base, viewport, counts, delta_time);
   MaybeLogMouseAim(sent);
+  if (ProcessInputListener listener = g_process_input_listener.load(std::memory_order_acquire))
+    listener(ctx, base, viewport, delta_time);
   g_process_input_orig(ctx, base);
 }
 
@@ -299,6 +304,10 @@ std::atomic<bool> g_installed{false};
 std::atomic<bool> g_hooks_installed{false};
 
 }  // namespace
+
+void SetProcessInputListener(ProcessInputListener listener) {
+  g_process_input_listener.store(listener, std::memory_order_release);
+}
 
 bool NativeMouseAimInstalled() {
   return g_hooks_installed.load(std::memory_order_acquire);

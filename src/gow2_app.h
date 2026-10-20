@@ -21,6 +21,8 @@
 
 #include "gow2_coalesced.h"
 #include "gow2_audio_volume.h"
+#include "gow2_native_keys.h"
+#include "gow2_prompt_swap.h"
 #include "gow2_coop_network.h"
 #include "gow2_crash_watch.h"
 #include "gow2_frame_stats.h"
@@ -260,8 +262,10 @@ class Gow2App : public rex::ReXApp {
   // Runs from OnPreSetup: OnConfigurePaths comes before gow2.toml is loaded and before logging,
   // and the overrides must be live before the runtime mounts the game folder.
   void PrepareCoalesced() {
-    const rex::glue::CoalescedResult coalesced = rex::glue::PrepareCoalescedOverrides(
-        game_data_root_, cache_root_, rex::glue::CoalescedOptionsFromCvars());
+    rex::glue::CoalescedOptions options = rex::glue::CoalescedOptionsFromCvars();
+    rex::glue::RememberBakedBindings(options.native_bindings);
+    const rex::glue::CoalescedResult coalesced =
+        rex::glue::PrepareCoalescedOverrides(game_data_root_, cache_root_, options);
 #ifdef _WIN32
     _putenv_s("GOW2_VFS_OVERRIDES", coalesced.overrides.c_str());
 #else
@@ -338,6 +342,9 @@ class Gow2App : public rex::ReXApp {
 #endif
     rex::glue::PrepareNativeMouseAim();
     PrepareCoalesced();
+#ifdef _WIN32
+    rex::glue::PrepareKeycapPack();
+#endif
     PickRenderGpu();
     SetUpscaleTarget();
     rex::glue::EnableSystemLinkForCoop();
@@ -464,8 +471,12 @@ class Gow2App : public rex::ReXApp {
   // void OnLoadXexImage(std::string& xex_image) override {}
   void OnPostSetup() override {
     rex::glue::InstallNativeMouseAim(window());
+    rex::glue::InstallNativeKeys(window());
     rex::glue::InstallAudioVolume();
     rex::glue::InstallFrameStats();
+#ifdef _WIN32
+    rex::glue::InstallPromptSwap(game_data_root_);
+#endif
 #if defined(__ANDROID__)
     rex::glue::ApplySustainedPerformanceMode();
 #endif

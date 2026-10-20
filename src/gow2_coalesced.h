@@ -12,6 +12,7 @@
 //   key-prompts  menu prompts show keyboard labels ([Space], [LMB]...) (cvar gow2_prompts)
 //   pc-options-entry  Options > Storage Location becomes the PC Options entry
 //                     (cvar gow2_pc_options_entry, needs SDK patch 0013)
+//   native-keys  the keyboard's own engine bindings (cvar gow2_native_keys, src/gow2_native_keys.cpp)
 //   system-settings  the game's own [SystemSettings] values (Game quality cvars and gow2_system_settings)
 #pragma once
 
@@ -20,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "gow2_native_bindings.h"
 #include "gow2_sha_table.h"
 
 namespace rex::glue {
@@ -28,6 +30,8 @@ struct CoalescedOptions {
   bool mouse_look = false;
   bool native_mouse = false;
   bool pc_options_entry = false;
+  // Keyboard bindings of the engine (cvar gow2_native_keys); empty leaves the game's bindings alone.
+  std::vector<NativeBinding> native_bindings;
   // Key = a name in [ControllerFont] of GearGameUI ("Controller_A"), value = the label shown
   // ("[Space]"). Empty means "leave the pad glyphs alone".
   std::vector<std::pair<std::string, std::string>> prompt_labels;
@@ -52,5 +56,19 @@ CoalescedResult PrepareCoalescedOverrides(const std::filesystem::path& game_root
 CoalescedOptions CoalescedOptionsFromCvars();
 // True when the runtime routes the device selector to the PC Options menu (patch 0013).
 bool HostUiHooksAvailable();
+
+// Live prompts (gow2_prompt_swap.cpp), Windows with gow2_prompts = auto: the bundles keep the
+// pad glyphs and the strings are rewritten in memory as controllers come and go.
+bool PromptsFollowController();
+bool PhysicalGamepadConnected();
+// Keyboard label per [ControllerFont] key ("Controller_A" -> "[Space]"), from the keybind_* settings.
+std::vector<std::pair<std::string, std::string>> KeyboardPromptLabels();
+// The [ControllerFont] values of every Coalesced bundle in the game folder, by locale. The glyphs
+// differ between locales, so the swap needs the set the running game really loaded.
+struct ControllerFontSet {
+  std::string locale;
+  std::vector<std::pair<std::string, std::u16string>> values;  // key, original text
+};
+std::vector<ControllerFontSet> ReadControllerFontOriginals(const std::filesystem::path& game_root);
 
 }  // namespace rex::glue

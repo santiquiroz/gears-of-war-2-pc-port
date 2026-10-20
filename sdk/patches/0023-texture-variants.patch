@@ -1,0 +1,320 @@
+﻿diff --git a/include/rex/graphics/d3d12/texture_cache.h b/include/rex/graphics/d3d12/texture_cache.h
+index 1b7a787..bfde94e 100644
+--- a/include/rex/graphics/d3d12/texture_cache.h
++++ b/include/rex/graphics/d3d12/texture_cache.h
+@@ -274,6 +274,10 @@ class D3D12TextureCache final : public TextureCache {
+     DXGI_FORMAT replacement_format() const { return replacement_format_; }
+     uint32_t replacement_mip_levels() const { return replacement_mip_levels_; }
+     uint64_t replacement_hash() const { return replacement_hash_; }
++    // The variant epoch the replacement was chosen under (TextureReplacementManager::variant_epoch).
++    uint32_t replacement_epoch() const { return replacement_epoch_; }
++    void set_replacement_epoch(uint32_t epoch) { replacement_epoch_ = epoch; }
++    uint64_t last_content_hash() const { return last_content_hash_; }
+     bool has_replacement() const { return replacement_resource_ != nullptr; }
+     uint32_t descriptor_generation() const { return descriptor_generation_; }
+ 
+@@ -320,6 +324,7 @@ class D3D12TextureCache final : public TextureCache {
+     DXGI_FORMAT replacement_format_ = DXGI_FORMAT_UNKNOWN;
+     uint32_t replacement_mip_levels_ = 0;
+     uint64_t replacement_hash_ = 0;
++    uint32_t replacement_epoch_ = 0;
+     // Bumped every time the backing resource for views changes, so stale
+     // externally cached descriptor indices are rewritten (TextureSRVKey).
+     uint32_t descriptor_generation_ = 0;
+diff --git a/include/rex/graphics/pipeline/texture/cache.h b/include/rex/graphics/pipeline/texture/cache.h
+index 9614fe4..91837b1 100644
+--- a/include/rex/graphics/pipeline/texture/cache.h
++++ b/include/rex/graphics/pipeline/texture/cache.h
+@@ -10,6 +10,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <functional>
+ #include <array>
+ #include <atomic>
+ #include <cstdint>
+@@ -250,6 +251,10 @@ class TextureCache {
+ 
+     void WatchCallback(const std::unique_lock<std::recursive_mutex>& global_lock, bool is_mip);
+ 
++    // Makes the next use reload the guest data, as if the guest had written the memory: the
++    // memory watches are released first (WatchCallback expects the memory to have done it).
++    void ForceOutdated(const std::unique_lock<std::recursive_mutex>& global_lock);
++
+     // For LRU caching - updates the last usage frame and moves the texture to
+     // the end of the usage queue. Must be called any time the texture is
+     // referenced by any GPU work in the implementation to make sure it's not
+@@ -303,6 +308,9 @@ class TextureCache {
+ #endif
+   };
+ 
++  // Marks every texture the predicate accepts as outdated (see Texture::ForceOutdated).
++  void MarkTexturesOutdated(const std::function<bool(Texture&)>& predicate);
++
+   // Rules of data access in load shaders:
+   // - Source reading (from the shared memory or the scaled resolve buffer):
+   //   - Guest data may be stored in a sparsely-allocated buffer, or, in
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index 8ab1c24..5e22619 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -718,6 +718,17 @@ void D3D12TextureCache::LogReplacementFailureOnce(uint64_t hash, const char* rea
+ void D3D12TextureCache::BeginSubmission(uint64_t new_submission_index) {
+   TextureCache::BeginSubmission(new_submission_index);
+ 
++  // A change of texture_replace_variant swaps art at run time: the textures that wear a
++  // replacement, and those the variant has a file for, load again and pick the new one.
++  if (texture_replacement_ && texture_replacement_->PollVariant()) {
++    TextureReplacementManager& manager = *texture_replacement_;
++    MarkTexturesOutdated([&manager](Texture& texture) {
++      const D3D12Texture& d3d12_texture = static_cast<const D3D12Texture&>(texture);
++      return d3d12_texture.has_replacement() ||
++             manager.HasVariantFile(d3d12_texture.last_content_hash());
++    });
++  }
++
+   // ExecuteCommandLists is a full UAV and aliasing barrier.
+   if (IsDrawResolutionScaled()) {
+     size_t scaled_resolve_buffer_count = GetScaledResolveBufferCount();
+@@ -1784,7 +1795,8 @@ void D3D12TextureCache::MaybeUpdateReplacement(D3D12Texture& texture) {
+   }
+   texture_replacement_->MaybeDump(desc, base_bytes, texture.guest_layout().base.row_pitch_bytes,
+                                   hash);
+-  if (texture.replacement_hash() == hash) {
++  if (texture.replacement_hash() == hash &&
++      texture.replacement_epoch() == texture_replacement_->variant_epoch()) {
+     return;
+   }
+   const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
+@@ -1832,6 +1844,7 @@ void D3D12TextureCache::MaybeUpdateReplacement(D3D12Texture& texture) {
+           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+   command_processor_.SubmitBarriers();
+   texture.SetReplacement(replacement_resource.Get(), image->format, image->mip_levels, hash);
++  texture.set_replacement_epoch(texture_replacement_->variant_epoch());
+ }
+ 
+ bool D3D12TextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture, bool load_base,
+diff --git a/src/graphics/d3d12/texture_replacement.cpp b/src/graphics/d3d12/texture_replacement.cpp
+index 7525801..52be5d7 100644
+--- a/src/graphics/d3d12/texture_replacement.cpp
++++ b/src/graphics/d3d12/texture_replacement.cpp
+@@ -29,6 +29,11 @@ REXCVAR_DEFINE_STRING(texture_pack_dir, "", "GPU/Textures",
+ REXCVAR_DEFINE_BOOL(texture_replace, false, "GPU/Textures",
+                     "Substitute pack DDS files for matching guest textures. Applies to "
+                     "newly created textures; clear caches or restart to apply everywhere");
++REXCVAR_DEFINE_STRING(texture_replace_variant, "", "GPU/Textures",
++                      "Name of a replacement variant: files of <TITLEID>/replace_<variant> replace "
++                      "those of <TITLEID>/replace while it is set. Changing it reloads the textures "
++                      "such files name, so a game can switch art at run time (keyboard or pad button "
++                      "pictures)");
+ REXCVAR_DEFINE_BOOL(texture_replace_allow_larger, true, "GPU/Textures",
+                     "Allow replacements larger than the guest texture. Same-size packs "
+                     "are always safe; larger ones are sharper but can break shaders "
+@@ -388,15 +393,38 @@ void TextureReplacementManager::ResolveDirs() {
+     std::snprintf(title, sizeof(title), "dump");
+   }
+   dump_dir_ = pack_dir_ / title / "dump";
+-  replace_dir_ = pack_dir_ / title / "replace";
++  title_dir_ = pack_dir_ / title;
++  replace_dir_ = title_dir_ / "replace";
+ }
+ 
+ void TextureReplacementManager::ScanReplaceDir() {
++  ScanDir(replace_dir_, &replace_paths_);
++}
++
++bool TextureReplacementManager::PollVariant() {
++  const std::string wanted = REXCVAR_GET(texture_replace_variant);
++  if (wanted == active_variant_) {
++    return false;
++  }
++  active_variant_ = wanted;
++  variant_paths_.clear();
++  variant_images_.clear();
++  if (!wanted.empty()) {
++    ScanDir(title_dir_ / ("replace_" + wanted), &variant_paths_);
++    variant_was_active_ = true;
++  }
++  ++variant_epoch_;
++  REXLOG_INFO("[texpack] variant '{}' ({} files)", wanted, variant_paths_.size());
++  return true;
++}
++
++void TextureReplacementManager::ScanDir(const std::filesystem::path& dir,
++                                        std::unordered_map<uint64_t, std::filesystem::path>* out) {
+   std::error_code ec;
+-  if (!std::filesystem::exists(replace_dir_, ec) || ec) {
++  if (!std::filesystem::exists(dir, ec) || ec) {
+     return;
+   }
+-  std::filesystem::directory_iterator it(replace_dir_, ec);
++  std::filesystem::directory_iterator it(dir, ec);
+   std::filesystem::directory_iterator end;
+   while (!ec && it != end) {
+     const std::filesystem::directory_entry entry = *it;  // a copy: increment() below replaces what the iterator holds
+@@ -426,7 +454,7 @@ void TextureReplacementManager::ScanReplaceDir() {
+     if (result.ec != std::errc() || result.ptr != last) {
+       continue;
+     }
+-    replace_paths_.emplace(hash, entry.path());
++    out->emplace(hash, entry.path());
+   }
+ }
+ 
+@@ -855,31 +883,37 @@ bool TextureReplacementManager::FindReplacement(uint64_t hash, const GuestTextur
+   if (!REXCVAR_GET(texture_replace)) {
+     return false;
+   }
+-  auto cached = replace_images_.find(hash);
+-  if (cached != replace_images_.end()) {
++  // A file of the active variant wins; its refusals and log lines are kept apart from the main
++  // file's by this salt.
++  const bool variant = variant_paths_.find(hash) != variant_paths_.end();
++  auto& images = variant ? variant_images_ : replace_images_;
++  auto& paths = variant ? variant_paths_ : replace_paths_;
++  const uint64_t key = variant ? hash ^ UINT64_C(0x5a5a5a5a5a5a5a5a) : hash;
++  auto cached = images.find(hash);
++  if (cached != images.end()) {
+     *out_image = &cached->second;
+     return true;
+   }
+-  if (refused_.find(hash) != refused_.end()) {
++  if (refused_.find(key) != refused_.end()) {
+     return false;
+   }
+-  auto found = replace_paths_.find(hash);
+-  if (found == replace_paths_.end()) {
++  auto found = paths.find(hash);
++  if (found == paths.end()) {
+     return false;
+   }
+   ReplacementImage image;
+   std::string error;
+   if (!ReadDdsFile(found->second, &image, &error)) {
+-    Refuse(hash, "bad DDS (" + error + ")");
++    Refuse(key, "bad DDS (" + error + ")");
+     return false;
+   }
+   if (!ValidateReplacement(desc, image, max_width_height, unaligned_bc_supported, &error)) {
+-    Refuse(hash, error);
++    Refuse(key, error);
+     return false;
+   }
+-  auto inserted = replace_images_.emplace(hash, std::move(image));
++  auto inserted = images.emplace(hash, std::move(image));
+   *out_image = &inserted.first->second;
+-  if (replaced_.insert(hash).second) {
++  if (replaced_.insert(key).second) {
+     REXLOG_INFO("[texpack] replace {:016x} with {}x{} ({} mips) for guest {}x{}", hash,
+                 (*out_image)->width, (*out_image)->height, (*out_image)->mip_levels, desc.width,
+                 desc.height);
+@@ -890,6 +924,11 @@ bool TextureReplacementManager::FindReplacement(uint64_t hash, const GuestTextur
+ bool TextureReplacementManager::GetReplacementImage(uint64_t hash,
+                                                     const ReplacementImage** out_image) const {
+   *out_image = nullptr;
++  auto variant = variant_images_.find(hash);
++  if (variant != variant_images_.end() && HasVariantFile(hash)) {
++    *out_image = &variant->second;
++    return true;
++  }
+   auto it = replace_images_.find(hash);
+   if (it == replace_images_.end()) {
+     return false;
+@@ -900,8 +939,11 @@ bool TextureReplacementManager::GetReplacementImage(uint64_t hash,
+ 
+ bool TextureReplacementManager::GetReplacementView(uint64_t hash, DXGI_FORMAT* out_format,
+                                                    uint32_t* out_mip_levels) const {
++  auto variant = variant_images_.find(hash);
+   auto it = replace_images_.find(hash);
+-  if (it == replace_images_.end()) {
++  if (variant != variant_images_.end() && HasVariantFile(hash)) {
++    it = variant;
++  } else if (it == replace_images_.end()) {
+     return false;
+   }
+   *out_format = it->second.format;
+diff --git a/src/graphics/d3d12/texture_replacement.h b/src/graphics/d3d12/texture_replacement.h
+index 104e808..9b8be7b 100644
+--- a/src/graphics/d3d12/texture_replacement.h
++++ b/src/graphics/d3d12/texture_replacement.h
+@@ -81,6 +81,16 @@ class TextureReplacementManager {
+                  uint32_t base_row_pitch_bytes, uint64_t hash);
+   bool FindReplacement(uint64_t hash, const GuestTextureDesc& desc, uint32_t max_width_height,
+                        bool unaligned_bc_supported, const ReplacementImage** out_image);
++  // Replacement variants: the files of <TITLEID>/replace_<variant> (named like the main ones)
++  // win over <TITLEID>/replace while the texture_replace_variant setting names that variant. A
++  // change is noticed here, once per submission; true means textures must be reloaded.
++  bool PollVariant();
++  // Differs after every variant change, so a texture can tell that its replacement is stale.
++  uint32_t variant_epoch() const { return variant_epoch_; }
++  // Whether the active variant has a file for this content hash.
++  bool HasVariantFile(uint64_t hash) const { return variant_paths_.find(hash) != variant_paths_.end(); }
++  // Whether any variant folder has been read; the hashes it names matter for reloads.
++  bool HasVariantFiles() const { return !variant_paths_.empty() || variant_was_active_; }
+   bool GetReplacementImage(uint64_t hash, const ReplacementImage** out_image) const;
+   bool GetReplacementView(uint64_t hash, DXGI_FORMAT* out_format,
+                           uint32_t* out_mip_levels) const;
+@@ -91,17 +101,25 @@ class TextureReplacementManager {
+  private:
+   void ResolveDirs();
+   void ScanReplaceDir();
++  void ScanDir(const std::filesystem::path& dir,
++               std::unordered_map<uint64_t, std::filesystem::path>* out);
+   void Refuse(uint64_t hash, const std::string& reason);
+ 
+   uint32_t title_id_ = 0;
+   std::filesystem::path pack_dir_;
+   std::filesystem::path dump_dir_;
+   std::filesystem::path replace_dir_;
++  std::filesystem::path title_dir_;
+ 
+   std::unique_ptr<ui::d3d12::D3D12UploadBufferPool> upload_pool_;
+ 
+   std::unordered_map<uint64_t, std::filesystem::path> replace_paths_;
+   std::unordered_map<uint64_t, ReplacementImage> replace_images_;
++  std::unordered_map<uint64_t, std::filesystem::path> variant_paths_;
++  std::unordered_map<uint64_t, ReplacementImage> variant_images_;
++  std::string active_variant_;
++  uint32_t variant_epoch_ = 0;
++  bool variant_was_active_ = false;
+   std::unordered_set<uint64_t> dumped_;
+   std::unordered_set<uint64_t> replaced_;
+   std::unordered_set<uint64_t> refused_;
+diff --git a/src/graphics/pipeline/texture/cache.cpp b/src/graphics/pipeline/texture/cache.cpp
+index 188198e..d2608e3 100644
+--- a/src/graphics/pipeline/texture/cache.cpp
++++ b/src/graphics/pipeline/texture/cache.cpp
+@@ -956,6 +956,33 @@ void TextureCache::Texture::WatchCallback(
+   }
+ }
+ 
++void TextureCache::Texture::ForceOutdated(const std::unique_lock<std::recursive_mutex>& global_lock) {
++  SharedMemory& shared_memory = texture_cache().shared_memory();
++  if (GetGuestBaseSize() != 0) {
++    if (base_watch_handle_) {
++      shared_memory.UnwatchMemoryRange(base_watch_handle_);
++    }
++    WatchCallback(global_lock, false);
++  }
++  if (GetGuestMipsSize() != 0) {
++    if (mips_watch_handle_) {
++      shared_memory.UnwatchMemoryRange(mips_watch_handle_);
++    }
++    WatchCallback(global_lock, true);
++  }
++}
++
++void TextureCache::MarkTexturesOutdated(const std::function<bool(Texture&)>& predicate) {
++  auto global_lock = global_critical_region_.Acquire();
++  for (auto& pair : textures_) {
++    Texture& texture = *pair.second;
++    if (predicate(texture)) {
++      texture.ForceOutdated(global_lock);
++    }
++  }
++  texture_became_outdated_.store(true, std::memory_order_release);
++}
++
+ void TextureCache::WatchCallback(const std::unique_lock<std::recursive_mutex>& global_lock,
+                                  void* context, void* data, uint64_t argument,
+                                  bool invalidated_by_gpu) {

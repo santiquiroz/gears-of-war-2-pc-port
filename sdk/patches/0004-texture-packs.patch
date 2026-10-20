@@ -975,7 +975,7 @@ index 0000000..007699c
 +  std::filesystem::directory_iterator it(replace_dir_, ec);
 +  std::filesystem::directory_iterator end;
 +  while (!ec && it != end) {
-+    const std::filesystem::directory_entry& entry = *it;
++    const std::filesystem::directory_entry entry = *it;  // a copy: increment() below replaces what the iterator holds
 +    it.increment(ec);
 +    if (ec) {
 +      break;

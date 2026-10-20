@@ -168,13 +168,19 @@ inventory, every preset value, scope of verification, and the bundle size rule.
 | Invert mouse Y | `gow2_mouse_invert_y` | on, off | now | both |
 | Aim assist with the mouse | `gow2_mouse_aim_assist` | on, off | now | both |
 | Button prompts | `gow2_prompts` | automatic, keyboard, controller | restart | both |
+| Keycap pictures | `gow2_keycaps` | on, off | restart | Windows |
 | Controller look dead zone | `pad_right_stick_deadzone` | 0 ... 0.9 | now | both |
 | Key bindings | opens the page below | | now | both |
 | Controller layout | info | in the game's own Options | now | both |
 
 The Key bindings page holds one row per action (`keybind_*`, 24 rows).
-Accept, then press the new key. Default restores the original keys. Menu
-prompts update after a restart.
+Accept, then press the new key. Default restores the original keys. Open it
+with F10 during a level: a new key works as soon as the menu closes. The game
+itself keeps the bindings it was started with, so the port sends each key as
+the key the game still binds to the same action (`RouteKey`,
+`src/gow2_native_bindings.cpp`). One limit: an action that was bound to a
+key combination (`Shift+Up`) at start cannot move to another key until the
+next start. Menu prompts update after a restart.
 
 ## Touch (Android)
 
