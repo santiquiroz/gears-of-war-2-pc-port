@@ -1,0 +1,462 @@
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index aac53f3..ee6b835 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -156,6 +156,11 @@ class D3D12CommandProcessor : public CommandProcessor {
+     kEdramR32UintUAV,
+     kEdramR32G32UintUAV,
+     kEdramR32G32B32A32UintUAV,
++    // The second 2048 tiles of the virtual EDRAM, for resolves.
++    kEdramRawSRVSecondHalf,
++    kEdramR32UintSRVSecondHalf,
++    kEdramR32G32UintSRVSecondHalf,
++    kEdramR32G32B32A32UintSRVSecondHalf,
+ 
+     kGammaRampTableSRV,
+     kGammaRampPWLSRV,
+@@ -177,7 +182,7 @@ class D3D12CommandProcessor : public CommandProcessor {
+   ui::d3d12::util::DescriptorCpuGpuHandlePair GetSharedMemoryUintPow2BindlessUAVHandlePair(
+       uint32_t element_size_bytes_pow2) const;
+   ui::d3d12::util::DescriptorCpuGpuHandlePair GetEdramUintPow2BindlessSRVHandlePair(
+-      uint32_t element_size_bytes_pow2) const;
++      uint32_t element_size_bytes_pow2, bool second_half = false) const;
+   ui::d3d12::util::DescriptorCpuGpuHandlePair GetEdramUintPow2BindlessUAVHandlePair(
+       uint32_t element_size_bytes_pow2) const;
+ 
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index cd7693a..874d0f9 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -65,10 +65,10 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+ 
+   bool msaa_2x_supported() const { return msaa_2x_supported_; }
+ 
+-  void WriteEdramRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
++  void WriteEdramRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle, bool second_half = false);
+   void WriteEdramRawUAVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
+   void WriteEdramUintPow2SRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle,
+-                                       uint32_t element_size_bytes_pow2);
++                                       uint32_t element_size_bytes_pow2, bool second_half = false);
+   void WriteEdramUintPow2UAVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle,
+                                        uint32_t element_size_bytes_pow2);
+ 
+@@ -152,6 +152,22 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+   //  host float32 depth at the same time).
+   ID3D12Resource* edram_buffer_ = nullptr;
+   D3D12_RESOURCE_STATES edram_buffer_state_;
++
++  // Pixel shader interlock: the resolve shaders address 2048 tiles from the start of the view they are given. A
++  // resolve of a target in the second 2048 tiles (bit 11 of its base) reads them through the second half's views.
++  // If it also clears, the tiles are swapped with the same tiles of the first half around the resolve through two
++  // scratch buffers (the clear shaders write through the first half's view).
++  bool resolve_source_second_half_ = false;
++  bool ResolveImpl(const memory::Memory& memory, D3D12SharedMemory& shared_memory,
++                   D3D12TextureCache& texture_cache, uint32_t& written_address_out,
++                   uint32_t& written_length_out);
++  bool IsResolveSourceInEdramSecondHalf() const;
++  bool GetEdramSecondHalfResolveClearSpan(const memory::Memory& memory, uint32_t& tile_start_out,
++                                          uint32_t& tile_count_out) const;
++  void SwapEdramHalfIn(uint32_t tile_start, uint32_t tile_count);
++  void SwapEdramHalfOut(uint32_t tile_start, uint32_t tile_count);
++  ID3D12Resource* edram_swap_buffers_[2] = {};
++  D3D12_RESOURCE_STATES edram_swap_buffer_states_[2] = {};
+   EdramBufferModificationStatus edram_buffer_modification_status_ =
+       EdramBufferModificationStatus::kUnmodified;
+ 
+@@ -167,6 +183,11 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+     kR32UintUAV,
+     kR32G32UintUAV,
+     kR32G32B32A32UintUAV,
++    // The second 2048 tiles of the virtual EDRAM (pixel shader interlock path), for resolves.
++    kRawSRVSecondHalf,
++    kR32UintSRVSecondHalf,
++    kR32G32UintSRVSecondHalf,
++    kR32G32B32A32UintSRVSecondHalf,
+ 
+     kCount,
+   };
+diff --git a/include/rex/graphics/xenos.h b/include/rex/graphics/xenos.h
+index f7fd14e..fb1e795 100644
+--- a/include/rex/graphics/xenos.h
++++ b/include/rex/graphics/xenos.h
+@@ -413,6 +413,10 @@ constexpr uint32_t kEdramTileHeightSamples = 16;
+ constexpr uint32_t kEdramTileCount = 2048;
+ constexpr uint32_t kEdramSizeBytes =
+     kEdramTileCount * kEdramTileHeightSamples * kEdramTileWidthSamples * sizeof(uint32_t);
++// Gears of War 2 at widths above 1280 sets 12-bit render target bases (bit 11 set) for its half-resolution
++// passes, which need more than the 10 MB: the pixel shader interlock path emulates 4096 tiles so those targets
++// do not wrap onto the scene depth. See sdk/patches/0021.
++constexpr uint32_t kEdramVirtualTileCount = kEdramTileCount * 2;
+ 
+ // RB_SURFACE_INFO::surface_pitch width.
+ constexpr uint32_t kEdramPitchPixelsBits = 14;
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 011f98b..2c4368e 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -758,17 +758,20 @@ D3D12CommandProcessor::GetSharedMemoryUintPow2BindlessUAVHandlePair(
+ 
+ ui::d3d12::util::DescriptorCpuGpuHandlePair
+ D3D12CommandProcessor::GetEdramUintPow2BindlessSRVHandlePair(
+-    uint32_t element_size_bytes_pow2) const {
++    uint32_t element_size_bytes_pow2, bool second_half) const {
+   SystemBindlessView view;
+   switch (element_size_bytes_pow2) {
+     case 2:
+-      view = SystemBindlessView::kEdramR32UintSRV;
++      view = second_half ? SystemBindlessView::kEdramR32UintSRVSecondHalf
++                         : SystemBindlessView::kEdramR32UintSRV;
+       break;
+     case 3:
+-      view = SystemBindlessView::kEdramR32G32UintSRV;
++      view = second_half ? SystemBindlessView::kEdramR32G32UintSRVSecondHalf
++                         : SystemBindlessView::kEdramR32G32UintSRV;
+       break;
+     case 4:
+-      view = SystemBindlessView::kEdramR32G32B32A32UintSRV;
++      view = second_half ? SystemBindlessView::kEdramR32G32B32A32UintSRVSecondHalf
++                         : SystemBindlessView::kEdramR32G32B32A32UintSRV;
+       break;
+     default:
+       assert_unhandled_case(element_size_bytes_pow2);
+@@ -1721,6 +1724,27 @@ bool D3D12CommandProcessor::SetupContext() {
+         provider.OffsetViewDescriptor(view_bindless_heap_cpu_start_,
+                                       uint32_t(SystemBindlessView::kEdramR32G32B32A32UintUAV)),
+         4);
++    // kEdramRawSRVSecondHalf.
++    render_target_cache_->WriteEdramRawSRVDescriptor(
++        provider.OffsetViewDescriptor(view_bindless_heap_cpu_start_,
++                                      uint32_t(SystemBindlessView::kEdramRawSRVSecondHalf)),
++        true);
++    // kEdramR32UintSRVSecondHalf.
++    render_target_cache_->WriteEdramUintPow2SRVDescriptor(
++        provider.OffsetViewDescriptor(view_bindless_heap_cpu_start_,
++                                      uint32_t(SystemBindlessView::kEdramR32UintSRVSecondHalf)),
++        2, true);
++    // kEdramR32G32UintSRVSecondHalf.
++    render_target_cache_->WriteEdramUintPow2SRVDescriptor(
++        provider.OffsetViewDescriptor(view_bindless_heap_cpu_start_,
++                                      uint32_t(SystemBindlessView::kEdramR32G32UintSRVSecondHalf)),
++        3, true);
++    // kEdramR32G32B32A32UintSRVSecondHalf.
++    render_target_cache_->WriteEdramUintPow2SRVDescriptor(
++        provider.OffsetViewDescriptor(
++            view_bindless_heap_cpu_start_,
++            uint32_t(SystemBindlessView::kEdramR32G32B32A32UintSRVSecondHalf)),
++        4, true);
+     // kGammaRampTableSRV.
+     WriteGammaRampSRV(
+         false, provider.OffsetViewDescriptor(view_bindless_heap_cpu_start_,
+@@ -3889,7 +3913,8 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
+       normalized_depth_control.stencil_enable || normalized_depth_control.z_enable;
+   if (edram_rov_used && depth_stencil_enabled) {
+     for (uint32_t i = 0; i < 4; ++i) {
+-      if (rb_depth_info.depth_base == color_infos[i].color_base &&
++      if (rb_depth_info.depth_base + (rb_depth_info.depth_base_bit_11 << xenos::kEdramBaseTilesBits) ==
++              color_infos[i].color_base + (color_infos[i].color_base_bit_11 << xenos::kEdramBaseTilesBits) &&
+           (rt_keep_masks[i][0] != UINT32_MAX || rt_keep_masks[i][1] != UINT32_MAX)) {
+         depth_stencil_enabled = false;
+         break;
+@@ -4143,7 +4168,10 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
+       dirty |= system_constants_.edram_rt_keep_mask[i][1] != rt_keep_masks[i][1];
+       system_constants_.edram_rt_keep_mask[i][1] = rt_keep_masks[i][1];
+       if (rt_keep_masks[i][0] != UINT32_MAX || rt_keep_masks[i][1] != UINT32_MAX) {
+-        uint32_t rt_base_dwords_scaled = color_info.color_base * edram_tile_dwords_scaled;
++        // Bit 11 of the base selects the second 2048 tiles of the virtual EDRAM (kEdramVirtualTileCount).
++        uint32_t rt_base_dwords_scaled =
++            (color_info.color_base + (color_info.color_base_bit_11 << xenos::kEdramBaseTilesBits)) *
++            edram_tile_dwords_scaled;
+         dirty |= system_constants_.edram_rt_base_dwords_scaled[i] != rt_base_dwords_scaled;
+         system_constants_.edram_rt_base_dwords_scaled[i] = rt_base_dwords_scaled;
+         uint32_t format_flags = RenderTargetCache::AddPSIColorFormatFlags(color_info.color_format);
+@@ -4163,7 +4191,9 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
+   }
+ 
+   if (edram_rov_used) {
+-    uint32_t depth_base_dwords_scaled = rb_depth_info.depth_base * edram_tile_dwords_scaled;
++    uint32_t depth_base_dwords_scaled =
++        (rb_depth_info.depth_base + (rb_depth_info.depth_base_bit_11 << xenos::kEdramBaseTilesBits)) *
++        edram_tile_dwords_scaled;
+     dirty |= system_constants_.edram_depth_base_dwords_scaled != depth_base_dwords_scaled;
+     system_constants_.edram_depth_base_dwords_scaled = depth_base_dwords_scaled;
+ 
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 9f9f6ae..697e1ef 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -212,8 +212,11 @@ bool D3D12RenderTargetCache::Initialize() {
+   }
+ 
+   // Create the buffer for reinterpreting EDRAM contents.
++  // The pixel shader interlock path emulates kEdramVirtualTileCount tiles (see xenos.h), host render targets
++  // keep the 2048 of the console.
+   uint32_t edram_buffer_size =
+-      xenos::kEdramSizeBytes * (draw_resolution_scale_x() * draw_resolution_scale_y());
++      xenos::kEdramSizeBytes * (draw_resolution_scale_x() * draw_resolution_scale_y()) *
++      (path_ == Path::kPixelShaderInterlock ? xenos::kEdramVirtualTileCount / xenos::kEdramTileCount : 1);
+   D3D12_RESOURCE_DESC edram_buffer_desc;
+   ui::d3d12::util::FillBufferResourceDesc(edram_buffer_desc, edram_buffer_size,
+                                           D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+@@ -289,6 +292,25 @@ bool D3D12RenderTargetCache::Initialize() {
+       provider.OffsetViewDescriptor(edram_buffer_descriptor_heap_start_,
+                                     uint32_t(EdramBufferDescriptorIndex::kR32G32B32A32UintUAV)),
+       edram_buffer_, DXGI_FORMAT_R32G32B32A32_UINT, edram_buffer_size >> 4);
++  {
++    // Views of the second 2048 tiles (the first 2048 again with host render targets, which have no second half).
++    const uint32_t half_size = xenos::kEdramSizeBytes * (draw_resolution_scale_x() * draw_resolution_scale_y());
++    const uint64_t half_offset = path_ == Path::kPixelShaderInterlock ? half_size : 0;
++    const auto second_half_handle = [&](EdramBufferDescriptorIndex index) {
++      return provider.OffsetViewDescriptor(edram_buffer_descriptor_heap_start_, uint32_t(index));
++    };
++    ui::d3d12::util::CreateBufferRawSRV(device, second_half_handle(EdramBufferDescriptorIndex::kRawSRVSecondHalf),
++                                        edram_buffer_, half_size, half_offset);
++    ui::d3d12::util::CreateBufferTypedSRV(
++        device, second_half_handle(EdramBufferDescriptorIndex::kR32UintSRVSecondHalf), edram_buffer_,
++        DXGI_FORMAT_R32_UINT, half_size >> 2, half_offset >> 2);
++    ui::d3d12::util::CreateBufferTypedSRV(
++        device, second_half_handle(EdramBufferDescriptorIndex::kR32G32UintSRVSecondHalf), edram_buffer_,
++        DXGI_FORMAT_R32G32_UINT, half_size >> 3, half_offset >> 3);
++    ui::d3d12::util::CreateBufferTypedSRV(
++        device, second_half_handle(EdramBufferDescriptorIndex::kR32G32B32A32UintSRVSecondHalf), edram_buffer_,
++        DXGI_FORMAT_R32G32B32A32_UINT, half_size >> 4, half_offset >> 4);
++  }
+ 
+   bool draw_resolution_scaled = IsDrawResolutionScaled();
+ 
+@@ -1098,13 +1120,15 @@ bool D3D12RenderTargetCache::Update(bool is_rasterization_done,
+   return true;
+ }
+ 
+-void D3D12RenderTargetCache::WriteEdramRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
++void D3D12RenderTargetCache::WriteEdramRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle,
++                                                        bool second_half) {
+   const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
+   ID3D12Device* device = provider.GetDevice();
+   device->CopyDescriptorsSimple(
+       1, handle,
+       provider.OffsetViewDescriptor(edram_buffer_descriptor_heap_start_,
+-                                    uint32_t(EdramBufferDescriptorIndex::kRawSRV)),
++                                    uint32_t(second_half ? EdramBufferDescriptorIndex::kRawSRVSecondHalf
++                                                         : EdramBufferDescriptorIndex::kRawSRV)),
+       D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+ }
+ 
+@@ -1119,17 +1143,21 @@ void D3D12RenderTargetCache::WriteEdramRawUAVDescriptor(D3D12_CPU_DESCRIPTOR_HAN
+ }
+ 
+ void D3D12RenderTargetCache::WriteEdramUintPow2SRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle,
+-                                                             uint32_t element_size_bytes_pow2) {
++                                                             uint32_t element_size_bytes_pow2,
++                                                             bool second_half) {
+   EdramBufferDescriptorIndex descriptor_index;
+   switch (element_size_bytes_pow2) {
+     case 2:
+-      descriptor_index = EdramBufferDescriptorIndex::kR32UintSRV;
++      descriptor_index = second_half ? EdramBufferDescriptorIndex::kR32UintSRVSecondHalf
++                                     : EdramBufferDescriptorIndex::kR32UintSRV;
+       break;
+     case 3:
+-      descriptor_index = EdramBufferDescriptorIndex::kR32G32UintSRV;
++      descriptor_index = second_half ? EdramBufferDescriptorIndex::kR32G32UintSRVSecondHalf
++                                     : EdramBufferDescriptorIndex::kR32G32UintSRV;
+       break;
+     case 4:
+-      descriptor_index = EdramBufferDescriptorIndex::kR32G32B32A32UintSRV;
++      descriptor_index = second_half ? EdramBufferDescriptorIndex::kR32G32B32A32UintSRVSecondHalf
++                                     : EdramBufferDescriptorIndex::kR32G32B32A32UintSRV;
+       break;
+     default:
+       assert_unhandled_case(element_size_bytes_pow2);
+@@ -1168,9 +1196,141 @@ void D3D12RenderTargetCache::WriteEdramUintPow2UAVDescriptor(D3D12_CPU_DESCRIPTO
+                                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+ }
+ 
++bool D3D12RenderTargetCache::IsResolveSourceInEdramSecondHalf() const {
++  if (GetPath() != Path::kPixelShaderInterlock) {
++    return false;
++  }
++  const uint32_t copy_src_select = register_file().Get<reg::RB_COPY_CONTROL>().copy_src_select;
++  return copy_src_select >= xenos::kMaxColorRenderTargets
++             ? register_file().Get<reg::RB_DEPTH_INFO>().depth_base_bit_11 != 0
++             : register_file()
++                       .Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[copy_src_select])
++                       .color_base_bit_11 != 0;
++}
++
++bool D3D12RenderTargetCache::GetEdramSecondHalfResolveClearSpan(const memory::Memory& memory,
++                                                                uint32_t& tile_start_out,
++                                                                uint32_t& tile_count_out) const {
++  draw_util::ResolveInfo resolve_info;
++  if (!draw_util::GetResolveInfo(register_file(), memory, draw_resolution_scale_x(),
++                                 draw_resolution_scale_y(), false, false, resolve_info) ||
++      !resolve_info.coordinate_info.width_div_8 || !resolve_info.height_div_8 ||
++      (!resolve_info.IsClearingColor() && !resolve_info.IsClearingDepth())) {
++    return false;
++  }
++  uint32_t base, row_length_used, rows, pitch;
++  resolve_info.GetCopyEdramTileSpan(base, row_length_used, rows, pitch);
++  if (!rows || !row_length_used || base >= xenos::kEdramTileCount) {
++    return false;
++  }
++  tile_start_out = base;
++  tile_count_out = std::min((rows - 1) * pitch + row_length_used, xenos::kEdramTileCount - base);
++  return tile_count_out != 0;
++}
++
++void D3D12RenderTargetCache::SwapEdramHalfIn(uint32_t tile_start, uint32_t tile_count) {
++  const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
++  ID3D12Device* device = provider.GetDevice();
++  const uint64_t half_bytes =
++      uint64_t(xenos::kEdramSizeBytes) * (draw_resolution_scale_x() * draw_resolution_scale_y());
++  const uint64_t tile_bytes = half_bytes / xenos::kEdramTileCount;
++  const uint64_t offset = tile_bytes * tile_start, length = tile_bytes * tile_count;
++  for (uint32_t i = 0; i < 2; ++i) {
++    if (edram_swap_buffers_[i]) {
++      continue;
++    }
++    D3D12_RESOURCE_DESC desc;
++    ui::d3d12::util::FillBufferResourceDesc(desc, half_bytes, D3D12_RESOURCE_FLAG_NONE);
++    edram_swap_buffer_states_[i] = D3D12_RESOURCE_STATE_COPY_DEST;
++    if (FAILED(device->CreateCommittedResource(
++            &ui::d3d12::util::kHeapPropertiesDefault, D3D12_HEAP_FLAG_NONE, &desc,
++            edram_swap_buffer_states_[i], nullptr, IID_PPV_ARGS(&edram_swap_buffers_[i])))) {
++      REXGPU_ERROR("D3D12RenderTargetCache: Failed to create an EDRAM swap buffer");
++      edram_swap_buffers_[i] = nullptr;
++      return;
++    }
++  }
++  CommitEdramBufferUAVWrites();
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_SOURCE);
++  for (uint32_t i = 0; i < 2; ++i) {
++    command_processor_.PushTransitionBarrier(edram_swap_buffers_[i], edram_swap_buffer_states_[i],
++                                             D3D12_RESOURCE_STATE_COPY_DEST);
++    edram_swap_buffer_states_[i] = D3D12_RESOURCE_STATE_COPY_DEST;
++  }
++  command_processor_.SubmitBarriers();
++  DeferredCommandList& command_list = command_processor_.GetDeferredCommandList();
++  // Scratch 0 takes the first-half tiles, scratch 1 the second-half tiles.
++  command_list.D3DCopyBufferRegion(edram_swap_buffers_[0], offset, edram_buffer_, offset, length);
++  command_list.D3DCopyBufferRegion(edram_swap_buffers_[1], offset, edram_buffer_,
++                                   half_bytes + offset, length);
++  for (uint32_t i = 0; i < 2; ++i) {
++    command_processor_.PushTransitionBarrier(edram_swap_buffers_[i], edram_swap_buffer_states_[i],
++                                             D3D12_RESOURCE_STATE_COPY_SOURCE);
++    edram_swap_buffer_states_[i] = D3D12_RESOURCE_STATE_COPY_SOURCE;
++  }
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
++  command_processor_.SubmitBarriers();
++  command_list.D3DCopyBufferRegion(edram_buffer_, offset, edram_swap_buffers_[1], offset, length);
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++  MarkEdramBufferModified(EdramBufferModificationStatus::kAsUAV);
++}
++
++void D3D12RenderTargetCache::SwapEdramHalfOut(uint32_t tile_start, uint32_t tile_count) {
++  if (!edram_swap_buffers_[0] || !edram_swap_buffers_[1]) {
++    return;
++  }
++  const uint64_t half_bytes =
++      uint64_t(xenos::kEdramSizeBytes) * (draw_resolution_scale_x() * draw_resolution_scale_y());
++  const uint64_t tile_bytes = half_bytes / xenos::kEdramTileCount;
++  const uint64_t offset = tile_bytes * tile_start, length = tile_bytes * tile_count;
++  DeferredCommandList& command_list = command_processor_.GetDeferredCommandList();
++  CommitEdramBufferUAVWrites();
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_SOURCE);
++  // The resolve may have cleared the tiles - keep that in the second half. Scratch 1 takes the first half's
++  // current tiles for that.
++  command_processor_.PushTransitionBarrier(edram_swap_buffers_[1], edram_swap_buffer_states_[1],
++                                           D3D12_RESOURCE_STATE_COPY_DEST);
++  edram_swap_buffer_states_[1] = D3D12_RESOURCE_STATE_COPY_DEST;
++  command_processor_.SubmitBarriers();
++  command_list.D3DCopyBufferRegion(edram_swap_buffers_[1], offset, edram_buffer_, offset, length);
++  command_processor_.PushTransitionBarrier(edram_swap_buffers_[1], edram_swap_buffer_states_[1],
++                                           D3D12_RESOURCE_STATE_COPY_SOURCE);
++  edram_swap_buffer_states_[1] = D3D12_RESOURCE_STATE_COPY_SOURCE;
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
++  command_processor_.SubmitBarriers();
++  command_list.D3DCopyBufferRegion(edram_buffer_, half_bytes + offset, edram_swap_buffers_[1], offset,
++                                   length);
++  command_list.D3DCopyBufferRegion(edram_buffer_, offset, edram_swap_buffers_[0], offset, length);
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++  MarkEdramBufferModified(EdramBufferModificationStatus::kAsUAV);
++}
++
+ bool D3D12RenderTargetCache::Resolve(const memory::Memory& memory, D3D12SharedMemory& shared_memory,
+                                      D3D12TextureCache& texture_cache,
+                                      uint32_t& written_address_out, uint32_t& written_length_out) {
++  uint32_t swap_start = 0, swap_count = 0;
++  resolve_source_second_half_ = IsResolveSourceInEdramSecondHalf();
++  // Clears write through the first half's view: swap the tiles in for those.
++  const bool swap = resolve_source_second_half_ &&
++                    GetEdramSecondHalfResolveClearSpan(memory, swap_start, swap_count);
++  if (swap) {
++    resolve_source_second_half_ = false;
++    SwapEdramHalfIn(swap_start, swap_count);
++  }
++  const bool result =
++      ResolveImpl(memory, shared_memory, texture_cache, written_address_out, written_length_out);
++  if (swap) {
++    SwapEdramHalfOut(swap_start, swap_count);
++  }
++  resolve_source_second_half_ = false;
++  return result;
++}
++
++bool D3D12RenderTargetCache::ResolveImpl(const memory::Memory& memory,
++                                         D3D12SharedMemory& shared_memory,
++                                         D3D12TextureCache& texture_cache,
++                                         uint32_t& written_address_out,
++                                         uint32_t& written_length_out) {
+   written_address_out = 0;
+   written_length_out = 0;
+ 
+@@ -1301,10 +1461,12 @@ bool D3D12RenderTargetCache::Resolve(const memory::Memory& memory, D3D12SharedMe
+             }
+             if (copy_shader_info.source_is_raw) {
+               descriptor_source = command_processor_.GetSystemBindlessViewHandlePair(
+-                  D3D12CommandProcessor::SystemBindlessView::kEdramRawSRV);
++                  resolve_source_second_half_
++                      ? D3D12CommandProcessor::SystemBindlessView::kEdramRawSRVSecondHalf
++                      : D3D12CommandProcessor::SystemBindlessView::kEdramRawSRV);
+             } else {
+               descriptor_source = command_processor_.GetEdramUintPow2BindlessSRVHandlePair(
+-                  copy_shader_info.source_bpe_log2);
++                  copy_shader_info.source_bpe_log2, resolve_source_second_half_);
+             }
+           } else {
+             descriptor_dest = descriptors[0];
+@@ -1314,10 +1476,11 @@ bool D3D12RenderTargetCache::Resolve(const memory::Memory& memory, D3D12SharedMe
+             }
+             descriptor_source = descriptors[1];
+             if (copy_shader_info.source_is_raw) {
+-              WriteEdramRawSRVDescriptor(descriptor_source.first);
++              WriteEdramRawSRVDescriptor(descriptor_source.first, resolve_source_second_half_);
+             } else {
+               WriteEdramUintPow2SRVDescriptor(descriptor_source.first,
+-                                              copy_shader_info.source_bpe_log2);
++                                              copy_shader_info.source_bpe_log2,
++                                              resolve_source_second_half_);
+             }
+           }
+           if (draw_resolution_scaled) {
+diff --git a/src/graphics/pipeline/shader/dxbc_translator_om.cpp b/src/graphics/pipeline/shader/dxbc_translator_om.cpp
+index a7d508a..d9e45e0 100644
+--- a/src/graphics/pipeline/shader/dxbc_translator_om.cpp
++++ b/src/graphics/pipeline/shader/dxbc_translator_om.cpp
+@@ -322,7 +322,7 @@ void DxbcShaderTranslator::StartPixelShader_LoadROVParameters() {
+   //                             needed
+   a_.OpUDiv(dxbc::Dest::Null(), dxbc::Dest::R(system_temp_rov_params_, 0b0010),
+             dxbc::Src::R(system_temp_rov_params_, dxbc::Src::kYYYY),
+-            dxbc::Src::LU(tile_size * xenos::kEdramTileCount));
++            dxbc::Src::LU(tile_size * xenos::kEdramVirtualTileCount));
+ 
+   // ***************************************************************************
+   // Sample coverage to system_temp_rov_params_.x.
+@@ -1882,7 +1882,7 @@ void DxbcShaderTranslator::CompletePixelShader_WriteToROV() {
+   // Write color values.
+   uint32_t shader_writes_color_targets = current_shader().writes_color_targets();
+   uint32_t edram_size_32bpp_samples = (xenos::kEdramTileHeightSamples * draw_resolution_scale_y_) *
+-                                      tile_width * xenos::kEdramTileCount;
++                                      tile_width * xenos::kEdramVirtualTileCount;
+   for (uint32_t i = 0; i < 4; ++i) {
+     if (!(shader_writes_color_targets & (1 << i))) {
+       continue;

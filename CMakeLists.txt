@@ -67,6 +67,8 @@ set(GOW2_SOURCES
     src/gow2_keycaps.cpp
     src/gow2_atlas_image.cpp
     src/gow2_prompt_swap.cpp
+    src/gow2_widescreen.cpp
+    src/gow2_toast.cpp
 )
 
 # The exe icon. CMake already turns on RC for clang on Windows; enable_language makes it explicit.

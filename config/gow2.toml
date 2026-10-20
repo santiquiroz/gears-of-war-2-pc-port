@@ -78,6 +78,19 @@ texture_cache_memory_limit_hard = 2048
 # texture_dump = false
 # texture_replace = false   # turned on by itself while the keycap pack is installed (gow2_keycaps)
 
+# ---------- Ultrawide ----------
+# Draw a really wider picture instead of 16:9 with bars: auto (the default: on when this PC's main display is
+# wider than 16:9), off, or an aspect such as "21:9". Up to 1680 pixels wide; the shadow map gets smaller to fit. Needs a restart. See docs/WIDESCREEN.md.
+# gow2_widescreen = "auto"
+# With widescreen on, the menus keep the size they have at 16:9 (the game's UI projection is put back; set false to
+# see the old, smaller menus).
+# gow2_ui_projection_fix = true
+# With widescreen on, the full-width UI images (title and pause bars, the pause dimming, menu backdrops), which the
+# game makes 1280 pixels wide, are stretched to the whole picture.
+# gow2_ui_widen = true
+# The unlock / progress toast ("NEW ITEM UNLOCKED ...") stays this many seconds in total, fade included; 0 keeps
+# the game's own timing, which leaves it on screen for ever in ultrawide.
+# gow2_toast_seconds = 3.0
 # ---------- Keyboard and mouse ----------
 # The keyboard and mouse act as an Xbox 360 controller, so every action works as on the console.
 # A real controller can be used at the same time.

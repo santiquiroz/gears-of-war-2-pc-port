@@ -33,6 +33,15 @@ patch is a cvar and can be A/B'd without a rebuild:
   id 6 DoF Upscaling Fix    827296BC fsel f2,f4,f31,f28 -> fsubs f1,f1,f1 (f1=0)
                             82729700 bl 0x827291f8    -> fsubs f1,f1,f1 (skip call, f1=0)
                              (GameFixes/gow2_dof_upscaling_fix=true)
+  id 7 Widescreen           82806B04 lfs f13,2856(r11) -> f13 = (Gow2GamePatch(7) + 0.25) / 720 when set
+                             (sub_82806A80 builds the back buffer: width = aspect * 720, height 720 or
+                             704 with id 5; the aspect is the 16:9 constant for any widescreen video
+                             mode. Display/gow2_widescreen_aspect, 0 = off)
+                            82806E64 blt cr6,0x82806b40 -> always taken when set, so the width is not
+                             clamped to 1280 (the game clamps it to 900..1280)
+                            82634F44, 82634CC8 fmuls f1,f1,f0 -> the half FOV is widened by W/1280, so
+                             the vertical view stays what it was at 16:9 (Gow2GamePatch(7) is the
+                             back buffer width in pixels, 0 = off; Gow2WidescreenHalfFov does the maths)
 
 The id 2 blr part is portable only because 0x8280DDC8/0x8280DDCC are the
 first two guest instructions of sub_8280DDC8 (no prologue); the patch is
@@ -63,7 +72,8 @@ import re
 import sys
 
 MARK = "GOW2 GAMEPATCH"
-DECL = f'extern "C" int Gow2GamePatch(int id);  // {MARK}\n'
+DECL = (f'extern "C" int Gow2GamePatch(int id);  // {MARK}\n'
+        f'extern "C" double Gow2WidescreenHalfFov(double half_fov, int site);  // {MARK}\n')
 
 # (address, function start, expected comment, expected C++ body, patched C++ body, id)
 SITES = [
@@ -94,6 +104,45 @@ SITES = [
     (0x82806B10, 0x82806A80, "li r11,720",
      ["ctx.r11.s64 = 720;"],
      "ctx.r11.s64 = Gow2GamePatch(5) ? 704 : 720;", 5),
+    (0x82806B04, 0x82806A80, "lfs f13,2856(r11)",
+     ["ctx.fpscr.disableFlushMode();",
+      "temp.u32 = REX_LOAD_U32(ctx.r11.u32 + 2856);",
+      "ctx.f13.f64 = double(temp.f32);"],
+     "ctx.fpscr.disableFlushMode(); temp.u32 = REX_LOAD_U32(ctx.r11.u32 + 2856); "
+     "ctx.f13.f64 = Gow2GamePatch(7) ? (double(Gow2GamePatch(7)) + 0.25) / 720.0 : double(temp.f32);", 7),
+    # The FOV (degrees) becomes a half angle in radians here; the widescreen patch widens it so the
+    # vertical view stays what it was at 16:9 (both functions build a perspective matrix).
+    (0x82634F44, 0x82634F00, "fmuls f1,f1,f0",
+     ["ctx.f1.f64 = double(float(ctx.f1.f64 * ctx.f0.f64));"],
+     "ctx.f1.f64 = double(float(ctx.f1.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f1.f64 = double(float(Gow2WidescreenHalfFov(ctx.f1.f64, 1)));", 7),
+    (0x82634CC8, 0x82634CA8, "fmuls f1,f1,f0",
+     ["ctx.f1.f64 = double(float(ctx.f1.f64 * ctx.f0.f64));"],
+     "ctx.f1.f64 = double(float(ctx.f1.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f1.f64 = double(float(Gow2WidescreenHalfFov(ctx.f1.f64, 2)));", 7),
+    (0x8252D644, 0x8252D1B8, "fmuls f1,f30,f0",
+     ["ctx.f1.f64 = double(float(ctx.f30.f64 * ctx.f0.f64));"],
+     "ctx.f1.f64 = double(float(ctx.f30.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f1.f64 = double(float(Gow2WidescreenHalfFov(ctx.f1.f64, 3)));", 7),
+    (0x8252D750, 0x8252D1B8, "fmuls f1,f30,f0",
+     ["ctx.f1.f64 = double(float(ctx.f30.f64 * ctx.f0.f64));"],
+     "ctx.f1.f64 = double(float(ctx.f30.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f1.f64 = double(float(Gow2WidescreenHalfFov(ctx.f1.f64, 4)));", 7),
+    (0x822D4A60, 0x822D4A20, "fmuls f31,f13,f0",
+     ["ctx.f31.f64 = double(float(ctx.f13.f64 * ctx.f0.f64));"],
+     "ctx.f31.f64 = double(float(ctx.f13.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f31.f64 = double(float(Gow2WidescreenHalfFov(ctx.f31.f64, 5)));", 7),
+    (0x8254127C, 0x825411A8, "fmuls f1,f13,f0",
+     ["ctx.f1.f64 = double(float(ctx.f13.f64 * ctx.f0.f64));"],
+     "ctx.f1.f64 = double(float(ctx.f13.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f1.f64 = double(float(Gow2WidescreenHalfFov(ctx.f1.f64, 6)));", 7),
+    (0x8254130C, 0x825411A8, "fmuls f1,f13,f0",
+     ["ctx.f1.f64 = double(float(ctx.f13.f64 * ctx.f0.f64));"],
+     "ctx.f1.f64 = double(float(ctx.f13.f64 * ctx.f0.f64)); "
+     "if (Gow2GamePatch(7)) ctx.f1.f64 = double(float(Gow2WidescreenHalfFov(ctx.f1.f64, 7)));", 7),
+    (0x82806E64, 0x82806A80, "blt cr6,0x82806b40",
+     ["if (ctx.cr6.lt) goto loc_82806B40;"],
+     "if (ctx.cr6.lt || Gow2GamePatch(7)) goto loc_82806B40;", 7),
     (0x8272E00C, 0x8272DF48, "lwz r10,15568(r17)",
      ["ctx.r10.u64 = REX_LOAD_U32(ctx.r17.u32 + 15568);"],
      "ctx.r10.u64 = Gow2GamePatch(5) ? 1 : REX_LOAD_U32(ctx.r17.u32 + 15568);", 5),

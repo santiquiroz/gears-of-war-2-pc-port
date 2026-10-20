@@ -20,6 +20,7 @@
 #include <rex/system.h>
 
 #include "gow2_coalesced.h"
+#include "gow2_widescreen.h"
 #include "gow2_audio_volume.h"
 #include "gow2_native_keys.h"
 #include "gow2_prompt_swap.h"
@@ -341,6 +342,7 @@ class Gow2App : public rex::ReXApp {
     SetIfUnset("mnk_mode", "true");
 #endif
     rex::glue::PrepareNativeMouseAim();
+    rex::glue::PrepareWidescreen();
     PrepareCoalesced();
 #ifdef _WIN32
     rex::glue::PrepareKeycapPack();

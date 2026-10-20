@@ -8,6 +8,8 @@
 
 #include <rex/cvar.h>
 
+#include "gow2_widescreen.h"
+
 REXCVAR_DEFINE_BOOL(gow2_black_shading_fix, true, "GameFixes",
                     "Black Shading Fix: effectively turns off MSAA (GUseTilingMode=FALSE), "
                     "solving the dynamic lighting artifacts caused by MSAA resolve imperfections.");
@@ -30,6 +32,10 @@ REXCVAR_DEFINE_BOOL(gow2_dof_upscaling_fix, true, "GameFixes",
                     "blur factor (f1=0) in the DoF sampling path, reducing blur "
                     "ghosting at higher internal resolutions.");
 
+extern "C" double Gow2WidescreenHalfFov(double half_fov, int site) {
+  return rex::glue::WidescreenHalfFov(half_fov, site);
+}
+
 extern "C" int Gow2GamePatch(int id) {
   switch (id) {
     case 1: return REXCVAR_GET(gow2_black_shading_fix);
@@ -38,6 +44,7 @@ extern "C" int Gow2GamePatch(int id) {
     case 4: return REXCVAR_GET(gow2_unlock_fps);
     case 5: return REXCVAR_GET(gow2_ao_upscaling_fix);
     case 6: return REXCVAR_GET(gow2_dof_upscaling_fix);
+    case 7: return rex::glue::WidescreenBackBufferWidth();  // 0 = the game's own 16:9
     default: return 0;
   }
 }

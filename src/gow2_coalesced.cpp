@@ -2,8 +2,10 @@
 // GoW2's Coalesced tweak layer, see gow2_coalesced.h.
 
 #include "gow2_coalesced.h"
+#include "gow2_widescreen.h"
 #include "gow2_coalesced_text.h"
 #include "gow2_graphics_quality.h"
+#include "gow2_widescreen.h"
 #include "gow2_native_bindings.h"
 
 #include "gow2_mouse_aim.h"
@@ -792,6 +794,18 @@ CoalescedOptions CoalescedOptionsFromCvars() {
   o.system_settings = graphics_quality::Compose(android, [](std::string_view id) {
     return rex::cvar::Query<std::string>(id);
   }, REXCVAR_GET(gow2_system_settings));
+  // Widescreen: the game's own resolution setting follows the back buffer it now builds (same digit
+  // count as 1280 / 720, so the bundle does not grow), and the shadow map gets smaller to fit.
+  if (const int ws = WidescreenBackBufferWidth(); ws > 0 && ws < 10000) {
+    o.system_settings.emplace_back("ResX", std::to_string(ws));
+    o.system_settings.emplace_back("ResY", std::to_string(WidescreenBackBufferHeight()));
+    const int shadow = WidescreenMaxShadowResolution();
+    const auto user = std::find_if(o.system_settings.begin(), o.system_settings.end(),
+                                   [](const auto& kv) { return kv.first == "MaxShadowResolution"; });
+    // A smaller value from Game quality (gow2_gfx_max_shadow_resolution) stays.
+    if (shadow > 0 && !(user != o.system_settings.end() && std::atoi(user->second.c_str()) <= shadow))
+      o.system_settings.emplace_back("MaxShadowResolution", std::to_string(shadow));
+  }
   // The live swap (gow2_prompt_swap.cpp) rewrites the strings in memory: leave the bundles alone.
   if (PromptsFollowController()) return o;
   const std::string mode = REXCVAR_GET(gow2_prompts);
