@@ -1,0 +1,19 @@
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 5a9f655..9f9f6ae 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -190,7 +190,13 @@ bool D3D12RenderTargetCache::Initialize() {
+     // TODO(Triang3l): Make ROV the default when it's optimized better (for
+     // instance, using static shader modifications to pass render target
+     // parameters).
+-    path_ = provider.GetAdapterVendorID() == ui::GraphicsProvider::GpuVendorID::kIntel
++    // GoW2 at resolution_scale 2 on an RTX 5080 measures the opposite: 13-26 ms of GPU time per
++    // frame with host render targets against 6-11 ms with ROV, same picture. NVIDIA gets ROV;
++    // render_target_path_d3d12=rtv brings the old path back.
++    // AMD keeps the host render targets (the compiler problem noted below is untested here).
++    const auto vendor = provider.GetAdapterVendorID();
++    path_ = (vendor == ui::GraphicsProvider::GpuVendorID::kIntel ||
++             vendor == ui::GraphicsProvider::GpuVendorID::kNvidia)
+                 ? Path::kPixelShaderInterlock
+                 : Path::kHostRenderTargets;
+ #else

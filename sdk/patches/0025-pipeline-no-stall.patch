@@ -1,0 +1,110 @@
+diff --git a/src/graphics/d3d12/pipeline_cache.cpp b/src/graphics/d3d12/pipeline_cache.cpp
+--- a/src/graphics/d3d12/pipeline_cache.cpp
++++ b/src/graphics/d3d12/pipeline_cache.cpp
+@@ -14,6 +14,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <cinttypes>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ #include <deque>
+@@ -58,6 +59,14 @@
+                      "Number of pipeline creation threads (-1 for auto)")
+     .range(-1, 32)
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++REXCVAR_DEFINE_BOOL(d3d12_pipeline_wait_at_submission_end, false, "GPU/D3D12",
++                    "Make the command thread create the queued pipelines itself and wait for all of them at the "
++                    "end of every submission (the original behaviour: a frame that needs a new, heavy pipeline "
++                    "then stalls for the whole compile, 300 ms and more). Off, the creation threads finish them "
++                    "in the background; draws that need a pipeline that is not ready are skipped until it is "
++                    "(async_shader_compilation).")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_tessellation_wireframe, false, "GPU/D3D12",
+                     "Render tessellation as wireframe");
+@@ -762,7 +771,18 @@
+     shader_storage_file_flush_needed_ = false;
+     pipeline_storage_file_flush_needed_ = false;
+   }
+-  if (!creation_threads_.empty()) {
++  if (!creation_threads_.empty() && REXCVAR_GET(d3d12_pipeline_wait_at_submission_end)) {
++    const auto wait_start = std::chrono::steady_clock::now();
++    struct WaitLog {
++      std::chrono::steady_clock::time_point start;
++      ~WaitLog() {
++        const double ms =
++            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++        static std::atomic<int> logged{0};
++        if (ms >= 15.0 && logged.fetch_add(1) < 200)
++          REXGPU_WARN("SUBMITWAIT {:.1f} ms creating and awaiting the queued pipelines", ms);
++      }
++    } wait_log{wait_start};
+     CreateQueuedPipelinesOnProcessorThread();
+     // Await creation of all queued pipelines.
+     bool await_creation_completion_event;
+@@ -909,8 +929,29 @@
+   assert_not_null(pipeline_handle_out);
+   assert_not_null(root_signature_out);
+ 
+-  bool use_async = REXCVAR_GET(async_shader_compilation) && !creation_threads_.empty() &&
+-                   pixel_shader != nullptr;
++  // Depth-only draws (no pixel shader: shadow maps, depth pre-passes) are created in the background too. The
++  // original created them on the command thread and stalled the frame for the whole compile.
++  bool use_async = REXCVAR_GET(async_shader_compilation) && !creation_threads_.empty();
++
++  // Diagnostics: a call that takes long on the command thread is logged with what it did (a pipeline stall
++  // is a frame stall), at most 200 lines a run.
++  struct SlowCall {
++    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
++    bool use_async, has_pixel_shader, new_pipeline = false, sync_create = false, sync_translate = false;
++    uint64_t vs_hash = 0, ps_hash = 0;
++    ~SlowCall() {
++      const double ms =
++          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++      static std::atomic<int> logged{0};
++      if (ms >= 15.0 && logged.fetch_add(1) < 200)
++        REXGPU_WARN("SLOWPIPE {:.1f} ms: async={} ps={} new={} sync_create={} sync_translate={} vs={:016X} ps={:016X}",
++                    ms, use_async, has_pixel_shader, new_pipeline, sync_create, sync_translate, vs_hash, ps_hash);
++    }
++  } slow_call;
++  slow_call.use_async = use_async;
++  slow_call.has_pixel_shader = pixel_shader != nullptr;
++  slow_call.vs_hash = vertex_shader->shader().ucode_data_hash();
++  slow_call.ps_hash = pixel_shader ? pixel_shader->shader().ucode_data_hash() : 0;
+ 
+   // Ensure shaders are translated - needed now for GetCurrentStateDescription.
+   // Edge flags are not supported yet (because polygon primitives are not).
+@@ -928,6 +969,7 @@
+   if (!vertex_shader->is_translated() && !use_async) {
+     std::lock_guard<std::mutex> lock(translation_request_lock_);
+     if (!vertex_shader->is_translated()) {
++      slow_call.sync_translate = true;
+       if (!TranslateAnalyzedShader(*shader_translator_, *vertex_shader, dxbc_converter_, dxc_utils_,
+                                    dxc_compiler_)) {
+         REXGPU_ERROR("Failed to translate the vertex shader!");
+@@ -954,6 +996,7 @@
+     if (!pixel_shader->is_translated() && !use_async) {
+       std::lock_guard<std::mutex> lock(translation_request_lock_);
+       if (!pixel_shader->is_translated()) {
++        slow_call.sync_translate = true;
+         pixel_shader->shader().AnalyzeUcode(ucode_disasm_buffer_);
+         if (!TranslateAnalyzedShader(*shader_translator_, *pixel_shader, dxbc_converter_,
+                                      dxc_utils_, dxc_compiler_)) {
+@@ -1009,6 +1052,7 @@
+   }
+   PROFILE_PIPELINE_CACHE_MISS();
+ 
++  slow_call.new_pipeline = true;
+   Pipeline* new_pipeline = new Pipeline;
+   std::memcpy(&new_pipeline->description, &runtime_description, sizeof(runtime_description));
+   new_pipeline->root_signature.store(runtime_description.root_signature, std::memory_order_release);
+@@ -1033,6 +1077,7 @@
+     }
+     creation_request_cond_.notify_one();
+   } else {
++    slow_call.sync_create = true;
+     new_pipeline->state.store(CreateD3D12Pipeline(runtime_description), std::memory_order_release);
+   }
+ 
