@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 #include "gow2_widescreen.h"
 
+#include "gow2_gpu_pick.h"
+
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -200,7 +202,17 @@ void WidenUiImagesTick(const PPCContext& ctx, uint8_t* base) {
 }  // namespace
 
 double WidescreenAspect() {
-  static const double aspect = widescreen::ParseAspect(REXCVAR_GET(gow2_widescreen), DisplayAspect());
+  static const double aspect = [] {
+    const std::string mode = REXCVAR_GET(gow2_widescreen);
+    const double parsed = widescreen::ParseAspect(mode, DisplayAspect());
+    if (mode != "auto" || parsed <= 0.0) return parsed;
+    const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
+    const std::string gpu = ChooseRenderGpu().name;
+    if (widescreen::AutoWidescreenSafe(path, gpu)) return parsed;
+    REXLOG_INFO("WIDESCREEN auto stays 16:9 on {} with render target path '{}' (artifacts above 1280 wide); "
+                "set gow2_widescreen = \"21:9\" and render_target_path_d3d12 = \"rov\" to try it", gpu, path);
+    return 0.0;
+  }();
   return aspect;
 }
 

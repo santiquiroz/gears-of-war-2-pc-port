@@ -18,6 +18,18 @@ constexpr int kMinWidth = 960;
 constexpr int kMaxWidth = 1680;       // 21:9; scene colour and depth then use 9.5 of the 10 MB of EDRAM
 constexpr long long kEdramBytes = 10LL * 1024 * 1024;
 
+// Patch 0026 widens the EDRAM only on the pixel shader interlock (ROV) render target path. With "auto",
+// widescreen therefore turns on only where that path is in use: render_target_path_d3d12 = "rov", or the
+// automatic choice on NVIDIA and Intel; on AMD the automatic choice is host render targets ("rtv"), which
+// still wrap the half-resolution targets onto the scene depth above 1280 wide.
+inline bool AutoWidescreenSafe(const std::string& render_target_path, const std::string& gpu_name) {
+  if (render_target_path == "rov") return true;
+  if (render_target_path == "rtv") return false;
+  std::string upper;
+  for (char c : gpu_name) upper += char((c >= 'a' && c <= 'z') ? c - 32 : c);
+  return upper.find("NVIDIA") != std::string::npos || upper.find("INTEL") != std::string::npos;
+}
+
 // "off", "", "0", "false" -> 0; "auto" -> display_aspect when it is wider than 16:9, else 0; "21:9" or "2.39" -> that
 // aspect. Anything outside 1.2 .. 4 names no widescreen (0).
 inline double ParseAspect(const std::string& text, double display_aspect) {
