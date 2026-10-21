@@ -1,0 +1,249 @@
+diff --git a/include/rex/input/pad_remap.h b/include/rex/input/pad_remap.h
+new file mode 100644
+index 0000000..21dd179
+--- /dev/null
++++ b/include/rex/input/pad_remap.h
+@@ -0,0 +1,64 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++#include <string_view>
++
++namespace rex::input::pad_remap {
++
++struct Button {
++  std::string_view name;
++  uint16_t bit;
++};
++
++inline constexpr std::array<Button, 14> kButtons = {{
++    {"a", 0x1000},
++    {"b", 0x2000},
++    {"x", 0x4000},
++    {"y", 0x8000},
++    {"lb", 0x0100},
++    {"rb", 0x0200},
++    {"back", 0x0020},
++    {"start", 0x0010},
++    {"ls", 0x0040},
++    {"rs", 0x0080},
++    {"dpad_up", 0x0001},
++    {"dpad_down", 0x0002},
++    {"dpad_left", 0x0004},
++    {"dpad_right", 0x0008},
++}};
++
++constexpr uint16_t BitForName(std::string_view name) {
++  for (const auto& btn : kButtons) {
++    if (btn.name == name) {
++      return btn.bit;
++    }
++  }
++  return 0;
++}
++
++constexpr uint16_t Remap(uint16_t physical, const std::array<uint16_t, 14>& sources) {
++  uint16_t result = 0;
++  for (size_t i = 0; i < sources.size(); ++i) {
++    if (sources[i] != 0 && (physical & sources[i]) != 0) {
++      result |= kButtons[i].bit;
++    }
++  }
++  // Pass through bits outside the 14 remapped buttons unchanged.
++  uint16_t all_remapped_bits = 0;
++  for (const auto& btn : kButtons) {
++    all_remapped_bits |= btn.bit;
++  }
++  result |= (physical & ~all_remapped_bits);
++  return result;
++}
++
++constexpr std::array<uint16_t, 14> IdentitySources() {
++  std::array<uint16_t, 14> src{};
++  for (size_t i = 0; i < 14; ++i) {
++    src[i] = kButtons[i].bit;
++  }
++  return src;
++}
++
++}  // namespace rex::input::pad_remap
+diff --git a/include/rex/input/sdl/sdl_input_driver.h b/include/rex/input/sdl/sdl_input_driver.h
+index cf0e3d1..6e776db 100644
+--- a/include/rex/input/sdl/sdl_input_driver.h
++++ b/include/rex/input/sdl/sdl_input_driver.h
+@@ -62,6 +62,7 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+     SDL_Gamepad* sdl;
+     X_INPUT_CAPABILITIES caps;
+     X_INPUT_STATE state;
++    uint16_t physical_buttons = 0;  // XInput bits of the buttons physically held, before pad_map_* remapping.
+     bool state_changed;
+     bool is_active;
+     DeviceId id;
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index f2dab7e..6a5b449 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -19,12 +19,42 @@
+ #include <rex/cvar.h>
+ #include <rex/input/flags.h>
+ #include <rex/input/sdl/sdl_input_driver.h>
++#include <rex/input/pad_remap.h>
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+ 
+ REXCVAR_DEFINE_STRING(hid_mappings_file, "gamecontrollerdb.txt", "Input",
+                       "Path to SDL gamecontroller mappings file");
+ 
++REXCVAR_DEFINE_STRING(pad_map_a, "a", "Input",
++                      "Controller button that presses the game's A button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_b, "b", "Input",
++                      "Controller button that presses the game's B button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_x, "x", "Input",
++                      "Controller button that presses the game's X button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_y, "y", "Input",
++                      "Controller button that presses the game's Y button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_lb, "lb", "Input",
++                      "Controller button that presses the game's LB button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_rb, "rb", "Input",
++                      "Controller button that presses the game's RB button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_back, "back", "Input",
++                      "Controller button that presses the game's Back button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_start, "start", "Input",
++                      "Controller button that presses the game's Start button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_ls, "ls", "Input",
++                      "Controller button that presses the game's LS button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_rs, "rs", "Input",
++                      "Controller button that presses the game's RS button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_dpad_up, "dpad_up", "Input",
++                      "Controller button that presses the game's Dpad Up button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_dpad_down, "dpad_down", "Input",
++                      "Controller button that presses the game's Dpad Down button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_dpad_left, "dpad_left", "Input",
++                      "Controller button that presses the game's Dpad Left button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++REXCVAR_DEFINE_STRING(pad_map_dpad_right, "dpad_right", "Input",
++                      "Controller button that presses the game's Dpad Right button: a, b, x, y, lb, rb, back, start, ls, rs, dpad_up, dpad_down, dpad_left, dpad_right or none");
++
+ namespace rex::input::sdl {
+ 
+ namespace {
+@@ -32,6 +62,26 @@ namespace {
+ // SDL clamps to SDL_MAX_RUMBLE_DURATION_MS, which is not a public constant.
+ constexpr uint32_t kRumbleDurationMs = 0xFFFF;
+ 
++std::array<uint16_t, 14> CurrentSources() {
++  using rex::input::pad_remap::BitForName;
++  std::array<uint16_t, 14> sources{};
++  sources[0]  = BitForName(std::string_view(REXCVAR_GET(pad_map_a)));
++  sources[1]  = BitForName(std::string_view(REXCVAR_GET(pad_map_b)));
++  sources[2]  = BitForName(std::string_view(REXCVAR_GET(pad_map_x)));
++  sources[3]  = BitForName(std::string_view(REXCVAR_GET(pad_map_y)));
++  sources[4]  = BitForName(std::string_view(REXCVAR_GET(pad_map_lb)));
++  sources[5]  = BitForName(std::string_view(REXCVAR_GET(pad_map_rb)));
++  sources[6]  = BitForName(std::string_view(REXCVAR_GET(pad_map_back)));
++  sources[7]  = BitForName(std::string_view(REXCVAR_GET(pad_map_start)));
++  sources[8]  = BitForName(std::string_view(REXCVAR_GET(pad_map_ls)));
++  sources[9]  = BitForName(std::string_view(REXCVAR_GET(pad_map_rs)));
++  sources[10] = BitForName(std::string_view(REXCVAR_GET(pad_map_dpad_up)));
++  sources[11] = BitForName(std::string_view(REXCVAR_GET(pad_map_dpad_down)));
++  sources[12] = BitForName(std::string_view(REXCVAR_GET(pad_map_dpad_left)));
++  sources[13] = BitForName(std::string_view(REXCVAR_GET(pad_map_dpad_right)));
++  return sources;
++}
++
+ }  // namespace
+ 
+ SDLInputDriver::SDLInputDriver(rex::ui::Window* window, size_t window_z_order)
+@@ -574,7 +624,6 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+   }
+   auto& controller = controllers_.at(*idx);
+ 
+-  uint16_t xbuttons = controller.state.gamepad.buttons;
+   // Lookup the XInput button code.
+   if (event.gbutton.button >= xbutton_lookup.size()) {
+     // A newer SDL Version may have added new buttons.
+@@ -587,11 +636,11 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+     if (xbutton == X_INPUT_GAMEPAD_GUIDE && !REXCVAR_GET(guide_button)) {
+       return;
+     }
+-    xbuttons |= xbutton;
++    controller.physical_buttons |= xbutton;
+   } else {
+-    xbuttons &= ~xbutton;
++    controller.physical_buttons &= ~xbutton;
+   }
+-  controller.state.gamepad.buttons = xbuttons;
++  controller.state.gamepad.buttons = pad_remap::Remap(controller.physical_buttons, CurrentSources());
+   controller.state_changed = true;
+ }
+ 
+diff --git a/tests/unit/input/pad_remap_test.cpp b/tests/unit/input/pad_remap_test.cpp
+new file mode 100644
+index 0000000..7014751
+--- /dev/null
++++ b/tests/unit/input/pad_remap_test.cpp
+@@ -0,0 +1,64 @@
++#include <catch2/catch_test_macros.hpp>
++
++#include <cstdint>
++#include <string_view>
++
++#include <rex/input/pad_remap.h>
++
++namespace pr = rex::input::pad_remap;
++
++TEST_CASE("identity remapping leaves every bit unchanged", "[pad_remap]") {
++  auto identity = pr::IdentitySources();
++  CHECK(pr::Remap(0, identity) == 0);
++  CHECK(pr::Remap(0xFFFF, identity) == 0xFFFF);
++  for (uint16_t bit = 1; bit != 0; bit <<= 1) {
++    CHECK(pr::Remap(bit, identity) == bit);
++  }
++}
++
++TEST_CASE("swapping A and B sources swaps the bits", "[pad_remap]") {
++  std::array<uint16_t, 14> sources = pr::IdentitySources();
++  sources[0] = 0x2000;  // A driven by B
++  sources[1] = 0x1000;  // B driven by A
++  CHECK(pr::Remap(0x1000, sources) == 0x2000);  // physical A -> game B
++  CHECK(pr::Remap(0x2000, sources) == 0x1000);  // physical B -> game A
++  CHECK(pr::Remap(0x3000, sources) == 0x3000);  // both -> both
++}
++
++TEST_CASE("one physical drives two game buttons", "[pad_remap]") {
++  std::array<uint16_t, 14> sources = pr::IdentitySources();
++  sources[0] = 0x1000;  // A -> A (same)
++  sources[2] = 0x1000;  // X -> A (physical A also drives X)
++  CHECK(pr::Remap(0x1000, sources) == (0x1000 | 0x4000));
++}
++
++TEST_CASE("none bit is zero and drops the mapped button", "[pad_remap]") {
++  std::array<uint16_t, 14> sources = pr::IdentitySources();
++  sources[0] = 0;  // none for A
++  CHECK(pr::BitForName("none") == 0);
++  CHECK(pr::BitForName("bogus") == 0);
++  CHECK(pr::Remap(0x1000, sources) == 0);
++}
++
++TEST_CASE("Guide bit passes through unchanged", "[pad_remap]") {
++  auto identity = pr::IdentitySources();
++  CHECK(pr::Remap(0x0400, identity) == 0x0400);
++}
++
++TEST_CASE("BitForName covers all 14 names and unknown returns 0", "[pad_remap]") {
++  CHECK(pr::BitForName("a") == 0x1000);
++  CHECK(pr::BitForName("b") == 0x2000);
++  CHECK(pr::BitForName("x") == 0x4000);
++  CHECK(pr::BitForName("y") == 0x8000);
++  CHECK(pr::BitForName("lb") == 0x0100);
++  CHECK(pr::BitForName("rb") == 0x0200);
++  CHECK(pr::BitForName("back") == 0x0020);
++  CHECK(pr::BitForName("start") == 0x0010);
++  CHECK(pr::BitForName("ls") == 0x0040);
++  CHECK(pr::BitForName("rs") == 0x0080);
++  CHECK(pr::BitForName("dpad_up") == 0x0001);
++  CHECK(pr::BitForName("dpad_down") == 0x0002);
++  CHECK(pr::BitForName("dpad_left") == 0x0004);
++  CHECK(pr::BitForName("dpad_right") == 0x0008);
++  CHECK(pr::BitForName("bogus") == 0);
++}

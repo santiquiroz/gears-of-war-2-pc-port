@@ -628,6 +628,16 @@ void AddControls(std::vector<Setting>& out) {
       .help_en = "Change the key for each action.",
       .help_es = "Cambia la tecla de cada acción."});
   out.push_back(Setting{
+      .id = "pad_buttons",
+      .tab = Tab::kControls,
+      .kind = Kind::kAction,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Controller buttons",
+      .label_es = "Botones del mando",
+      .help_en = "Choose which controller button presses each of the game's buttons.",
+      .help_es = "Elige qué botón del mando pulsa cada botón del juego."});
+  out.push_back(Setting{
       .id = "controller_layout",
       .tab = Tab::kControls,
       .kind = Kind::kInfo,
@@ -683,6 +693,60 @@ void AddKeybinds(std::vector<Setting>& out) {
   AddKeybind(out, "keybind_dpad_left", "Weapon 4", "Arma 4");
   AddKeybind(out, "keybind_back", "Back", "Atrás");
   AddKeybind(out, "keybind_start", "Pause", "Pausa");
+}
+
+void AddPadButton(std::vector<Setting>& out, std::string_view id, std::string_view en,
+                  std::string_view es) {
+  out.push_back(Setting{
+      .id = id,
+      .tab = Tab::kControls,
+      .page = Page::kPadButtons,
+      .kind = Kind::kChoice,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = en,
+      .label_es = es,
+      .help_en =
+          "Which controller button presses this game button. The game's own Options > Controller still "
+          "decides what it does. Default restores it; it works at once.",
+      .help_es =
+          "Qué botón del mando pulsa este botón del juego. Opciones > Mando del propio juego sigue "
+          "decidiendo qué hace. Predeterminado lo restaura; funciona al instante.",
+      .choices = {
+          C("a", "A"),
+          C("b", "B"),
+          C("x", "X"),
+          C("y", "Y"),
+          C("lb", "LB"),
+          C("rb", "RB"),
+          C("back", "Back"),
+          C("start", "Start"),
+          C("ls", "Left stick click (LS)", "Clic del stick izquierdo (LS)"),
+          C("rs", "Right stick click (RS)", "Clic del stick derecho (RS)"),
+          C("dpad_up", "D-pad up", "Cruceta arriba"),
+          C("dpad_down", "D-pad down", "Cruceta abajo"),
+          C("dpad_left", "D-pad left", "Cruceta izquierda"),
+          C("dpad_right", "D-pad right", "Cruceta derecha"),
+          C("none", "None (off)", "Ninguno (apagado)"),
+      }});
+}
+
+// The game's default layout, as the key binding rows name it.
+void AddPadButtons(std::vector<Setting>& out) {
+  AddPadButton(out, "pad_map_a", "A: cover, run, roll", "A: cobertura, correr, rodar");
+  AddPadButton(out, "pad_map_b", "B: melee, chainsaw", "B: golpe, motosierra");
+  AddPadButton(out, "pad_map_x", "X: use, pick up, revive", "X: usar, recoger, revivir");
+  AddPadButton(out, "pad_map_y", "Y: point of interest", "Y: punto de interés");
+  AddPadButton(out, "pad_map_lb", "LB: tactical display", "LB: pantalla táctica");
+  AddPadButton(out, "pad_map_rb", "RB: reload", "RB: recargar");
+  AddPadButton(out, "pad_map_back", "Back", "Back");
+  AddPadButton(out, "pad_map_start", "Start: pause", "Start: pausa");
+  AddPadButton(out, "pad_map_ls", "Left stick click (LS)", "Clic del stick izquierdo (LS)");
+  AddPadButton(out, "pad_map_rs", "Right stick click (RS): zoom", "Clic del stick derecho (RS): zoom");
+  AddPadButton(out, "pad_map_dpad_up", "D-pad up: weapon 1", "Cruceta arriba: arma 1");
+  AddPadButton(out, "pad_map_dpad_down", "D-pad down: weapon 3", "Cruceta abajo: arma 3");
+  AddPadButton(out, "pad_map_dpad_left", "D-pad left: weapon 4", "Cruceta izquierda: arma 4");
+  AddPadButton(out, "pad_map_dpad_right", "D-pad right: weapon 2", "Cruceta derecha: arma 2");
 }
 
 void AddTouch(std::vector<Setting>& out) {
@@ -1244,6 +1308,7 @@ std::vector<Setting> BuildCatalog() {
   AddGraphicsQuality(out);
   AddControls(out);
   AddKeybinds(out);
+  AddPadButtons(out);
   AddTouch(out);
   AddMultiplayer(out);
   AddHost(out);
@@ -1293,6 +1358,8 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("System", "Sistema", lang);
     case TextId::kPageKeybinds:
       return Pick("Key bindings", "Asignación de teclas", lang);
+    case TextId::kPagePadButtons:
+      return Pick("Controller buttons", "Botones del mando", lang);
     case TextId::kPageHost:
       return Pick("Host over the internet", "Alojar por internet", lang);
     case TextId::kOn:

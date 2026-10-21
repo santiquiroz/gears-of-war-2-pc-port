@@ -17,7 +17,7 @@ enum class Lang : uint8_t { kEn, kEs };
 enum class Tab : uint8_t { kDisplay, kGraphics, kControls, kTouch, kMultiplayer, kSaves, kAudio, kSystem };
 
 // kMain rows sit in their tab; the other pages open from an action row and close with Back.
-enum class Page : uint8_t { kMain, kKeybinds, kHost };
+enum class Page : uint8_t { kMain, kKeybinds, kPadButtons, kHost };
 
 enum class Kind : uint8_t {
   kToggle,   // "true" / "false"
@@ -80,7 +80,7 @@ struct Setting {
 enum class TextId : uint8_t {
   kTitle,
   kTabDisplay, kTabGraphics, kTabControls, kTabTouch, kTabMultiplayer, kTabSaves, kTabAudio, kTabSystem,
-  kPageKeybinds, kPageHost,
+  kPageKeybinds, kPagePadButtons, kPageHost,
   kOn, kOff,
   kApplyNow, kApplyNextLevel, kApplyRestart,
   kRestartBanner,      // followed by the labels of the pending rows

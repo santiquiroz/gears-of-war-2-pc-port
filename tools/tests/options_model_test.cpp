@@ -78,6 +78,7 @@ std::vector<Setting> MakeCatalog() {
   rows.push_back(MakeRow("key", Kind::kKeybind));
   rows.push_back(MakeRow("keybindings", Kind::kAction));
   rows.push_back(MakeRow("host_online", Kind::kAction));
+  rows.push_back(MakeRow("pad_buttons", Kind::kAction));
   rows.push_back(MakeRow("run", Kind::kAction));
   rows.push_back(MakeRow("advanced", Kind::kToggle));
   rows.back().advanced = true;
@@ -89,6 +90,8 @@ std::vector<Setting> MakeCatalog() {
   rows.back().page = Page::kKeybinds;
   rows.push_back(MakeRow("host_text", Kind::kText));
   rows.back().page = Page::kHost;
+  rows.push_back(MakeRow("pad_choice", Kind::kChoice));
+  rows.back().page = Page::kPadButtons;
   rows.push_back(MakeRow("restart", Kind::kToggle, Tab::kGraphics));
   rows.back().apply = Apply::kRestart;
   rows.back().label_en = "Restart setting";
@@ -411,6 +414,11 @@ void TestAcceptAndPages() {
   Expect(f.state.page == Page::kHost && f.state.row == 0, "host action opens host page");
   Send(f, Command::kBack);
   Expect(f.state.page == Page::kMain && f.state.row == IndexOf(f, "host_online"), "back returns to host action");
+  Select(f, "pad_buttons");
+  ExpectOutcome(Send(f, Command::kAccept), Outcome::Kind::kNone, "", "controller buttons opens page without action");
+  Expect(f.state.page == Page::kPadButtons, "controller buttons action opens its page");
+  Send(f, Command::kBack);
+  Expect(f.state.page == Page::kMain && f.state.row == IndexOf(f, "pad_buttons"), "back returns to controller buttons action");
   Select(f, "host_online");
   Send(f, Command::kAccept);
   Send(f, Command::kTabNext);

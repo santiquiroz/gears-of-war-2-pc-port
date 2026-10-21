@@ -41,6 +41,12 @@ constexpr ImU32 kGray = IM_COL32(200, 200, 200, 255);
 constexpr ImU32 kAmber = IM_COL32(224, 160, 48, 255);
 constexpr ImU32 kGreen = IM_COL32(108, 192, 112, 255);
 constexpr ImU32 kBlue = IM_COL32(106, 168, 232, 255);
+
+TextId PageTitle(Page page) {
+  if (page == Page::kHost) return TextId::kPageHost;
+  if (page == Page::kPadButtons) return TextId::kPagePadButtons;
+  return TextId::kPageKeybinds;
+}
 ImFont* g_regular = nullptr;
 ImFont* g_bold = nullptr;
 std::mutex g_modal_mutex;
@@ -577,7 +583,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::GetWindowDrawList()->AddRectFilled({left_, y + .07f*h_},
         {left_ + title_width, y + .076f*h_}, kRed);
     if (state_.page == Page::kMain) return;
-    const auto page = T(state_.page == Page::kHost ? TextId::kPageHost : TextId::kPageKeybinds);
+    const auto page = T(PageTitle(state_.page));
     DrawTriangle({left_+title_width+.03f*h_,y+.0355f*h_},true,kGray);
     DrawText({left_+title_width+.05f*h_,y+.018f*h_},page,.035f*h_,kGray,true);
   }

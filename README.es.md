@@ -112,7 +112,7 @@ En Android el menú de ajustes se llama Opciones del dispositivo (el engranaje d
 | Atrás | Tab |
 | Menú de opciones de PC | F10 |
 
-Un mando funciona al mismo tiempo. Todas las asignaciones están en `gow2.toml`.
+Un mando funciona al mismo tiempo. Sus botones se reasignan en Opciones de PC > Controles > Botones del mando (cualquier mando que SDL reconozca, Xbox incluido; se guarda como `pad_map_*`). Todas las asignaciones están en `gow2.toml`.
 
 ## Ajustes
 

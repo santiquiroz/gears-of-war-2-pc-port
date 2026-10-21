@@ -195,13 +195,14 @@ int CountPage(options::Page page) {
 void TestCounts() {
   Expect(CountTab(options::Tab::kDisplay) == 8, "display has 8 rows");
   Expect(CountTab(options::Tab::kGraphics) == 46, "graphics has 46 rows including quality heading, preset and 24 settings");
-  Expect(CountTab(options::Tab::kControls) == 11, "controls has 11 rows (keycap prompts added)");
+  Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 10, "multiplayer has 10 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
   Expect(CountTab(options::Tab::kSystem) == 13, "system has 13 rows");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
+  Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
 }
 

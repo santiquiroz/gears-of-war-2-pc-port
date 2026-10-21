@@ -112,7 +112,7 @@ The settings menu is called Device Options on Android (the gear in the top-right
 | Back | Tab |
 | PC Options menu | F10 |
 
-A controller works at the same time. All bindings are in `gow2.toml`.
+A controller works at the same time. Its buttons can be remapped in PC Options > Controls > Controller buttons (every controller SDL knows, Xbox included; saved as `pad_map_*`). All bindings are in `gow2.toml`.
 
 ## Settings
 

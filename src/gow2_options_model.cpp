@@ -194,10 +194,36 @@ void MoveSelection(State& state, int direction, const std::vector<Setting>& cata
   if (next >= 0) state.row = next;
 }
 
+struct PageAction {
+  std::string_view action;
+  Page page;
+};
+
+constexpr PageAction kPageActions[] = {
+    {"keybindings", Page::kKeybinds},
+    {"pad_buttons", Page::kPadButtons},
+    {"host_online", Page::kHost},
+};
+
+const PageAction* PageActionFor(std::string_view action) {
+  for (const auto& entry : kPageActions) {
+    if (entry.action == action) return &entry;
+  }
+  return nullptr;
+}
+
+std::string_view ActionForPage(Page page) {
+  for (const auto& entry : kPageActions) {
+    if (entry.page == page) return entry.action;
+  }
+  return {};
+}
+
 Outcome AcceptAction(State& state, const Setting& s, const std::vector<Setting>& catalog,
                      const Values& values, const Context& ctx) {
-  if (s.id != "keybindings" && s.id != "host_online") return {Outcome::Kind::kRunAction, std::string(s.id)};
-  state.page = s.id == "keybindings" ? Page::kKeybinds : Page::kHost;
+  const auto* opens = PageActionFor(s.id);
+  if (!opens) return {Outcome::Kind::kRunAction, std::string(s.id)};
+  state.page = opens->page;
   SelectFirst(state, catalog, values, ctx);
   return {};
 }
@@ -216,7 +242,7 @@ Outcome AcceptSelected(State& state, const std::vector<Setting>& catalog, Values
 }
 
 void ReturnToMain(State& state, const std::vector<Setting>& catalog, const Values& values, const Context& ctx) {
-  const auto action = state.page == Page::kKeybinds ? "keybindings" : "host_online";
+  const auto action = ActionForPage(state.page);
   state.page = Page::kMain;
   const auto rows = CurrentRows(state, catalog, values, ctx);
   const auto found = std::find_if(rows.begin(), rows.end(),
