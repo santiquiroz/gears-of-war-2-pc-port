@@ -1,0 +1,225 @@
+diff --git a/include/rex/graphics/d3d12/pipeline_cache.h b/include/rex/graphics/d3d12/pipeline_cache.h
+index 7a9d6a2..9d6eba1 100644
+--- a/include/rex/graphics/d3d12/pipeline_cache.h
++++ b/include/rex/graphics/d3d12/pipeline_cache.h
+@@ -291,6 +291,14 @@ class PipelineCache {
+   const std::vector<uint32_t>& GetGeometryShader(GeometryShaderKey key);
+ 
+   ID3D12PipelineState* CreateD3D12Pipeline(const PipelineRuntimeDescription& runtime_description);
++
++  // Driver-compiled pipelines kept between runs (ID3D12PipelineLibrary), in shaders/local because
++  // they are only valid for this GPU and driver.
++  void LoadPipelineLibrary(const std::filesystem::path& local_root, uint32_t title_id, bool edram_rov_used);
++  void SavePipelineLibrary();
++  void ReleasePipelineLibrary();
++  ID3D12PipelineState* CreateOrLoadPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& state_desc,
++                                                 uint64_t description_hash);
+   bool PrepareRuntimeDescriptionForQueuedCreation(Pipeline* pipeline,
+                                                   PipelineRuntimeDescription& runtime_description);
+ 
+@@ -379,6 +387,11 @@ class PipelineCache {
+ 
+   // Pipeline storage output stream, for preload in the next emulator runs.
+   FILE* pipeline_storage_file_ = nullptr;
++  ID3D12PipelineLibrary* pipeline_library_ = nullptr;
++  std::vector<uint8_t> pipeline_library_blob_;
++  std::filesystem::path pipeline_library_path_;
++  std::mutex pipeline_library_mutex_;
++  bool pipeline_library_dirty_ = false;
+   bool pipeline_storage_file_flush_needed_ = false;
+ 
+   // Thread for asynchronous writing to the storage streams.
+diff --git a/src/graphics/d3d12/pipeline_cache.cpp b/src/graphics/d3d12/pipeline_cache.cpp
+index 496b2fb..241ec8e 100644
+--- a/src/graphics/d3d12/pipeline_cache.cpp
++++ b/src/graphics/d3d12/pipeline_cache.cpp
+@@ -54,6 +54,11 @@
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_dxbc_disasm, false, "GPU/D3D12", "Dump DXBC disassembly");
+ 
++REXCVAR_DEFINE_BOOL(d3d12_pipeline_library, true, "GPU/D3D12",
++                    "Keep the driver-compiled pipelines between runs (shaders/local/*.d3d12.plib), so "
++                    "starting the game does not compile them again")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ REXCVAR_DEFINE_BOOL(d3d12_dxbc_disasm_dxilconv, false, "GPU/D3D12",
+                     "Dump DXIL conversion disassembly");
+ 
+@@ -254,6 +259,8 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+   bool edram_rov_used =
+       render_target_cache_.GetPath() == RenderTargetCache::Path::kPixelShaderInterlock;
+ 
++  LoadPipelineLibrary(shader_storage_root / "local", title_id, edram_rov_used);
++
+   // Initialize the pipeline storage stream - read pipeline descriptions and
+   // collect used shader modifications to translate.
+   std::vector<PipelineStoredDescription> pipeline_stored_descriptions;
+@@ -706,6 +713,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+         pipelines_created,
+         (rex::chrono::Clock::QueryHostTickCount() - pipeline_creation_start_) * 1000 /
+             rex::chrono::Clock::QueryHostTickFrequency());
++    SavePipelineLibrary();
+     // If any pipeline descriptions were corrupted (or the whole file has excess
+     // bytes in the end), truncate to the last valid pipeline description.
+     rex::filesystem::TruncateStdioFile(
+@@ -751,6 +759,8 @@ void PipelineCache::ShutdownShaderStorage() {
+     pipeline_storage_file_ = nullptr;
+     pipeline_storage_file_flush_needed_ = false;
+   }
++  SavePipelineLibrary();
++  ReleasePipelineLibrary();
+ 
+   if (shader_storage_file_) {
+     fclose(shader_storage_file_);
+@@ -3080,9 +3090,9 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
+   }
+ 
+   // Create the D3D12 pipeline state object.
+-  ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
+-  ID3D12PipelineState* state;
+-  if (FAILED(device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state)))) {
++  ID3D12PipelineState* state =
++      CreateOrLoadPipelineState(state_desc, XXH3_64bits(&description, sizeof(description)));
++  if (state == nullptr) {
+     if (runtime_description.pixel_shader != nullptr) {
+       REXGPU_ERROR("Failed to create graphics pipeline with VS {:016X}, PS {:016X}",
+                    runtime_description.vertex_shader->shader().ucode_data_hash(),
+@@ -3320,4 +3330,138 @@ void PipelineCache::CreateQueuedPipelinesOnProcessorThread() {
+   }
+ }
+ 
++
++namespace {
++
++uint64_t PipelineLibraryKey(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc, uint64_t description_hash) {
++  uint64_t key = description_hash;
++  for (const D3D12_SHADER_BYTECODE* code : {&desc.VS, &desc.PS, &desc.GS}) {
++    if (code->pShaderBytecode != nullptr && code->BytecodeLength != 0) {
++      key = XXH3_64bits_withSeed(code->pShaderBytecode, code->BytecodeLength, key);
++    }
++  }
++  return key;
++}
++
++}  // namespace
++
++void PipelineCache::LoadPipelineLibrary(const std::filesystem::path& local_root, uint32_t title_id,
++                                        bool edram_rov_used) {
++  ReleasePipelineLibrary();
++  if (!REXCVAR_GET(d3d12_pipeline_library)) {
++    return;
++  }
++  ID3D12Device1* device1 = nullptr;
++  if (FAILED(command_processor_.GetD3D12Provider().GetDevice()->QueryInterface(IID_PPV_ARGS(&device1)))) {
++    REXGPU_INFO("D3D12 pipeline library unavailable (no ID3D12Device1)");
++    return;
++  }
++  std::error_code ec;
++  std::filesystem::create_directories(local_root, ec);
++  pipeline_library_path_ =
++      local_root / fmt::format("{:08X}.{}.d3d12.plib", title_id, edram_rov_used ? "rov" : "rtv");
++  std::vector<uint8_t> blob;
++  if (FILE* file = rex::filesystem::OpenFile(pipeline_library_path_, "rb")) {
++    fseek(file, 0, SEEK_END);
++    const long size = ftell(file);
++    fseek(file, 0, SEEK_SET);
++    if (size > 0) {
++      blob.resize(size_t(size));
++      if (fread(blob.data(), 1, blob.size(), file) != blob.size()) {
++        blob.clear();
++      }
++    }
++    fclose(file);
++  }
++  // The library keeps pointing at the blob it was created from: it lives until the release.
++  pipeline_library_blob_ = std::move(blob);
++  HRESULT result = device1->CreatePipelineLibrary(pipeline_library_blob_.data(), pipeline_library_blob_.size(),
++                                                  IID_PPV_ARGS(&pipeline_library_));
++  if (FAILED(result) && !pipeline_library_blob_.empty()) {
++    // Another driver or GPU, or a damaged file: start an empty library.
++    REXGPU_INFO("D3D12 pipeline library {} not reused (0x{:08X}), starting a new one",
++                rex::path_to_utf8(pipeline_library_path_), uint32_t(result));
++    pipeline_library_blob_.clear();
++    result = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipeline_library_));
++  }
++  device1->Release();
++  if (FAILED(result)) {
++    pipeline_library_ = nullptr;
++    REXGPU_WARN("D3D12 pipeline library could not be created (0x{:08X})", uint32_t(result));
++    return;
++  }
++  pipeline_library_dirty_ = false;
++  REXGPU_INFO("D3D12 pipeline library {} ({} bytes)", rex::path_to_utf8(pipeline_library_path_),
++              pipeline_library_blob_.size());
++}
++
++void PipelineCache::SavePipelineLibrary() {
++  std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
++  if (pipeline_library_ == nullptr || !pipeline_library_dirty_) {
++    return;
++  }
++  std::vector<uint8_t> data(pipeline_library_->GetSerializedSize());
++  if (data.empty() || FAILED(pipeline_library_->Serialize(data.data(), data.size()))) {
++    REXGPU_WARN("D3D12 pipeline library could not be serialized");
++    return;
++  }
++  std::filesystem::path temp = pipeline_library_path_;
++  temp += ".tmp";
++  FILE* file = rex::filesystem::OpenFile(temp, "wb");
++  if (file == nullptr) {
++    return;
++  }
++  const bool written = fwrite(data.data(), 1, data.size(), file) == data.size();
++  fclose(file);
++  std::error_code ec;
++  if (written) {
++    std::filesystem::rename(temp, pipeline_library_path_, ec);
++  }
++  if (!written || ec) {
++    std::filesystem::remove(temp, ec);
++    REXGPU_WARN("D3D12 pipeline library could not be written to {}", rex::path_to_utf8(pipeline_library_path_));
++    return;
++  }
++  pipeline_library_dirty_ = false;
++  REXGPU_INFO("D3D12 pipeline library saved ({} bytes)", data.size());
++}
++
++void PipelineCache::ReleasePipelineLibrary() {
++  std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
++  if (pipeline_library_ != nullptr) {
++    pipeline_library_->Release();
++    pipeline_library_ = nullptr;
++  }
++  pipeline_library_blob_.clear();
++  pipeline_library_dirty_ = false;
++}
++
++ID3D12PipelineState* PipelineCache::CreateOrLoadPipelineState(
++    const D3D12_GRAPHICS_PIPELINE_STATE_DESC& state_desc, uint64_t description_hash) {
++  ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
++  ID3D12PipelineState* state = nullptr;
++  std::wstring name;
++  {
++    std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
++    if (pipeline_library_ != nullptr) {
++      wchar_t key_text[17];
++      swprintf(key_text, 17, L"%016llX", static_cast<unsigned long long>(PipelineLibraryKey(state_desc, description_hash)));
++      name = key_text;
++      if (SUCCEEDED(pipeline_library_->LoadGraphicsPipeline(name.c_str(), &state_desc, IID_PPV_ARGS(&state)))) {
++        return state;
++      }
++    }
++  }
++  if (FAILED(device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state)))) {
++    return nullptr;
++  }
++  if (!name.empty()) {
++    std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
++    if (pipeline_library_ != nullptr && SUCCEEDED(pipeline_library_->StorePipeline(name.c_str(), state))) {
++      pipeline_library_dirty_ = true;
++    }
++  }
++  return state;
++}
++
+ }  // namespace rex::graphics::d3d12
