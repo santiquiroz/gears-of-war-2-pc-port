@@ -24,6 +24,8 @@ final class GameSetupScreen {
     interface Actions {
         void onChooseFolder();
 
+        void onChooseIso();
+
         void onCheckAgain();
     }
 
@@ -35,6 +37,7 @@ final class GameSetupScreen {
 
     private final Activity activity;
     private final Button chooseButton;
+    private final Button isoButton;
     private final Button checkButton;
     private final ProgressBar progressBar;
     private final TextView statusText;
@@ -43,6 +46,7 @@ final class GameSetupScreen {
     GameSetupScreen(Activity activity, File gameDir, Actions actions) {
         this.activity = activity;
         chooseButton = button(R.string.setup_choose_folder, v -> actions.onChooseFolder());
+        isoButton = button(R.string.setup_choose_iso, v -> actions.onChooseIso());
         checkButton = button(R.string.setup_check_again, v -> actions.onCheckAgain());
         progressBar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
         statusText = text("", BODY_SP);
@@ -145,6 +149,7 @@ final class GameSetupScreen {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.addView(chooseButton);
+        row.addView(isoButton);
         row.addView(checkButton);
         return row;
     }
@@ -179,6 +184,7 @@ final class GameSetupScreen {
 
     private void setButtonsEnabled(boolean enabled) {
         chooseButton.setEnabled(enabled);
+        isoButton.setEnabled(enabled);
         checkButton.setEnabled(enabled);
     }
 

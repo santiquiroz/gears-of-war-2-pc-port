@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="setup_title">Se necesitan tus archivos del juego</string>
-    <string name="setup_explanation">Esta app solo contiene el código propio del port. Para jugar necesitas tu propia copia extraída de Gears of War 2: la carpeta que contiene default.xex.\n\nElige esa carpeta y la app la copia a su propio almacenamiento. El juego mapea sus archivos en memoria y Android no puede mapear archivos abiertos con el selector de carpetas, así que la copia necesita tanto espacio libre como ocupa el juego.\n\nTambién puedes copiar la carpeta tú mismo, por ejemplo por USB desde un PC, para que default.xex quede en:</string>
+    <string name="setup_explanation">Esta app solo contiene el código propio del port. Para jugar necesitas tu propia copia de Gears of War 2: la carpeta extraída que contiene default.xex, o la imagen .iso de tu disco.\n\nElige la carpeta o el .iso y la app lo copia o lo extrae a su propio almacenamiento. El juego mapea sus archivos en memoria y Android no puede mapear archivos abiertos con el selector de carpetas, así que la copia necesita tanto espacio libre como ocupa el juego.\n\nTambién puedes copiar la carpeta tú mismo, por ejemplo por USB desde un PC, para que default.xex quede en:</string>
     <string name="setup_choose_folder">Elegir carpeta del juego</string>
+    <string name="setup_choose_iso">Elegir archivo .iso</string>
+    <string name="setup_no_file">No se eligió ningún archivo.</string>
     <string name="setup_check_again">Volver a comprobar</string>
     <string name="setup_copying">Copiando los archivos del juego…</string>
     <string name="setup_progress">%1$s de %2$s\n%3$s</string>

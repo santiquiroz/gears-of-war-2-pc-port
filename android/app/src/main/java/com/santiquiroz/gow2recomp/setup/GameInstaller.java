@@ -66,7 +66,7 @@ public final class GameInstaller {
         return total;
     }
 
-    private static void requireFreeSpace(long total, File stagingDir) throws GameSetupException {
+    static void requireFreeSpace(long total, File stagingDir) throws GameSetupException {
         File parent = stagingDir.getParentFile();
         if (parent == null) {
             parent = stagingDir;
@@ -81,7 +81,7 @@ public final class GameInstaller {
         }
     }
 
-    private static void prepareStagingDir(File stagingDir) throws IOException {
+    static void prepareStagingDir(File stagingDir) throws IOException {
         if (stagingDir.exists()) {
             deleteRecursively(stagingDir);
         }
@@ -114,7 +114,7 @@ public final class GameInstaller {
         }
     }
 
-    private static void ensureParent(File target) throws IOException {
+    static void ensureParent(File target) throws IOException {
         File parent = target.getParentFile();
         if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
             throw new IOException("cannot create " + parent);
@@ -151,7 +151,7 @@ public final class GameInstaller {
         }
     }
 
-    private static long emitProgress(ProgressListener listener, long copied, long total,
+    static long emitProgress(ProgressListener listener, long copied, long total,
             String relativePath, long lastEmit, boolean force) {
         if (listener == null) {
             return lastEmit;
@@ -164,7 +164,7 @@ public final class GameInstaller {
         return now;
     }
 
-    private static void replaceGameFolder(File gameDir, File stagingDir) throws IOException {
+    static void replaceGameFolder(File gameDir, File stagingDir) throws IOException {
         if (gameDir.exists()) {
             deleteRecursively(gameDir);
         }
@@ -213,7 +213,7 @@ public final class GameInstaller {
         });
     }
 
-    private static void deleteQuietly(File file) {
+    static void deleteQuietly(File file) {
         try {
             deleteRecursively(file);
         } catch (IOException | RuntimeException ignored) {

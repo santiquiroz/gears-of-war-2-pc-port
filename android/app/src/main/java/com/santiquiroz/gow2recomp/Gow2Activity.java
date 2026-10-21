@@ -13,6 +13,7 @@ import android.view.WindowManager;
 
 import com.santiquiroz.gow2recomp.setup.GameInstaller;
 import com.santiquiroz.gow2recomp.setup.GameSetupException;
+import com.santiquiroz.gow2recomp.setup.IsoInstaller;
 import com.santiquiroz.gow2recomp.update.UpdateChecker;
 import com.santiquiroz.gow2recomp.update.UpdateInfo;
 
@@ -29,6 +30,7 @@ public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions
     static final String EXTRA_LAUNCH_OPTIONS = "com.santiquiroz.gow2recomp.extra.LAUNCH_OPTIONS";
     private static final String TAG = "Gow2Activity";
     private static final int REQUEST_GAME_FOLDER = 0x6702;
+    private static final int REQUEST_GAME_ISO = 0x6703;
 
     private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean installCancelled = new AtomicBoolean(false);
@@ -154,6 +156,8 @@ public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_GAME_FOLDER) {
             onGameFolderChosen(chosenTree(resultCode, data));
+        } else if (requestCode == REQUEST_GAME_ISO) {
+            onGameIsoChosen(chosenTree(resultCode, data));
         }
     }
 
@@ -216,6 +220,47 @@ public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions
             return null;
         }
         return data.getData();
+    }
+
+    @Override
+    public void onChooseIso() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("*/*");
+        try {
+            startActivityForResult(pick, REQUEST_GAME_ISO);
+        } catch (ActivityNotFoundException e) {
+            Log.e(TAG, "no file picker on this device", e);
+            setupScreen.showChoice(getString(R.string.setup_no_picker));
+        }
+    }
+
+    private void onGameIsoChosen(Uri isoUri) {
+        if (setupScreen == null) {
+            return;
+        }
+        if (isoUri == null) {
+            setupScreen.showChoice(getString(R.string.setup_no_file));
+            return;
+        }
+        Log.i(TAG, "extracting the game files from " + isoUri);
+        setupScreen.showCopying();
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        installExecutor.execute(() -> installFromIso(isoUri));
+    }
+
+    private void installFromIso(Uri isoUri) {
+        try {
+            IsoInstaller.install(getContentResolver(), isoUri, paths.gameDir(), paths.stagingDir(),
+                    this::postProgress, installCancelled);
+            runOnUiThread(this::onInstallFinished);
+        } catch (GameSetupException e) {
+            Log.w(TAG, "disc image rejected: " + e.getMessage());
+            runOnUiThread(() -> onInstallFailed(e.getMessage()));
+        } catch (IOException | RuntimeException e) {
+            Log.e(TAG, "disc image extraction failed", e);
+            runOnUiThread(() -> onInstallFailed(getString(R.string.setup_copy_failed, e.getMessage())));
+        }
     }
 
     private void onGameFolderChosen(Uri treeUri) {

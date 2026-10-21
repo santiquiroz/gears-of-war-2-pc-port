@@ -85,8 +85,8 @@ La primera vez que juegues en cooperativo por System Link, Windows pregunta si `
 Requisitos: un teléfono arm64 con Android 10 o superior y Vulkan, y espacio libre para una copia completa de los archivos del juego.
 
 1. Descarga `gow2-recomp-<versión>-android-arm64.apk` de la [última versión](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest) e instálalo (Android te pide permitir instalar apps desde el navegador o el gestor de archivos).
-2. Copia al teléfono la carpeta del juego extraída.
-3. Abre la app, toca **Elegir carpeta del juego** (**Choose game folder** con el teléfono en inglés) y elige esa carpeta. La app copia los archivos a su propio almacenamiento, lo que necesita tanto espacio libre como ocupa el juego, porque el juego no puede leer archivos a través del selector de carpetas. Con la carpeta del paso 2 son dos copias; borra la tuya cuando la app termine.
+2. Copia al teléfono la carpeta del juego extraída, o el `.iso` de tu disco.
+3. Abre la app y toca **Elegir carpeta del juego** (**Choose game folder** con el teléfono en inglés) y elige esa carpeta, o **Elegir archivo .iso** (la app extrae la imagen por sí misma; sirven imágenes planas, XGD2 y XGD3). La app copia los archivos a su propio almacenamiento, lo que necesita tanto espacio libre como ocupa el juego, porque el juego no puede leer archivos a través del selector de carpetas. Con la carpeta del paso 2 son dos copias; borra la tuya cuando la app termine.
 
 En lugar de los pasos 2 y 3 puedes copiar la carpeta por USB desde un PC, de modo que `default.xex` quede en `Android/data/com.santiquiroz.gow2recomp/files/game/`, y luego tocar **Volver a comprobar**.
 
