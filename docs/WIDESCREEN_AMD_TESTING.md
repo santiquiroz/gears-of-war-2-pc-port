@@ -133,3 +133,27 @@ Test it against the ROV path, which is now correct on NVIDIA: render the same fr
 ## 8. Contact
 
 Open an issue or comment on the widescreen PR with the table from section 6. Mention the commit or release you tested.
+
+## 9. Results (RX 7800 XT, 2026-10-21)
+
+Windows 11, Radeon RX 7800 XT, Windows driver 32.0.32015.7029, gow2 0.2.6 plus the change for issue #11. Each run started from a fresh
+user folder (cold pipeline cache), travelled to chapter 2 (`servertravel geargame_p?loadcheckpoint=0?chapter=1` through
+`scripts/coop-instances.ps1 chapter -Chapter 2`) and was captured 60 and 80 seconds later at the hospital entrance.
+
+| Tag | `gow2_widescreen` | Path | Picture | Frames (30 fps cap) |
+|---|---|---|---|---|
+| a1 | `off` | `rov` | Right: soft light shafts, no artifacts. No crash, no driver error | 30 fps, p99 34-42 ms |
+| a2 | `off` | `rtv` | Right | 30 fps, p99 34-43 ms |
+| b5 | `2.39` (1680) | `rov` | Right at 1680 wide: soft light shafts | 30 fps, p99 34-46 ms |
+| c5 | `2.39` (1680) | `rtv` | The artifact: a teal cast over the whole scene and hard-edged pale rectangles over the light shafts | 30 fps |
+
+Cost (D), same scene, 16:9, `resolution_scale = 2`, `gow2_unlock_fps = true`, the last 25 seconds of each run:
+
+| Path | fps | p50 | p95 |
+|---|---|---|---|
+| `rov` | 40-42 | 23.3-24.0 ms | 28-39 ms |
+| `rtv` | 48-50 | 19.6-20.0 ms | 24-30 ms |
+
+Answers: (A) ROV works on a current AMD driver; the 2021 shader compiler crash did not show. (B) Patch 0026 is right on AMD with ROV.
+(C) Host render targets show the artifact on AMD as on NVIDIA. (D) ROV costs about 19 % at `resolution_scale = 2`, well above the
+game's 30 fps either way. Hence the change: on AMD, `auto` widescreen switches an unset render target path to ROV.

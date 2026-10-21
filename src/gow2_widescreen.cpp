@@ -209,6 +209,12 @@ double WidescreenAspect() {
     const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
     const std::string gpu = ChooseRenderGpu().name;
     if (widescreen::AutoWidescreenSafe(path, gpu)) return parsed;
+    if (widescreen::AutoWidescreenSwitchesToRov(path, gpu) &&
+        rex::cvar::SetFlagByName("render_target_path_d3d12", "rov")) {
+      REXLOG_INFO("WIDESCREEN auto on {}: render target path set to 'rov' (host render targets show artifacts above "
+                  "1280 wide); set render_target_path_d3d12 = \"rtv\" to keep 16:9 on host render targets", gpu);
+      return parsed;
+    }
     REXLOG_INFO("WIDESCREEN auto stays 16:9 on {} with render target path '{}' (artifacts above 1280 wide); "
                 "set gow2_widescreen = \"21:9\" and render_target_path_d3d12 = \"rov\" to try it", gpu, path);
     return 0.0;

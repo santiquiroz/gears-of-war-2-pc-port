@@ -15,7 +15,7 @@ gow2_widescreen = "auto"     # auto (default) | off | 21:9 | 16:10 | 2.39 ...
 | What you get | A back buffer up to 1680x704 (21:9). The vertical view stays the one of the 16:9 game; the horizontal view grows. |
 | Cost | Frame time unchanged (60 fps, p99 19.3-19.5 ms in two test scenes). GPU time per frame about 13-15 % higher. |
 | Cap | 1680 pixels wide. A 32:9 screen gets 21:9 with side bars. |
-| Side effect | The shadow map is made smaller (800 -> 480 px) so it fits the console's 10 MB EDRAM next to the wider picture. The ROV render target path (NVIDIA, Intel; AMD with `render_target_path_d3d12 = "rov"`) emulates 20 MB for the game's half-resolution passes. |
+| Side effect | The shadow map is made smaller (800 -> 480 px) so it fits the console's 10 MB EDRAM next to the wider picture. The ROV render target path (NVIDIA, Intel; AMD when widescreen is on) emulates 20 MB for the game's half-resolution passes. |
 | Not covered | Videos (stay 16:9), HUD and menu placement were only partly checked (see "What does not work"). |
 
 ## How it works
@@ -54,8 +54,12 @@ target path, which NVIDIA and Intel GPUs use by default, emulates 4096 tiles (20
 them, and a resolve of a target in the second 2048 tiles reads them through extra views of the second half (the resolve shaders only
 address 2048 tiles from the start of their view). 4096 tiles hold up to 2640x704.
 
-**Host render targets (`render_target_path_d3d12 = "rtv"`, the default on AMD) still emulate 2048 tiles** and show the artifact above 1280. How to test it on AMD and how to patch it: [WIDESCREEN_AMD_TESTING.md](WIDESCREEN_AMD_TESTING.md). On AMD set
-`render_target_path_d3d12 = "rov"` in `gow2.toml` for widescreen, or `gow2_widescreen = "off"`.
+**Host render targets (`render_target_path_d3d12 = "rtv"`, the SDK's automatic choice on AMD) still emulate 2048 tiles** and show the artifact above 1280.
+On AMD, `gow2_widescreen = "auto"` therefore switches the render target path to ROV when the display is wider than 16:9 and
+`render_target_path_d3d12` is not set (issue #11). Measured on an RX 7800 XT on 2026-10-21 (results in
+[WIDESCREEN_AMD_TESTING.md](WIDESCREEN_AMD_TESTING.md#9-results-rx-7800-xt-2026-10-21)): ROV draws the hospital right at 16:9 and at 1680 wide and
+holds the game's 30 fps; with the frame rate unlocked at `resolution_scale = 2` it is about 19 % slower than host render targets.
+`render_target_path_d3d12 = "rtv"` keeps host render targets, and auto then stays 16:9.
 
 Wider than 1680 is still held at 1680: the width limit is now the game's own layout (2640 at most), not the EDRAM, but nothing wider
 was tested, and the shadow map has to keep shrinking as the scene grows.

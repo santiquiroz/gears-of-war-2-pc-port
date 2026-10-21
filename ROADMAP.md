@@ -70,7 +70,7 @@ port reached more platforms and added features.
 
 ## Phase 3 - Modern enhancements
 
-- [x] Native resolution above 720p (`resolution_scale`, automatic by GPU type) and real widescreen (Hor+, 0.2.5, JollyRoger606; on AMD it waits for the ROV path, [docs/WIDESCREEN_AMD_TESTING.md](docs/WIDESCREEN_AMD_TESTING.md)) (the guest render size becomes a setting; Judgment
+- [x] Native resolution above 720p (`resolution_scale`, automatic by GPU type) and real widescreen (Hor+, 0.2.5, JollyRoger606; on AMD auto switches to the ROV path since 0.2.7, issue #11) (the guest render size becomes a setting; Judgment
       patches its hardcoded 720p the same way).
 - [x] Unlocked frame rate (`gow2_unlock_fps`, community patch) with a frame limiter; the game's logic still steps at its own rate.
 - [x] Upscalers: FSR 1/CAS and FSR 4/3.1 (the release has no DLSS; NVIDIA's license does not allow it in an open-source distribution) through the GPU plugin, as gears-judgement-recomp
@@ -90,7 +90,7 @@ Good places to start for contributors (see [CONTRIBUTING.md](CONTRIBUTING.md); o
 - **Full campaign play-through.** Play acts 2-5 and report or fix what breaks: unregistered-function FATALs (add hints, see "Finding the functions codegen misses" in the README), crashes, rendering bugs. This is the main gap to retail parity.
 - **Horde and versus over System Link.** Never tried; campaign co-op works through patches 0010-0012.
 - **Keycap packs without Python.** Players of the release zip cannot run `scripts/build-keycaps.ps1`; generate the pack inside the game (C++) or ship a self-contained tool.
-- **Widescreen on AMD.** Make patch 0026's wider EDRAM work on the host render target path, or confirm ROV on recent AMD drivers ([docs/WIDESCREEN_AMD_TESTING.md](docs/WIDESCREEN_AMD_TESTING.md)).
+- **Widescreen on host render targets.** AMD now uses ROV for widescreen (issue #11), which costs about 19 % of GPU time there; making patch 0026's wider EDRAM work on the host render target path would avoid it ([docs/WIDESCREEN_AMD_TESTING.md](docs/WIDESCREEN_AMD_TESTING.md), section 7).
 - **Controller remapping in game** for Xbox and generic SDL controllers (keyboard bindings are editable already).
 - **Title Update 6** (`.xexp`), needed for Road to Ruin and later multiplayer fixes.
 - **Linux x64 build** (Vulkan), then Steam Deck.

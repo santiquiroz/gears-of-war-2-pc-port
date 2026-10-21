@@ -18,6 +18,12 @@ constexpr int kMinWidth = 960;
 constexpr int kMaxWidth = 1680;       // 21:9; scene colour and depth then use 9.5 of the 10 MB of EDRAM
 constexpr long long kEdramBytes = 10LL * 1024 * 1024;
 
+inline bool GpuNameHas(const std::string& gpu_name, const char* vendor) {
+  std::string upper;
+  for (char c : gpu_name) upper += char((c >= 'a' && c <= 'z') ? c - 32 : c);
+  return upper.find(vendor) != std::string::npos;
+}
+
 // Patch 0026 widens the EDRAM only on the pixel shader interlock (ROV) render target path. With "auto",
 // widescreen therefore turns on only where that path is in use: render_target_path_d3d12 = "rov", or the
 // automatic choice on NVIDIA and Intel; on AMD the automatic choice is host render targets ("rtv"), which
@@ -25,9 +31,14 @@ constexpr long long kEdramBytes = 10LL * 1024 * 1024;
 inline bool AutoWidescreenSafe(const std::string& render_target_path, const std::string& gpu_name) {
   if (render_target_path == "rov") return true;
   if (render_target_path == "rtv") return false;
-  std::string upper;
-  for (char c : gpu_name) upper += char((c >= 'a' && c <= 'z') ? c - 32 : c);
-  return upper.find("NVIDIA") != std::string::npos || upper.find("INTEL") != std::string::npos;
+  return GpuNameHas(gpu_name, "NVIDIA") || GpuNameHas(gpu_name, "INTEL");
+}
+
+// On AMD, "auto" asks for the ROV path when the player left the render target path unset (issue #11). Measured on
+// an RX 7800 XT (2026-10-21): ROV draws the chapter 2 hospital right at 16:9 and at 1680 wide and holds the game's
+// 30 fps; with the frame rate unlocked at resolution_scale 2 it is about 19 % slower than host render targets.
+inline bool AutoWidescreenSwitchesToRov(const std::string& render_target_path, const std::string& gpu_name) {
+  return render_target_path.empty() && (GpuNameHas(gpu_name, "AMD") || GpuNameHas(gpu_name, "RADEON"));
 }
 
 // "off", "", "0", "false" -> 0; "auto" -> display_aspect when it is wider than 16:9, else 0; "21:9" or "2.39" -> that
