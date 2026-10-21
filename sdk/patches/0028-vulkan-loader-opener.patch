@@ -1,0 +1,105 @@
+diff --git a/include/rex/platform/dynlib.h b/include/rex/platform/dynlib.h
+index e3fc40d..1ea51f7 100644
+--- a/include/rex/platform/dynlib.h
++++ b/include/rex/platform/dynlib.h
+@@ -32,6 +32,8 @@ class DynamicLibrary {
+ 
+   bool Load(const std::filesystem::path& path, SymbolResolution mode = SymbolResolution::kLazy);
+   void Close();
++  // Takes ownership of a handle another loader opened (dlopen, android_dlopen_ext, LoadLibrary).
++  void Adopt(void* handle);
+   explicit operator bool() const { return handle_ != nullptr; }
+ 
+   void* GetRawSymbol(const char* name) const;
+diff --git a/include/rex/ui/vulkan/instance.h b/include/rex/ui/vulkan/instance.h
+index 4edde2b..b7c2e86 100644
+--- a/include/rex/ui/vulkan/instance.h
++++ b/include/rex/ui/vulkan/instance.h
+@@ -26,6 +26,11 @@ class VulkanInstance {
+  public:
+   static std::unique_ptr<VulkanInstance> Create(bool with_surface, bool try_enable_validation);
+ 
++  // Lets the app open the Vulkan loader itself, for example through libadrenotools with a custom
++  // driver on Android. The opener returns a dlopen handle, or nullptr for the platform loader.
++  using LoaderOpener = void* (*)();
++  static void SetLoaderOpener(LoaderOpener opener);
++
+   VulkanInstance(const VulkanInstance&) = delete;
+   VulkanInstance& operator=(const VulkanInstance&) = delete;
+   VulkanInstance(VulkanInstance&&) = delete;
+diff --git a/src/core/dynlib_posix.cpp b/src/core/dynlib_posix.cpp
+index fcfd6c9..357ab5c 100644
+--- a/src/core/dynlib_posix.cpp
++++ b/src/core/dynlib_posix.cpp
+@@ -31,6 +31,11 @@ bool DynamicLibrary::Load(const std::filesystem::path& path, SymbolResolution mo
+   return handle_ != nullptr;
+ }
+ 
++void DynamicLibrary::Adopt(void* handle) {
++  Close();
++  handle_ = handle;
++}
++
+ void DynamicLibrary::Close() {
+   if (handle_) {
+     dlclose(handle_);
+diff --git a/src/core/dynlib_win.cpp b/src/core/dynlib_win.cpp
+index a402c75..5b56842 100644
+--- a/src/core/dynlib_win.cpp
++++ b/src/core/dynlib_win.cpp
+@@ -31,6 +31,11 @@ bool DynamicLibrary::Load(const std::filesystem::path& path, SymbolResolution /*
+   return handle_ != nullptr;
+ }
+ 
++void DynamicLibrary::Adopt(void* handle) {
++  Close();
++  handle_ = handle;
++}
++
+ void DynamicLibrary::Close() {
+   if (handle_) {
+     FreeLibrary(static_cast<HMODULE>(handle_));
+diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
+index 914b311..9dcb570 100644
+--- a/src/ui/vulkan/vulkan_instance.cpp
++++ b/src/ui/vulkan/vulkan_instance.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <atomic>
+ #include <sstream>
+ #include <string>
+ #include <unordered_map>
+@@ -31,6 +32,14 @@ namespace rex {
+ namespace ui {
+ namespace vulkan {
+ 
++namespace {
++std::atomic<VulkanInstance::LoaderOpener> loader_opener{nullptr};
++}  // namespace
++
++void VulkanInstance::SetLoaderOpener(LoaderOpener opener) {
++  loader_opener.store(opener);
++}
++
+ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+                                                        const bool try_enable_validation) {
+   std::unique_ptr<VulkanInstance> vulkan_instance(new VulkanInstance());
+@@ -75,7 +84,15 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+     return nullptr;
+   }
+ #else
+-  loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
++  LoaderOpener opener = loader_opener.load();
++  void* app_loader = opener ? opener() : nullptr;
++  if (app_loader) {
++    vulkan_instance->loader_.Adopt(app_loader);
++    loader_loaded = true;
++    REXLOG_INFO("Using the Vulkan loader opened by the app");
++  } else {
++    loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
++  }
+   if (!loader_loaded) {
+     REXLOG_ERROR("Failed to load {}", platform::lib_names::kVulkanLoader);
+     return nullptr;

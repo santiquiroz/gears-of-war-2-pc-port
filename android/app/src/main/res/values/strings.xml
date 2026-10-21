@@ -21,6 +21,13 @@
     <string name="launch_unlock_fps">Unlock frame rate</string>
     <string name="launch_shadows">Object shadows</string>
     <string name="launch_shadows_hint">On looks better and costs some GPU.</string>
+    <string name="launch_gpu_driver">GPU driver</string>
+    <string name="launch_gpu_driver_system">The phone\'s own driver</string>
+    <string name="launch_gpu_driver_choose">Choose a driver (.zip)</string>
+    <string name="launch_gpu_driver_remove">Use the phone\'s driver</string>
+    <string name="launch_gpu_driver_hint">Adreno only: a Turnip .zip made for AdrenoTools (meta.json inside). Safe mode starts with the phone\'s driver.</string>
+    <string name="launch_gpu_driver_installing">Installing the driver…</string>
+    <string name="launch_gpu_driver_failed">Could not install the driver: %1$s</string>
     <string name="launch_auto">Auto</string>
     <string name="launch_on">On</string>
     <string name="launch_off">Off</string>

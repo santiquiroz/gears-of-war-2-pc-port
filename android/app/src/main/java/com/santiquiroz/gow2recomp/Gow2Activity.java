@@ -13,33 +13,40 @@ import android.view.WindowManager;
 
 import com.santiquiroz.gow2recomp.setup.GameInstaller;
 import com.santiquiroz.gow2recomp.setup.GameSetupException;
+import com.santiquiroz.gow2recomp.setup.GpuDriverInstaller;
 import com.santiquiroz.gow2recomp.setup.IsoInstaller;
 import com.santiquiroz.gow2recomp.update.UpdateChecker;
 import com.santiquiroz.gow2recomp.update.UpdateInfo;
 
 import org.libsdl.app.SDLActivity;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions {
+public class Gow2Activity extends SDLActivity
+        implements GameSetupScreen.Actions, LaunchOptionsScreen.Actions {
     static final String EXTRA_SKIP_GAME_SETUP = "com.santiquiroz.gow2recomp.extra.SKIP_GAME_SETUP";
     static final String EXTRA_SHOW_WHEN_LOCKED = "com.santiquiroz.gow2recomp.extra.SHOW_WHEN_LOCKED";
     static final String EXTRA_LAUNCH_OPTIONS = "com.santiquiroz.gow2recomp.extra.LAUNCH_OPTIONS";
     private static final String TAG = "Gow2Activity";
     private static final int REQUEST_GAME_FOLDER = 0x6702;
     private static final int REQUEST_GAME_ISO = 0x6703;
+    private static final int REQUEST_GPU_DRIVER = 0x6704;
 
     private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean installCancelled = new AtomicBoolean(false);
     private GamePaths paths;
     private GameSetupScreen setupScreen;
+    private LaunchOptionsScreen launchScreen;
     private NetworkPlayLocks networkLocks;
     private LaunchMarker launchMarker;
     private boolean nativeStarted;
     private boolean resumed;
+    private boolean useSystemDriver;
 
     public boolean requestSustainedPerformanceMode(boolean enable) {
         PowerManager pm = getSystemService(PowerManager.class);
@@ -121,12 +128,62 @@ public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions
 
     private void showLaunchOptions(boolean crashed) {
         setupScreen = null;
-        LaunchOptionsScreen screen = new LaunchOptionsScreen(this, paths.dataDir(), crashed,
-                this::startNativeSide);
-        setContentView(screen.view());
+        launchScreen = new LaunchOptionsScreen(this, paths.dataDir(), crashed, this);
+        setContentView(launchScreen.view());
+    }
+
+    @Override
+    public void play(boolean safeMode) {
+        // Safe mode starts with the phone's driver; the custom one stays installed.
+        useSystemDriver = safeMode;
+        startNativeSide();
+    }
+
+    @Override
+    public void chooseGpuDriver() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("application/zip");
+        try {
+            startActivityForResult(pick, REQUEST_GPU_DRIVER);
+        } catch (ActivityNotFoundException e) {
+            Log.e(TAG, "no file picker on this device", e);
+            launchScreen.showStatus(getString(R.string.setup_no_picker));
+        }
+    }
+
+    private void onGpuDriverChosen(Uri zipUri) {
+        if (launchScreen == null || zipUri == null) {
+            return;
+        }
+        launchScreen.showStatus(getString(R.string.launch_gpu_driver_installing));
+        installExecutor.execute(() -> installGpuDriver(zipUri));
+    }
+
+    private void installGpuDriver(Uri zipUri) {
+        String message;
+        try (InputStream zip = getContentResolver().openInputStream(zipUri)) {
+            if (zip == null) {
+                throw new IOException("cannot open the chosen file");
+            }
+            GpuDriverInstaller.Driver driver = GpuDriverInstaller.install(zip, getFilesDir());
+            Log.i(TAG, "GPU driver installed: " + driver.label + " (" + driver.libraryName + ")");
+            message = "";
+        } catch (GameSetupException | IOException | RuntimeException e) {
+            Log.w(TAG, "GPU driver not installed", e);
+            message = getString(R.string.launch_gpu_driver_failed, e.getMessage());
+        }
+        String status = message;
+        runOnUiThread(() -> {
+            if (launchScreen != null && !isDestroyed()) {
+                launchScreen.refreshGpuDriver();
+                launchScreen.showStatus(status);
+            }
+        });
     }
 
     private void markNativeStarted() {
+        NativeEnvironment.applyGpuDriver(getFilesDir(), new File(getApplicationInfo().sourceDir), useSystemDriver);
         if (resumed) {
             createLaunchMarker();
         }
@@ -158,6 +215,8 @@ public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions
             onGameFolderChosen(chosenTree(resultCode, data));
         } else if (requestCode == REQUEST_GAME_ISO) {
             onGameIsoChosen(chosenTree(resultCode, data));
+        } else if (requestCode == REQUEST_GPU_DRIVER) {
+            onGpuDriverChosen(chosenTree(resultCode, data));
         }
     }
 
@@ -357,6 +416,7 @@ public class Gow2Activity extends SDLActivity implements GameSetupScreen.Actions
         Log.i(TAG, "starting the native side with the game in " + paths.gameDir());
         markNativeStarted();
         setupScreen = null;
+        launchScreen = null;
         setContentView(mLayout);
         mSurface.requestFocus();
     }

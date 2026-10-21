@@ -90,7 +90,7 @@ Requirements: an arm64 phone with Android 10 or newer and Vulkan, and free space
 
 Instead of steps 2-3 you can copy the folder over USB from a PC, so that `default.xex` ends up in `Android/data/com.santiquiroz.gow2recomp/files/game/`, then tap **Check again**.
 
-The settings menu is called Device Options on Android (the gear in the top-right corner). If the game closes unexpectedly, the next launch opens **Launch options** first: a few settings, **Safe mode** (no sparse GPU memory, 1x resolution, bilinear filter), **Reset settings** and **Share last log**. To open it on purpose, long-press the app icon and choose **Launch options**. Status and known limits: [docs/ANDROID.md](docs/ANDROID.md).
+The settings menu is called Device Options on Android (the gear in the top-right corner). If the game closes unexpectedly, the next launch opens **Launch options** first: a few settings, a **GPU driver** choice (on Adreno, a Turnip .zip made for AdrenoTools in place of the phone's driver), **Safe mode** (no sparse GPU memory, 1x resolution, bilinear filter, the phone's driver), **Reset settings** and **Share last log**. To open it on purpose, long-press the app icon and choose **Launch options**. Status and known limits: [docs/ANDROID.md](docs/ANDROID.md).
 
 ## Controls
 

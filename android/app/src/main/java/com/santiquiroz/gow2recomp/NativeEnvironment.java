@@ -6,12 +6,20 @@ import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
 
+import com.santiquiroz.gow2recomp.setup.GpuDriverHooks;
+import com.santiquiroz.gow2recomp.setup.GpuDriverInstaller;
+
 import java.io.File;
+import java.io.IOException;
 
 final class NativeEnvironment {
     private static final String TAG = "Gow2Activity";
     // The runtime reads it only when net_local_ip is empty, so a configured address still wins.
     private static final String LOCAL_IP_VAR = "REX_DETECTED_LOCAL_IP";
+    // Read by android/gamelibs/gow2_gpu_driver.cpp when the game creates its Vulkan instance.
+    private static final String DRIVER_DIR_VAR = "GOW2_GPU_DRIVER_DIR";
+    private static final String DRIVER_NAME_VAR = "GOW2_GPU_DRIVER_NAME";
+    private static final String HOOK_DIR_VAR = "GOW2_GPU_HOOK_DIR";
 
     private NativeEnvironment() {
     }
@@ -28,6 +36,38 @@ final class NativeEnvironment {
         // orientation, which makes SDL allow every orientation and the phone turns the game upright.
         set("SDL_ORIENTATIONS", "LandscapeLeft LandscapeRight");
         applyLocalIp();
+    }
+
+    /** Names the custom GPU driver of the launch options for the game, or the phone's own driver. */
+    static void applyGpuDriver(File filesDir, File apk, boolean useSystemDriver) {
+        GpuDriverInstaller.Driver driver = useSystemDriver ? null : GpuDriverInstaller.installed(filesDir);
+        File hookDir = driver != null ? copyHooks(apk, filesDir) : null;
+        if (hookDir == null) {
+            unset(DRIVER_DIR_VAR);
+            unset(DRIVER_NAME_VAR);
+            unset(HOOK_DIR_VAR);
+            return;
+        }
+        set(DRIVER_DIR_VAR, driver.dir.getAbsolutePath() + "/");
+        set(DRIVER_NAME_VAR, driver.libraryName);
+        set(HOOK_DIR_VAR, hookDir);
+    }
+
+    private static File copyHooks(File apk, File filesDir) {
+        try {
+            return GpuDriverHooks.copy(apk, filesDir);
+        } catch (IOException | RuntimeException e) {
+            Log.e(TAG, "cannot prepare the GPU driver hooks; using the phone's driver", e);
+            return null;
+        }
+    }
+
+    private static void unset(String name) {
+        try {
+            Os.unsetenv(name);
+        } catch (ErrnoException e) {
+            Log.e(TAG, "cannot unset " + name, e);
+        }
     }
 
     private static void applyLocalIp() {

@@ -20,6 +20,13 @@
     <string name="launch_unlock_fps">Desbloquear la tasa de fotogramas</string>
     <string name="launch_shadows">Sombras de objetos</string>
     <string name="launch_shadows_hint">Activadas se ven mejor y cuestan algo de GPU.</string>
+    <string name="launch_gpu_driver">Driver de GPU</string>
+    <string name="launch_gpu_driver_system">El driver del teléfono</string>
+    <string name="launch_gpu_driver_choose">Elegir un driver (.zip)</string>
+    <string name="launch_gpu_driver_remove">Usar el driver del teléfono</string>
+    <string name="launch_gpu_driver_hint">Solo Adreno: un .zip de Turnip hecho para AdrenoTools (con meta.json). El modo seguro arranca con el driver del teléfono.</string>
+    <string name="launch_gpu_driver_installing">Instalando el driver…</string>
+    <string name="launch_gpu_driver_failed">No se pudo instalar el driver: %1$s</string>
     <string name="launch_auto">Automático</string>
     <string name="launch_on">Activado</string>
     <string name="launch_off">Desactivado</string>

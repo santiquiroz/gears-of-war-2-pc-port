@@ -113,6 +113,21 @@ foreach(_required rexruntime rexgpu-xenos SDL3-shared)
 endforeach()
 
 #----------------------------------------------------------------------------------------------
+# libadrenotools (BSD 2-Clause): loads a custom Vulkan driver such as Turnip, chosen in the launch
+# options (issue #17). libgow2.so links the static library; the hook libraries go in the APK and the
+# app copies them next to the driver before the game starts (GpuDriver.java).
+#----------------------------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(adrenotools
+    GIT_REPOSITORY https://github.com/bylaws/libadrenotools.git
+    GIT_TAG 8fae8ce254dfc1344527e05301e43f37dea2df80
+    GIT_SUBMODULES_RECURSE ON)
+set(CMAKE_ANDROID_ARCH_ABI "${ANDROID_ABI}")
+set(BUILD_SHARED_LIBS OFF)
+FetchContent_MakeAvailable(adrenotools)
+set(GOW2_ADRENOTOOLS_HOOKS hook_impl main_hook)
+
+#----------------------------------------------------------------------------------------------
 # Recompiled code
 #----------------------------------------------------------------------------------------------
 include("${GOW2_GENERATED_DIR}/sources.cmake")
@@ -144,7 +159,7 @@ file(GLOB GOW2_SOURCES CONFIGURE_DEPENDS "${GOW2_ROOT}/src/*.cpp")
 foreach(_windows_only IN LISTS GOW2_WINDOWS_ONLY_SOURCES)
     list(REMOVE_ITEM GOW2_SOURCES "${GOW2_ROOT}/src/${_windows_only}")
 endforeach()
-add_library(gow2 SHARED ${GOW2_SOURCES} gow2_android_glue.cpp)
+add_library(gow2 SHARED ${GOW2_SOURCES} gow2_android_glue.cpp gow2_gpu_driver.cpp)
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="0.2.5")
 target_include_directories(gow2 PRIVATE
     "${GOW2_GENERATED_INCLUDE_ROOT}"
@@ -154,7 +169,8 @@ target_include_directories(gow2 PRIVATE
     # links imgui privately, so a source-tree build has to name its headers here.
     "$<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>"
 )
-target_link_libraries(gow2 PRIVATE gow2_recomp rex::runtime log)
+# renderdoc: the header that rex/ui/vulkan/instance.h includes (gow2_gpu_driver.cpp).
+target_link_libraries(gow2 PRIVATE gow2_recomp rex::runtime adrenotools renderdoc log)
 target_link_options(gow2 PRIVATE -Wl,--no-undefined)
 # Only SDL_main is looked up from outside (SDLActivity's dlsym); exporting the ~98,000 symbols of
 # the recompiled code made the dynamic linker bind them by name at every start.
@@ -198,8 +214,10 @@ add_custom_target(gow2_jnilibs ALL
             "$<TARGET_FILE:rexruntime>"
             "$<TARGET_FILE:rexgpu-xenos>"
             "$<TARGET_FILE:gow2>"
+            "$<TARGET_FILE:hook_impl>"
+            "$<TARGET_FILE:main_hook>"
             "${GOW2_LIBCXX_SHARED}"
             "${GOW2_JNILIBS_ABI_DIR}"
     COMMENT "Staging the native libraries for Gradle in ${GOW2_JNILIBS_ABI_DIR}"
     VERBATIM)
-add_dependencies(gow2_jnilibs gow2 rexruntime rexgpu-xenos SDL3-shared)
+add_dependencies(gow2_jnilibs gow2 rexruntime rexgpu-xenos SDL3-shared ${GOW2_ADRENOTOOLS_HOOKS})

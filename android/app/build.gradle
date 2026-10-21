@@ -149,4 +149,6 @@ if (gameLibraries) {
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    // android.jar's org.json is a stub on the JVM; GpuDriverInstaller reads meta.json with it.
+    testImplementation 'org.json:json:20240303'
 }

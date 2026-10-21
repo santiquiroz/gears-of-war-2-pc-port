@@ -17,6 +17,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.santiquiroz.gow2recomp.setup.GpuDriverInstaller;
 import com.santiquiroz.gow2recomp.update.UpdateChecker;
 import com.santiquiroz.gow2recomp.update.UpdateInfo;
 
@@ -29,25 +30,35 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class LaunchOptionsScreen {
+    interface Actions {
+        void play(boolean safeMode);
+
+        void chooseGpuDriver();
+    }
+
     private final Activity activity;
     private final File dataDir;
-    private final Runnable play;
+    private final Actions actions;
     private final ScrollView root;
     private final TextView status;
     private final TextView updateStatus;
     private final Button updateButton;
+    private final TextView gpuDriver;
+    private final Button gpuDriverRemove;
     private final List<Choice> choices = new ArrayList<>();
     private String original = "";
     private boolean loaded;
 
-    LaunchOptionsScreen(Activity activity, File dataDir, boolean crashed, Runnable play) {
+    LaunchOptionsScreen(Activity activity, File dataDir, boolean crashed, Actions actions) {
         this.activity = activity;
         this.dataDir = dataDir;
-        this.play = play;
+        this.actions = actions;
         status = text("", 16);
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         updateStatus = text("", 16);
         updateButton = button(R.string.update_check_now, v -> checkForUpdates());
+        gpuDriver = text("", 16);
+        gpuDriverRemove = button(R.string.launch_gpu_driver_remove, v -> removeGpuDriver());
         root = new ScrollView(activity);
         root.addView(column(crashed));
         root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -86,6 +97,7 @@ final class LaunchOptionsScreen {
                 new int[]{R.string.launch_auto, R.string.launch_on, R.string.launch_off},
                 new String[]{null, "\"on\"", "\"off\""});
         column.addView(text(activity.getString(R.string.launch_shadows_hint), 14));
+        addGpuDriverRow(column);
         column.addView(button(R.string.launch_play, v -> start(false)), spaced());
         column.addView(button(R.string.launch_safe_mode, v -> start(true)), spaced());
         column.addView(button(R.string.launch_reset, v -> reset()), spaced());
@@ -95,6 +107,30 @@ final class LaunchOptionsScreen {
         column.addView(status, spaced());
         refreshUpdateLine();
         return column;
+    }
+
+    private void addGpuDriverRow(LinearLayout column) {
+        column.addView(text(activity.getString(R.string.launch_gpu_driver), 16), spaced());
+        column.addView(gpuDriver);
+        column.addView(button(R.string.launch_gpu_driver_choose, v -> actions.chooseGpuDriver()), spaced());
+        column.addView(gpuDriverRemove, spaced());
+        column.addView(text(activity.getString(R.string.launch_gpu_driver_hint), 14));
+        refreshGpuDriver();
+    }
+
+    void refreshGpuDriver() {
+        GpuDriverInstaller.Driver driver = GpuDriverInstaller.installed(activity.getFilesDir());
+        gpuDriver.setText(driver != null ? driver.label : activity.getString(R.string.launch_gpu_driver_system));
+        gpuDriverRemove.setEnabled(driver != null);
+    }
+
+    void showStatus(String message) {
+        status.setText(message);
+    }
+
+    private void removeGpuDriver() {
+        GpuDriverInstaller.remove(activity.getFilesDir());
+        refreshGpuDriver();
     }
 
     private void addChoice(LinearLayout column, int label, String key, int[] labels,
@@ -153,7 +189,7 @@ final class LaunchOptionsScreen {
             showError(R.string.launch_write_failed, e);
             return;
         }
-        play.run();
+        actions.play(safeMode);
     }
 
     private String selectedSettings() {

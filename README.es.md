@@ -90,7 +90,7 @@ Requisitos: un teléfono arm64 con Android 10 o superior y Vulkan, y espacio lib
 
 En lugar de los pasos 2 y 3 puedes copiar la carpeta por USB desde un PC, de modo que `default.xex` quede en `Android/data/com.santiquiroz.gow2recomp/files/game/`, y luego tocar **Volver a comprobar**.
 
-En Android el menú de ajustes se llama Opciones del dispositivo (el engranaje de la esquina superior derecha). Si el juego se cierra inesperadamente, el siguiente arranque abre primero **Opciones de inicio**: algunos ajustes, **Modo seguro** (sin memoria GPU dispersa, resolución 1x, filtro bilineal), **Restablecer ajustes** y **Compartir último registro**. Para abrirla a propósito, mantén pulsado el icono de la app y elige **Opciones de inicio**. Estado y límites conocidos: [docs/ANDROID.md](docs/ANDROID.md).
+En Android el menú de ajustes se llama Opciones del dispositivo (el engranaje de la esquina superior derecha). Si el juego se cierra inesperadamente, el siguiente arranque abre primero **Opciones de inicio**: algunos ajustes, un **Driver de GPU** (en Adreno, un .zip de Turnip hecho para AdrenoTools en lugar del driver del teléfono), **Modo seguro** (sin memoria GPU dispersa, resolución 1x, filtro bilineal, el driver del teléfono), **Restablecer ajustes** y **Compartir último registro**. Para abrirla a propósito, mantén pulsado el icono de la app y elige **Opciones de inicio**. Estado y límites conocidos: [docs/ANDROID.md](docs/ANDROID.md).
 
 ## Controles
 

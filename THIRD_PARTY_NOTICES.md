@@ -147,7 +147,7 @@ Not included in the release. The DLSS SDK license does not allow it to become pa
 
 ## Android APK
 
-The APK (`lib/arm64-v8a`) holds five native libraries built from source by
+The APK (`lib/arm64-v8a`) holds seven native libraries built from source by
 `scripts/build-android.ps1`, the Java activity of the port with SDL's Java classes,
 and the license texts in `assets/licenses/` (`LICENSE`, this file,
 `LICENSE.SDL3.txt` and `LICENSE.SGSR.txt`). It holds no game files. The libraries contain the
@@ -164,6 +164,8 @@ TinySHA1, the SDL3 Android project template) apply to the APK as well.
 - {fmt}.
 - spdlog.
 - SIMDe.
+- libadrenotools with linkernsbypass (linked statically; loads a custom GPU driver chosen in the
+  launch options).
 
 ### librexruntime.so
 
@@ -211,6 +213,11 @@ TinySHA1, the SDL3 Android project template) apply to the APK as well.
 - miniz.
 - The uClibc-derived math library (libm).
 - SDL_qsort.
+
+### libhook_impl.so and libmain_hook.so
+
+- The hook libraries of libadrenotools with linkernsbypass, unmodified. The app copies them,
+  with libc++_shared.so, into its private files folder when a custom GPU driver is installed.
 
 ### libc++_shared.so
 
@@ -948,6 +955,43 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
 CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
+```
+
+### libadrenotools and linkernsbypass
+
+- Project: [bylaws/libadrenotools](https://github.com/bylaws/libadrenotools) (commit `8fae8ce`,
+  fetched by `android/gamelibs/CMakeLists.txt`) with its `lib/linkernsbypass` submodule
+  ([bylaws/liblinkernsbypass](https://github.com/bylaws/liblinkernsbypass), commit `aa39758`).
+- Description: loads a custom Vulkan driver such as Turnip on Adreno GPUs (libgow2.so, linked
+  statically, and the hook libraries libhook_impl.so and libmain_hook.so).
+- Copyright: (c) 2021, Billy Laws (both projects).
+- License: BSD 2-Clause (full text below).
+
+```
+BSD 2-Clause License
+
+Copyright (c) 2021, Billy Laws
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### libc++ and libc++abi
