@@ -11,12 +11,11 @@ Each phase keeps the previous one working.
 - [ ] The whole campaign (solo and split-screen co-op).
 - [x] Saves, profile settings and achievements in any folder: `gow2_save_dir` (`saves` next to
       the executable for a portable install, or a cloud-synced folder; [docs/SAVES.md](docs/SAVES.md)).
-- [ ] Keyboard and mouse that feel native. Mouse aiming now goes through the engine's own PC
+- [x] Keyboard and mouse that feel native (0.2.5, contributed by JollyRoger606: keys reach the engine as PC keys while a level is played, with live rebinding). Mouse aiming now goes through the engine's own PC
       mouse axes (`MouseX`/`MouseY` into `aMouseX`/`aMouseY`), with no stick emulation and no
       aim friction or adhesion for the mouse (`src/gow2_mouse_aim.cpp`, SDK patch 0006); the
-      controller keeps the game's own aiming. Still to do: real key events through the engine's
-      `InputKey`, so keys stop going through the emulated controller.
-- [ ] Button prompts and icons that follow the device in use (keyboard keys while playing with
+      controller keeps the game's own aiming.
+- [x] Button prompts and icons that follow the device in use (0.2.5, JollyRoger606; drawn keycaps need a pack generated from the player's own game with `scripts/build-keycaps.ps1`) (keyboard keys while playing with
       the keyboard, Xbox or generic controller glyphs otherwise), including the button
       pictures inside hints, through input-aware texture variants.
 - [ ] Full control mapping for Xbox controllers, keyboard and mouse, and generic controllers
@@ -44,10 +43,10 @@ port reached more platforms and added features.
       Windows-only assumptions outside `#ifdef _WIN32` (ReXGlue already builds for Linux
       x64/ARM64 with Vulkan; the Mass Effect port runs on ARM64).
 - [ ] Linux x64 build (Vulkan) as the first non-Windows target.
-- [ ] Android ARM64 (Vulkan): packaging, touch and gamepad input, storage access to the
+- [x] Android ARM64 (Vulkan), experimental APK in every release since 0.1.2: packaging, touch and gamepad input, storage access to the
       user's own game files, memory limits. Plan, precedents (two ReXGlue games already run on
       Android) and the SDK changes it needs: [docs/ANDROID.md](docs/ANDROID.md).
-- [ ] Touch controls on Android in the style of mobile shooters (left virtual stick, drag to
+- [x] Touch controls on Android in the style of mobile shooters (left virtual stick, drag to
       look through the same native mouse path, buttons for fire, aim, cover, reload, melee and
       weapon swap), plus controllers and keyboard with or without a mouse.
 - [x] Cross-play between PC and Android: a PC and a phone joined each other's System Link
@@ -66,22 +65,37 @@ port reached more platforms and added features.
       co-op splits, vehicle exit, the Ride-Reaver section, four PCs over the internet, Android
       with 3+ players and Stage 3 (8-10 players, bandwidth) remain.
 - [ ] Online play beyond LAN (System Link over the internet / relay). Built in patch 0011
-      (`net_peers`, `net_public_address`, `net_allow_peers`; [docs/ONLINE.md](docs/ONLINE.md)),
-      not tested over the internet yet.
+      (`net_peers`, `net_public_address`, `net_allow_peers`; [docs/ONLINE.md](docs/ONLINE.md)):
+      a phone on mobile data joined a PC host on 2026-10-15; two PCs on different networks not tried yet.
 
 ## Phase 3 - Modern enhancements
 
-- [ ] Native resolution above 720p (the guest render size becomes a setting; Judgment
+- [x] Native resolution above 720p (`resolution_scale`, automatic by GPU type) and real widescreen (Hor+, 0.2.5, JollyRoger606; on AMD it waits for the ROV path, [docs/WIDESCREEN_AMD_TESTING.md](docs/WIDESCREEN_AMD_TESTING.md)) (the guest render size becomes a setting; Judgment
       patches its hardcoded 720p the same way).
-- [ ] Unlocked frame rate with correct game timing.
-- [ ] Upscalers: FSR (and DLSS on NVIDIA) through the GPU plugin, as gears-judgement-recomp
+- [x] Unlocked frame rate (`gow2_unlock_fps`, community patch) with a frame limiter; the game's logic still steps at its own rate.
+- [x] Upscalers: FSR 1/CAS and FSR 4/3.1 (the release has no DLSS; NVIDIA's license does not allow it in an open-source distribution) through the GPU plugin, as gears-judgement-recomp
       does.
-- [ ] Higher quality textures (4K packs) through a texture replacement path that loads
+- [x] Higher quality textures (4K packs) through a texture replacement path that loads
       user-supplied files; no original assets are redistributed.
-- [ ] Graphics options (shadows, anisotropic filtering, AA, film grain, motion blur).
+- [x] Graphics options: Graphics > Game quality with the game's own engine settings and presets (0.2.3, [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)).
+- [ ] A native renderer: draw from the game's Direct3D calls instead of emulating the Xenos GPU command processor, with shaders translated ahead of time (MIT-licensed plume and XenosRecomp are candidates). The biggest performance win, above all on phones. Feasibility study planned for the week of 2026-10-26.
 - [x] The new options inside the game: graphics (render resolution, upscaler, texture packs)
       and controls (mapping, sensitivity), from the game's Options screen or the runtime's
       overlay, instead of only `gow2.toml`. Done: the PC Options menu opens from Options > PC Options, F10 or Back+Start ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md)).
+
+## Help wanted
+
+Good places to start for contributors (see [CONTRIBUTING.md](CONTRIBUTING.md); open an issue first so two people do not take the same one):
+
+- **Full campaign play-through.** Play acts 2-5 and report or fix what breaks: unregistered-function FATALs (add hints, see "Finding the functions codegen misses" in the README), crashes, rendering bugs. This is the main gap to retail parity.
+- **Horde and versus over System Link.** Never tried; campaign co-op works through patches 0010-0012.
+- **Keycap packs without Python.** Players of the release zip cannot run `scripts/build-keycaps.ps1`; generate the pack inside the game (C++) or ship a self-contained tool.
+- **Widescreen on AMD.** Make patch 0026's wider EDRAM work on the host render target path, or confirm ROV on recent AMD drivers ([docs/WIDESCREEN_AMD_TESTING.md](docs/WIDESCREEN_AMD_TESTING.md)).
+- **Controller remapping in game** for Xbox and generic SDL controllers (keyboard bindings are editable already).
+- **Title Update 6** (`.xexp`), needed for Road to Ruin and later multiplayer fixes.
+- **Linux x64 build** (Vulkan), then Steam Deck.
+- **Co-op for more than four players** (Stage 3, 8-10) and **AI difficulty that scales with the number of players** ([docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md)).
+- **Split-screen co-op.**
 
 ## Rules that apply to every phase
 
