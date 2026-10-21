@@ -88,7 +88,7 @@ if(WIN32)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.2.5" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.2.6" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 # The menu offers DLSS only with a runtime built with NVIDIA's SDK (scripts/build-sdk.ps1 without -NoDlss).
 if(EXISTS "${GOW2_SDK_DIR}/nvngx_dlss.dll")
