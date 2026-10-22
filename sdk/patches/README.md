@@ -34,6 +34,7 @@ Both SDK builds apply every patch here in file-name order on top of ReXGlue comm
 
 | `0028-vulkan-loader-opener.patch` | `VulkanInstance::SetLoaderOpener` lets the app open the Vulkan loader itself (issue #17: a custom Turnip driver through libadrenotools on Android); a null handle keeps the platform loader. `DynamicLibrary::Adopt` takes ownership of that handle. |
 | `0029-pad-button-remap.patch` | Controller button remapping (issue #12): the SDL controller driver keeps the physically held buttons and hands the game `pad_remap::Remap` of them, one string setting per game button (`pad_map_a` ... `pad_map_dpad_right`: which physical button presses it, or `none`), read at every button event so the in-game menu applies at once. Only controllers that go through SDL (the default `input_backend`, Xbox included); the keyboard's emulated pad, triggers and sticks are unchanged. `include/rex/input/pad_remap.h` is header-only with `tests/unit/input/pad_remap_test.cpp`. |
+| `0030-dlss-runtime-flag.patch` | A runtime built with NVIDIA's DLSS SDK registers `gow2_dlss_runtime`, so the PC Options menu offers DLSS with self-built DLSS DLLs next to the release exe (issue #18) without naming NGX in `gow2.exe` (which `scripts/ngx-scan.ps1` rejects). |
 ## Working on a patch
 
 Each patch lives in a git worktree of rexglue-sdk based on `923c1a5` plus the patches before it.

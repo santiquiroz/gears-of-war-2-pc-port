@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <filesystem>
 #include <optional>
 #include <utility>
 
@@ -259,16 +258,10 @@ bool HasFidelityFx() {
   return std::find(allowed.begin(), allowed.end(), "fsr") != allowed.end();
 }
 
-// A runtime built with NVIDIA's SDK (scripts/build-sdk.ps1 without -NoDlss) is installed with
-// nvngx_dlss.dll; the release never ships it. Checked at run time so self-built DLSS DLLs next to the
-// release exe get the menu entry too (issue #18).
+// Registered only by a runtime built with NVIDIA's SDK (SDK patch 0030), so self-built DLSS DLLs next to
+// the release exe get the menu entry too (issue #18).
 bool HasDlss() {
-#ifdef _WIN32
-  std::error_code ec;
-  return std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "nvngx_dlss.dll", ec);
-#else
-  return false;
-#endif
+  return rex::cvar::GetFlagInfo("gow2_dlss_runtime") != nullptr;
 }
 
 std::string SpanishChoiceLabel(std::string_view label) {

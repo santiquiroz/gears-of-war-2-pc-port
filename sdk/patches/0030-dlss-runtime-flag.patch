@@ -1,0 +1,17 @@
+diff --git a/src/graphics/d3d12/gow2_dlss.cpp b/src/graphics/d3d12/gow2_dlss.cpp
+index 0fecf91..e37d75a 100644
+--- a/src/graphics/d3d12/gow2_dlss.cpp
++++ b/src/graphics/d3d12/gow2_dlss.cpp
+@@ -13,6 +13,12 @@
+ #include <nvsdk_ngx_helpers.h>
+ #include <nvsdk_ngx_helpers_d3d.h>
+ #include <nvsdk_ngx_params.h>
++
++#include <rex/cvar.h>
++
++// Only a runtime built with NVIDIA's SDK registers it, so the game can tell at run time whether DLSS
++// can be offered (the release DLLs are built without it).
++REXCVAR_DEFINE_BOOL(gow2_dlss_runtime, true, "gfx", "Read-only: this runtime was built with NVIDIA DLSS");
+ #endif
+ 
+ namespace rex::graphics::d3d12::gow2 {
