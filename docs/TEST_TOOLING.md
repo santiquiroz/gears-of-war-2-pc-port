@@ -280,6 +280,18 @@ but in a chapter 27 combat area P1 died with god=1 (cause not traced). [V] Step 
 the newest other player. [V] Step 11 ran: CE and TeleportToLocation
 work with -DevCheats. [V] Steps 12 and 13 not run.
 
+## Chapter sweep
+
+`scripts/chapter-sweep.ps1` runs one instance through chapters `-From` to `-To` (1 to 29 by default) with `coop-instances.ps1`. Each chapter gets `-LoadSec` (90) of loading and `-PlaySec` (60) of scripted stick and trigger holds with an A tap, then a `ch<NN>` screenshot. The new log lines are classed as `fatal`, `crash`, `no-load` or `ok`.
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/chapter-sweep.ps1 -OutDir out/chapter-sweep/s1
+```
+
+- `<OutDir>/sweep.md` has one row per chapter (status, mean FRAMESTATS fps, screenshot, first error) and is rewritten after each chapter. A `fatal` or `crash` copies the log to `ch<NN>-<status>.log` and restarts the instance after the idle gate.
+- The end of the run prints `hints/runtime.toml` lines for each unregistered guest address found. It does not edit that file.
+- A screenshot taken while the idle guard saw the user return is deleted. Every start and restart waits for the idle gate unless `-NoIdleGate` is given.
+
 ## Evidence
 
 The addresses and offsets the tooling relies on. [V] means read in code and
