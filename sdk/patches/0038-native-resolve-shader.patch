@@ -1,0 +1,965 @@
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index bf7546e..294b825 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -696,9 +696,29 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+     kTextureNotUpToDate,
+     kTextureReplacement,
+     kTextureOutside,
++    kTextureNoUAV,
++    kNoPipeline,
++    kDescriptors,
+     kCount,
+   };
+   static const char* const kNativeResolveFallbackNames[size_t(NativeResolveFallback::kCount)];
++  // gpu_native_resolves: the source render target and destination texture formats written.
++  enum class NativeResolvePair : uint32_t {
++    // Color k_16_16_16_16_FLOAT to k_16_16_16_16_FLOAT, copied or scaled by the exponent bias.
++    k16161616Float,
++    // Color k_16_16_FLOAT to k_16_16_FLOAT, copied.
++    k1616Float,
++    // Color k_2_10_10_10_FLOAT to k_16_16_16_16_FLOAT, scaled by the exponent bias.
++    k2101010FloatTo16161616Float,
++    // Color k_8_8_8_8 to k_8_8_8_8, copied or with red and blue swapped.
++    k8888,
++    // Depth kD24S8 to k_24_8.
++    kD24S8,
++    // Depth kD24FS8 to k_24_8_FLOAT.
++    kD24FS8,
++    kCount,
++  };
++  static const char* const kNativeResolvePairNames[size_t(NativeResolvePair::kCount)];
+   // Whether a host render target resolve copy may be written to the textures natively, counting
+   // the reason if not.
+   bool IsNativeResolveEligible(const draw_util::ResolveInfo& resolve_info);
+@@ -794,6 +814,7 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+ 
+   // gpu_native_resolves: textures written and fallbacks since the last report.
+   uint64_t native_resolve_written_ = 0;
++  std::array<uint64_t, size_t(NativeResolvePair::kCount)> native_resolve_written_pairs_ = {};
+   std::array<uint64_t, size_t(NativeResolveFallback::kCount)> native_resolve_fallbacks_ = {};
+   std::chrono::steady_clock::time_point native_resolve_last_report_ =
+       std::chrono::steady_clock::now();
+diff --git a/include/rex/graphics/d3d12/texture_cache.h b/include/rex/graphics/d3d12/texture_cache.h
+index c91098d..c1e1f33 100644
+--- a/include/rex/graphics/d3d12/texture_cache.h
++++ b/include/rex/graphics/d3d12/texture_cache.h
+@@ -171,6 +171,18 @@ class D3D12TextureCache final : public TextureCache {
+     GetCurrentScaledResolveBuffer().SetUAVBarrierPending();
+   }
+ 
++  // gpu_native_resolves: how the source is written into the textures.
++  enum class NativeResolveMode : uint32_t {
++    // The values of the native_resolve.cs.hlsl modes.
++    // out = in * scale.
++    kScale,
++    // out = in.bgra.
++    kSwapRedBlue,
++    // out.r = depth.
++    kDepthToRed,
++    // CopyTextureRegion.
++    kCopy,
++  };
+   // gpu_native_resolves: a resolve rectangle to copy from a host render target straight into the
+   // textures viewing the resolve destination. Coordinates and sizes are in guest pixels, unscaled.
+   struct NativeResolveWrite {
+@@ -180,7 +192,8 @@ class D3D12TextureCache final : public TextureCache {
+     // In TextureKey::pitch units (32 texels).
+     uint32_t pitch;
+     xenos::Endian endianness;
+-    // Subresource 0 is copied, the format must be in the same typeless family as the textures'.
++    // Subresource 0 is read. With kCopy, the format must be in the same typeless family as the
++    // textures'.
+     ID3D12Resource* source;
+     uint32_t source_x;
+     uint32_t source_y;
+@@ -188,6 +201,15 @@ class D3D12TextureCache final : public TextureCache {
+     uint32_t dest_y;
+     uint32_t width;
+     uint32_t height;
++    NativeResolveMode mode = NativeResolveMode::kCopy;
++    // kScale multiplier.
++    float scale = 1.0f;
++    // Shader modes: the non-shader-visible SRV of the source to copy if source_srv_format is
++    // DXGI_FORMAT_UNKNOWN, otherwise a 2D source SRV with source_srv_format is created.
++    D3D12_CPU_DESCRIPTOR_HANDLE source_srv = {};
++    DXGI_FORMAT source_srv_format = DXGI_FORMAT_UNKNOWN;
++    // Shader modes: the format of the UAV of the textures.
++    DXGI_FORMAT dest_uav_format = DXGI_FORMAT_UNKNOWN;
+   };
+   struct NativeResolveWriteCounts {
+     uint32_t written = 0;
+@@ -195,11 +217,18 @@ class D3D12TextureCache final : public TextureCache {
+     uint32_t not_up_to_date = 0;
+     uint32_t replacement = 0;
+     uint32_t outside = 0;
++    // Shader modes: the texture was created without D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.
++    uint32_t no_uav = 0;
++    // Shader modes: native_resolve_cs pipeline not created.
++    uint32_t no_pipeline = 0;
++    // Shader modes: failed to get the one-use descriptors.
++    uint32_t descriptors = 0;
+   };
+-  // Copies the rectangle into every texture at write.base_page that is a single-level unsigned 2D
++  // Writes the rectangle into every texture at write.base_page that is a single-level unsigned 2D
+   // tiled texture with the format, pitch and endianness of the resolve, matching resolution
+   // scaling, and up to date before the resolve (CaptureUpToDateBeforeResolve), then marks those
+   // up to date. source_state is the current state of the source, updated if it's transitioned.
++  // kCopy uses CopyTextureRegion, the other modes native_resolve_cs.
+   void WriteNativeResolveToTextures(const NativeResolveWrite& write,
+                                     D3D12_RESOURCE_STATES& source_state,
+                                     NativeResolveWriteCounts& counts);
+@@ -573,6 +602,18 @@ class D3D12TextureCache final : public TextureCache {
+   // Load pipelines for resolution-scaled resolve targets.
+   std::array<Microsoft::WRL::ComPtr<ID3D12PipelineState>, kLoadShaderCount> load_pipelines_scaled_;
+ 
++  // gpu_native_resolves: native_resolve_cs, created only with the cvar enabled.
++  // Root parameter 0 - NativeResolveConstants, 1 - source SRV table, 2 - destination UAV table.
++  struct NativeResolveConstants {
++    uint32_t mode;
++    float scale;
++    int32_t source_offset[2];
++    int32_t dest_offset[2];
++    uint32_t size[2];
++  };
++  Microsoft::WRL::ComPtr<ID3D12RootSignature> native_resolve_root_signature_;
++  Microsoft::WRL::ComPtr<ID3D12PipelineState> native_resolve_pipeline_;
++
+   std::vector<SRVDescriptorCachePage> srv_descriptor_cache_;
+   uint32_t srv_descriptor_cache_allocated_;
+   // Indices of cached descriptors used by deleted textures, for reuse.
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 469a2bb..6a59d08 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -13,6 +13,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <cmath>
+ #include <cstdint>
+ #include <cstring>
+ #include <iterator>
+@@ -6045,17 +6046,38 @@ const char* const D3D12RenderTargetCache::kNativeResolveFallbackNames[size_t(
+     "texture_not_up_to_date",
+     "texture_replacement",
+     "texture_outside",
++    "texture_no_uav",
++    "no_pipeline",
++    "descriptors",
++};
++
++const char* const D3D12RenderTargetCache::kNativeResolvePairNames[size_t(
++    NativeResolvePair::kCount)] = {
++    "7>32",
++    "6>31",
++    "3>32",
++    "0>6",
++    "d0>22",
++    "d1>23",
+ };
+ 
+ bool D3D12RenderTargetCache::IsNativeResolveEligible(const draw_util::ResolveInfo& resolve_info) {
++  // Depth resolves are copies of the depth (the swap and the exponent bias don't apply to them),
++  // the exponent bias is applied by native_resolve_cs to floating-point color only, and red and
++  // blue are swapped by it for k_8_8_8_8 only.
++  const bool is_depth = resolve_info.IsCopyingDepth();
++  const auto source_color_format = xenos::GetStorageColorFormat(
++      xenos::ColorRenderTargetFormat(resolve_info.color_edram_info.format));
+   NativeResolveFallback reason;
+-  if (resolve_info.IsCopyingDepth()) {
+-    reason = NativeResolveFallback::kDepth;
+-  } else if (resolve_info.color_edram_info.msaa_samples != xenos::MsaaSamples::k1X) {
++  if ((is_depth ? resolve_info.depth_edram_info : resolve_info.color_edram_info).msaa_samples !=
++      xenos::MsaaSamples::k1X) {
+     reason = NativeResolveFallback::kMsaa;
+-  } else if (resolve_info.copy_dest_info.copy_dest_exp_bias != 0) {
++  } else if (!is_depth && resolve_info.copy_dest_info.copy_dest_exp_bias != 0 &&
++             source_color_format != xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT &&
++             source_color_format != xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT) {
+     reason = NativeResolveFallback::kExpBias;
+-  } else if (resolve_info.copy_dest_info.copy_dest_swap != 0) {
++  } else if (!is_depth && resolve_info.copy_dest_info.copy_dest_swap != 0 &&
++             source_color_format != xenos::ColorRenderTargetFormat::k_8_8_8_8) {
+     reason = NativeResolveFallback::kSwap;
+   } else {
+     return true;
+@@ -6072,22 +6094,87 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+     ReportNativeResolves();
+   };
+ 
+-  // Only resolves whose result is the render target data as is: the destination format is the
+-  // same as the source's, with the same host representation in the texture cache.
+-  const auto source_format = xenos::ColorRenderTargetFormat(resolve_info.color_edram_info.format);
+-  xenos::ColorFormat dest_color_format;
++  // Only resolves whose result is the render target data as is (copied), or the render target
++  // data with the exponent bias applied, red and blue swapped, or the depth taken from a depth
++  // render target (written by native_resolve_cs), in the host representation of the destination
++  // format in the texture cache.
++  const bool is_depth = resolve_info.IsCopyingDepth();
++  const draw_util::ResolveEdramInfo& edram_info =
++      is_depth ? resolve_info.depth_edram_info : resolve_info.color_edram_info;
++  const int32_t exp_bias = resolve_info.copy_dest_info.copy_dest_exp_bias;
++  const bool swap_red_blue = resolve_info.copy_dest_info.copy_dest_swap != 0;
++  D3D12TextureCache::NativeResolveWrite write;
++  NativeResolvePair pair;
+   xenos::TextureFormat texture_format;
+-  if (source_format == xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT) {
+-    dest_color_format = xenos::ColorFormat::k_16_16_16_16_FLOAT;
+-    texture_format = xenos::TextureFormat::k_16_16_16_16_FLOAT;
+-  } else if (source_format == xenos::ColorRenderTargetFormat::k_16_16_FLOAT) {
+-    dest_color_format = xenos::ColorFormat::k_16_16_FLOAT;
+-    texture_format = xenos::TextureFormat::k_16_16_FLOAT;
++  // RenderTargetKey::resource_format of the source.
++  uint32_t source_resource_format = edram_info.format;
++  if (is_depth) {
++    // The depth SRV of the render target (R24_UNORM_X8_TYPELESS or R32_FLOAT_X8X24_TYPELESS) is
++    // copied once the render target is known. The exponent bias and the swap don't apply.
++    const auto source_format = xenos::DepthRenderTargetFormat(edram_info.format);
++    if (source_format == xenos::DepthRenderTargetFormat::kD24S8) {
++      pair = NativeResolvePair::kD24S8;
++      texture_format = xenos::TextureFormat::k_24_8;
++    } else if (source_format == xenos::DepthRenderTargetFormat::kD24FS8) {
++      pair = NativeResolvePair::kD24FS8;
++      texture_format = xenos::TextureFormat::k_24_8_FLOAT;
++    } else {
++      fallback(NativeResolveFallback::kDepth);
++      return;
++    }
++    write.mode = D3D12TextureCache::NativeResolveMode::kDepthToRed;
++    write.dest_uav_format = DXGI_FORMAT_R32_FLOAT;
+   } else {
+-    fallback(NativeResolveFallback::kSourceFormat);
+-    return;
++    // The SRV of a color render target has the ownership transfer format (R16G16B16A16_UINT for
++    // k_16_16_16_16_FLOAT), so a float / unorm SRV is created for the shader.
++    const auto source_format =
++        xenos::GetStorageColorFormat(xenos::ColorRenderTargetFormat(edram_info.format));
++    source_resource_format = uint32_t(source_format);
++    if (source_format == xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT) {
++      pair = NativeResolvePair::k16161616Float;
++      texture_format = xenos::TextureFormat::k_16_16_16_16_FLOAT;
++      if (exp_bias) {
++        write.mode = D3D12TextureCache::NativeResolveMode::kScale;
++        write.source_srv_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++        write.dest_uav_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++      }
++    } else if (source_format == xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT) {
++      // R16G16B16A16_FLOAT on the host, but converted to 7e3 by the guest.
++      pair = NativeResolvePair::k2101010FloatTo16161616Float;
++      texture_format = xenos::TextureFormat::k_16_16_16_16_FLOAT;
++      write.mode = D3D12TextureCache::NativeResolveMode::kScale;
++      write.source_srv_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++      write.dest_uav_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++    } else if (source_format == xenos::ColorRenderTargetFormat::k_16_16_FLOAT) {
++      pair = NativeResolvePair::k1616Float;
++      texture_format = xenos::TextureFormat::k_16_16_FLOAT;
++    } else if (source_format == xenos::ColorRenderTargetFormat::k_8_8_8_8) {
++      // R8G8B8A8_UNORM render target, R8G8B8A8_TYPELESS texture - copyable without the swap.
++      pair = NativeResolvePair::k8888;
++      texture_format = xenos::TextureFormat::k_8_8_8_8;
++      if (swap_red_blue) {
++        write.mode = D3D12TextureCache::NativeResolveMode::kSwapRedBlue;
++        write.source_srv_format = DXGI_FORMAT_R8G8B8A8_UNORM;
++        write.dest_uav_format = DXGI_FORMAT_R8G8B8A8_UNORM;
++      }
++    } else {
++      // Including k_16_16, which the guest stores with a different range than the host.
++      fallback(NativeResolveFallback::kSourceFormat);
++      return;
++    }
++    if (exp_bias && write.mode != D3D12TextureCache::NativeResolveMode::kScale) {
++      fallback(NativeResolveFallback::kExpBias);
++      return;
++    }
++    if (swap_red_blue && write.mode != D3D12TextureCache::NativeResolveMode::kSwapRedBlue) {
++      fallback(NativeResolveFallback::kSwap);
++      return;
++    }
++    // A negative bias is applied the same way.
++    write.scale = std::ldexp(1.0f, exp_bias);
+   }
+-  if (resolve_info.copy_dest_info.copy_dest_format != dest_color_format) {
++  // For depth, ResolveInfo has replaced the destination format with k_24_8 or k_24_8_FLOAT.
++  if (uint32_t(resolve_info.copy_dest_info.copy_dest_format) != uint32_t(texture_format)) {
+     fallback(NativeResolveFallback::kDestFormat);
+     return;
+   }
+@@ -6109,7 +6196,7 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+     return;
+   }
+   // The resolve shader replicates the edge into the half-pixel offset gap with scaling.
+-  if (resolve_info.color_edram_info.fill_half_pixel_offset) {
++  if (edram_info.fill_half_pixel_offset) {
+     fallback(NativeResolveFallback::kHalfPixelFill);
+     return;
+   }
+@@ -6142,7 +6229,7 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   }
+   auto& render_target = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
+   const RenderTargetKey rt_key = render_target.key();
+-  if (rt_key.is_depth || rt_key.resource_format != uint32_t(source_format)) {
++  if (rt_key.is_depth != is_depth || rt_key.resource_format != source_resource_format) {
+     fallback(NativeResolveFallback::kSourceFormat);
+     return;
+   }
+@@ -6154,8 +6241,8 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   // The resolve origin in the render target: the resolve EDRAM base tile relative to the render
+   // target's, laid out with the same pitch, plus the offset within that tile.
+   const uint32_t rt_pitch_tiles = rt_key.GetPitchTiles();
+-  const uint32_t resolve_base_tiles = resolve_info.color_edram_info.base_tiles;
+-  if (!rt_pitch_tiles || rt_pitch_tiles != resolve_info.color_edram_info.pitch_tiles ||
++  const uint32_t resolve_base_tiles = edram_info.base_tiles;
++  if (!rt_pitch_tiles || rt_pitch_tiles != edram_info.pitch_tiles ||
+       resolve_base_tiles < rt_key.base_tiles) {
+     fallback(NativeResolveFallback::kSourcePlacement);
+     return;
+@@ -6164,7 +6251,6 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   const uint32_t tile_width_pixels = xenos::kEdramTileWidthSamples >> uint32_t(rt_key.Is64bpp());
+   const uint32_t width = resolve_info.coordinate_info.width_div_8 << 3;
+   const uint32_t height = resolve_info.height_div_8 << 3;
+-  D3D12TextureCache::NativeResolveWrite write;
+   write.source_x = (rt_offset_tiles % rt_pitch_tiles) * tile_width_pixels +
+                    (resolve_info.coordinate_info.edram_offset_x_div_8 << 3);
+   write.source_y = (rt_offset_tiles / rt_pitch_tiles) * xenos::kEdramTileHeightSamples +
+@@ -6185,6 +6271,9 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   write.dest_y = resolve_info.copy_dest_coordinate_info.offset_y_div_8 << 3;
+   write.width = width;
+   write.height = height;
++  if (is_depth) {
++    write.source_srv = render_target.descriptor_srv().GetHandle();
++  }
+ 
+   // DumpRenderTargets has left the render target in this state.
+   const D3D12_RESOURCE_STATES rt_state_before =
+@@ -6196,10 +6285,14 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   render_target.SetResourceState(rt_state_before);
+ 
+   native_resolve_written_ += counts.written;
++  native_resolve_written_pairs_[size_t(pair)] += counts.written;
+   CountNativeResolveFallback(NativeResolveFallback::kTextureIncompatible, counts.incompatible);
+   CountNativeResolveFallback(NativeResolveFallback::kTextureNotUpToDate, counts.not_up_to_date);
+   CountNativeResolveFallback(NativeResolveFallback::kTextureReplacement, counts.replacement);
+   CountNativeResolveFallback(NativeResolveFallback::kTextureOutside, counts.outside);
++  CountNativeResolveFallback(NativeResolveFallback::kTextureNoUAV, counts.no_uav);
++  CountNativeResolveFallback(NativeResolveFallback::kNoPipeline, counts.no_pipeline);
++  CountNativeResolveFallback(NativeResolveFallback::kDescriptors, counts.descriptors);
+   ReportNativeResolves();
+ }
+ 
+@@ -6218,11 +6311,20 @@ void D3D12RenderTargetCache::ReportNativeResolves() {
+     fallback_total += native_resolve_fallbacks_[i];
+     fallbacks += fmt::format(" {}={}", kNativeResolveFallbackNames[i], native_resolve_fallbacks_[i]);
+   }
++  // Per source render target format > destination texture format, "d" for depth.
++  std::string written_pairs;
++  for (size_t i = 0; i < size_t(NativeResolvePair::kCount); ++i) {
++    if (native_resolve_written_pairs_[i]) {
++      written_pairs +=
++          fmt::format(" {}={}", kNativeResolvePairNames[i], native_resolve_written_pairs_[i]);
++    }
++  }
+   if (native_resolve_written_ || fallback_total) {
+-    REXGPU_INFO("NATIVERESOLVE written {} fallback {}{}", native_resolve_written_, fallback_total,
+-                fallbacks);
++    REXGPU_INFO("NATIVERESOLVE written {}{} fallback {}{}", native_resolve_written_,
++                written_pairs, fallback_total, fallbacks);
+   }
+   native_resolve_written_ = 0;
++  native_resolve_written_pairs_.fill(0);
+   native_resolve_fallbacks_.fill(0);
+ }
+ 
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index a26e186..5c4e0af 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -40,6 +40,7 @@ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+ namespace shaders {
++#include "../shaders/bytecode/d3d12_5_1/native_resolve_cs.h"
+ #include "../shaders/bytecode/d3d12_5_1/texture_load_128bpb_cs.h"
+ #include "../shaders/bytecode/d3d12_5_1/texture_load_128bpb_scaled_cs.h"
+ #include "../shaders/bytecode/d3d12_5_1/texture_load_16bpb_cs.h"
+@@ -595,6 +596,58 @@ bool D3D12TextureCache::Initialize() {
+     }
+   }
+ 
++  // gpu_native_resolves: the resolve writes that are not plain copies. Native resolves of those
++  // fall back to reloading from memory if this fails.
++  if (REXCVAR_GET(gpu_native_resolves)) {
++    D3D12_ROOT_PARAMETER native_resolve_root_parameters[3];
++    native_resolve_root_parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
++    native_resolve_root_parameters[0].Constants.ShaderRegister = 0;
++    native_resolve_root_parameters[0].Constants.RegisterSpace = 0;
++    native_resolve_root_parameters[0].Constants.Num32BitValues =
++        sizeof(NativeResolveConstants) / sizeof(uint32_t);
++    native_resolve_root_parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    D3D12_DESCRIPTOR_RANGE native_resolve_source_range;
++    native_resolve_source_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
++    native_resolve_source_range.NumDescriptors = 1;
++    native_resolve_source_range.BaseShaderRegister = 0;
++    native_resolve_source_range.RegisterSpace = 0;
++    native_resolve_source_range.OffsetInDescriptorsFromTableStart = 0;
++    native_resolve_root_parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++    native_resolve_root_parameters[1].DescriptorTable.NumDescriptorRanges = 1;
++    native_resolve_root_parameters[1].DescriptorTable.pDescriptorRanges =
++        &native_resolve_source_range;
++    native_resolve_root_parameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    D3D12_DESCRIPTOR_RANGE native_resolve_dest_range;
++    native_resolve_dest_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
++    native_resolve_dest_range.NumDescriptors = 1;
++    native_resolve_dest_range.BaseShaderRegister = 0;
++    native_resolve_dest_range.RegisterSpace = 0;
++    native_resolve_dest_range.OffsetInDescriptorsFromTableStart = 0;
++    native_resolve_root_parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++    native_resolve_root_parameters[2].DescriptorTable.NumDescriptorRanges = 1;
++    native_resolve_root_parameters[2].DescriptorTable.pDescriptorRanges = &native_resolve_dest_range;
++    native_resolve_root_parameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++    D3D12_ROOT_SIGNATURE_DESC native_resolve_root_signature_desc;
++    native_resolve_root_signature_desc.NumParameters =
++        UINT(rex::countof(native_resolve_root_parameters));
++    native_resolve_root_signature_desc.pParameters = native_resolve_root_parameters;
++    native_resolve_root_signature_desc.NumStaticSamplers = 0;
++    native_resolve_root_signature_desc.pStaticSamplers = nullptr;
++    native_resolve_root_signature_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
++    *(native_resolve_root_signature_.ReleaseAndGetAddressOf()) =
++        ui::d3d12::util::CreateRootSignature(provider, native_resolve_root_signature_desc);
++    if (native_resolve_root_signature_) {
++      *(native_resolve_pipeline_.ReleaseAndGetAddressOf()) = ui::d3d12::util::CreateComputePipeline(
++          device, shaders::native_resolve_cs, sizeof(shaders::native_resolve_cs),
++          native_resolve_root_signature_.Get());
++    }
++    if (!native_resolve_root_signature_ || !native_resolve_pipeline_) {
++      native_resolve_pipeline_.Reset();
++      native_resolve_root_signature_.Reset();
++      REXGPU_WARN("D3D12TextureCache: Failed to create the native resolve pipeline");
++    }
++  }
++
+   srv_descriptor_cache_allocated_ = 0;
+ 
+   // Create a heap with null SRV descriptors, since it's faster to copy a
+@@ -1484,13 +1537,93 @@ void D3D12TextureCache::WriteNativeResolveToTextures(const NativeResolveWrite& w
+     }
+     uint32_t width = std::min(write.width, texture_width - write.dest_x);
+     uint32_t height = std::min(write.height, texture_height - write.dest_y);
++    ID3D12Resource* texture_resource = d3d12_texture.resource();
++
++    if (write.mode != NativeResolveMode::kCopy) {
++      if (!native_resolve_pipeline_) {
++        ++counts.no_pipeline;
++        return;
++      }
++      // Created before gpu_native_resolves was enabled, or not matching the CreateTexture
++      // conditions.
++      if (!(texture_resource->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) {
++        ++counts.no_uav;
++        return;
++      }
++      ui::d3d12::util::DescriptorCpuGpuHandlePair descriptors[2];
++      if (!command_processor_.RequestOneUseSingleViewDescriptors(
++              uint32_t(rex::countof(descriptors)), descriptors)) {
++        ++counts.descriptors;
++        return;
++      }
++      ID3D12Device* device = command_processor_.GetD3D12Provider().GetDevice();
++      if (write.source_srv_format == DXGI_FORMAT_UNKNOWN) {
++        device->CopyDescriptorsSimple(1, descriptors[0].first, write.source_srv,
++                                      D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++      } else {
++        D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc;
++        srv_desc.Format = write.source_srv_format;
++        srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++        srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++        srv_desc.Texture2D.MostDetailedMip = 0;
++        srv_desc.Texture2D.MipLevels = 1;
++        srv_desc.Texture2D.PlaneSlice = 0;
++        srv_desc.Texture2D.ResourceMinLODClamp = 0.0f;
++        device->CreateShaderResourceView(write.source, &srv_desc, descriptors[0].first);
++      }
++      D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc;
++      uav_desc.Format = write.dest_uav_format;
++      uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++      uav_desc.Texture2D.MipSlice = 0;
++      uav_desc.Texture2D.PlaneSlice = 0;
++      device->CreateUnorderedAccessView(texture_resource, nullptr, &uav_desc,
++                                        descriptors[1].first);
++
++      // Referenced by the command list now.
++      texture.MarkAsUsed();
++      command_processor_.PushTransitionBarrier(write.source, source_state,
++                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++      source_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++      D3D12_RESOURCE_STATES texture_state =
++          d3d12_texture.SetResourceState(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++      command_processor_.PushTransitionBarrier(texture_resource, texture_state,
++                                               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++      command_processor_.SubmitBarriers();
++
++      DeferredCommandList& command_list = command_processor_.GetDeferredCommandList();
++      command_processor_.SetExternalPipeline(native_resolve_pipeline_.Get());
++      command_list.D3DSetComputeRootSignature(native_resolve_root_signature_.Get());
++      command_list.D3DSetComputeRootDescriptorTable(1, descriptors[0].second);
++      command_list.D3DSetComputeRootDescriptorTable(2, descriptors[1].second);
++      NativeResolveConstants constants;
++      constants.mode = uint32_t(write.mode);
++      constants.scale = write.scale;
++      constants.source_offset[0] = int32_t(write.source_x * scale_x);
++      constants.source_offset[1] = int32_t(write.source_y * scale_y);
++      constants.dest_offset[0] = int32_t(write.dest_x * scale_x);
++      constants.dest_offset[1] = int32_t(write.dest_y * scale_y);
++      constants.size[0] = width * scale_x;
++      constants.size[1] = height * scale_y;
++      command_list.D3DSetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
++                                                   &constants, 0);
++      command_list.D3DDispatch((constants.size[0] + 7) >> 3, (constants.size[1] + 7) >> 3, 1);
++
++      // Leave the texture in the state its users expect it to be in.
++      command_processor_.PushUAVBarrier(texture_resource);
++      command_processor_.PushTransitionBarrier(
++          texture_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, texture_state);
++      d3d12_texture.SetResourceState(texture_state);
++
++      MakeTextureUpToDateAndWatch(texture);
++      ++counts.written;
++      return;
++    }
+ 
+     // Referenced by the command list now.
+     texture.MarkAsUsed();
+     command_processor_.PushTransitionBarrier(write.source, source_state,
+                                              D3D12_RESOURCE_STATE_COPY_SOURCE);
+     source_state = D3D12_RESOURCE_STATE_COPY_SOURCE;
+-    ID3D12Resource* texture_resource = d3d12_texture.resource();
+     D3D12_RESOURCE_STATES texture_state =
+         d3d12_texture.SetResourceState(D3D12_RESOURCE_STATE_COPY_DEST);
+     command_processor_.PushTransitionBarrier(texture_resource, texture_state,
+@@ -1794,6 +1927,16 @@ std::unique_ptr<TextureCache::Texture> D3D12TextureCache::CreateTexture(TextureK
+     // The scene colour resolve target: the temporal upscaler writes its result back into it.
+     desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+   }
++  if (REXCVAR_GET(gpu_native_resolves) && key.tiled &&
++      key.dimension == xenos::DataDimension::k2DOrStacked && key.depth_or_array_size_minus_1 == 0 &&
++      key.mip_max_level == 0 &&
++      (key.format == xenos::TextureFormat::k_16_16_16_16_FLOAT ||
++       key.format == xenos::TextureFormat::k_8_8_8_8 ||
++       key.format == xenos::TextureFormat::k_24_8 ||
++       key.format == xenos::TextureFormat::k_24_8_FLOAT)) {
++    // Native resolve destinations written by native_resolve_cs (WriteNativeResolveToTextures).
++    desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++  }
+   const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
+   ID3D12Device* device = provider.GetDevice();
+   // Assuming untiling will be the next operation.
+diff --git a/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h b/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h
+new file mode 100644
+index 0000000..3e829dc
+--- /dev/null
++++ b/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h
+@@ -0,0 +1,351 @@
++#if 0
++//
++// Generated by Microsoft (R) HLSL Shader Compiler 10.1
++//
++//
++// Buffer Definitions: 
++//
++// cbuffer XeNativeResolveConstants
++// {
++//
++//   uint xe_native_resolve_mode;       // Offset:    0 Size:     4
++//   float xe_native_resolve_scale;     // Offset:    4 Size:     4
++//   int2 xe_native_resolve_source_offset;// Offset:    8 Size:     8
++//   int2 xe_native_resolve_dest_offset;// Offset:   16 Size:     8
++//   uint2 xe_native_resolve_size;      // Offset:   24 Size:     8
++//
++// }
++//
++//
++// Resource Bindings:
++//
++// Name                                 Type  Format         Dim      ID      HLSL Bind  Count
++// ------------------------------ ---------- ------- ----------- ------- -------------- ------
++// xe_native_resolve_source          texture  float4          2d      T0             t0      1 
++// xe_native_resolve_dest                UAV  float4          2d      U0             u0      1 
++// XeNativeResolveConstants          cbuffer      NA          NA     CB0            cb0      1 
++//
++//
++//
++// Input signature:
++//
++// Name                 Index   Mask Register SysValue  Format   Used
++// -------------------- ----- ------ -------- -------- ------- ------
++// no Input
++//
++// Output signature:
++//
++// Name                 Index   Mask Register SysValue  Format   Used
++// -------------------- ----- ------ -------- -------- ------- ------
++// no Output
++cs_5_1
++dcl_globalFlags refactoringAllowed
++dcl_constantbuffer CB0[0:0][2], immediateIndexed, space=0
++dcl_resource_texture2d (float,float,float,float) T0[0:0], space=0
++dcl_uav_typed_texture2d (float,float,float,float) U0[0:0], space=0
++dcl_input vThreadID.xy
++dcl_temps 2
++dcl_thread_group 8, 8, 1
++uge r0.xy, vThreadID.xyxx, CB0[0][1].zwzz
++or r0.x, r0.y, r0.x
++if_nz r0.x
++  ret 
++endif 
++iadd r0.xy, vThreadID.xyxx, CB0[0][0].zwzz
++mov r0.zw, l(0,0,0,0)
++ld r0.xyzw, r0.xyzw, T0[0].zyxw
++ieq r1.x, CB0[0][0].x, l(1)
++if_z r1.x
++  ieq r1.x, CB0[0][0].x, l(2)
++  if_nz r1.x
++    mov r0.x, r0.z
++    mov r0.yzw, l(0,0,0,0)
++  else 
++    mul r0.xyzw, r0.zyxw, CB0[0][0].yyyy
++  endif 
++endif 
++iadd r1.xyzw, vThreadID.xyyy, CB0[0][1].xyyy
++store_uav_typed U0[0].xyzw, r1.xyzw, r0.xyzw
++ret 
++// Approximately 21 instruction slots used
++#endif
++
++const BYTE native_resolve_cs[] =
++{
++     68,  88,  66,  67, 250,  44, 
++    255, 228, 158, 209,  62, 249, 
++     73, 113,  53, 130, 110, 187, 
++    104, 204,   1,   0,   0,   0, 
++    116,   6,   0,   0,   5,   0, 
++      0,   0,  52,   0,   0,   0, 
++    120,   3,   0,   0, 136,   3, 
++      0,   0, 152,   3,   0,   0, 
++    216,   5,   0,   0,  82,  68, 
++     69,  70,  60,   3,   0,   0, 
++      1,   0,   0,   0,   0,   1, 
++      0,   0,   3,   0,   0,   0, 
++     60,   0,   0,   0,   1,   5, 
++     83,  67,   0, 133,   0,   0, 
++     20,   3,   0,   0,  19,  19, 
++     68,  37,  60,   0,   0,   0, 
++     24,   0,   0,   0,  40,   0, 
++      0,   0,  40,   0,   0,   0, 
++     36,   0,   0,   0,  12,   0, 
++      0,   0,   0,   0,   0,   0, 
++    180,   0,   0,   0,   2,   0, 
++      0,   0,   5,   0,   0,   0, 
++      4,   0,   0,   0, 255, 255, 
++    255, 255,   0,   0,   0,   0, 
++      1,   0,   0,   0,  12,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0, 205,   0, 
++      0,   0,   4,   0,   0,   0, 
++      5,   0,   0,   0,   4,   0, 
++      0,   0, 255, 255, 255, 255, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,  12,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0, 228,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   1,   0,   0,   0, 
++      1,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++    120, 101,  95, 110,  97, 116, 
++    105, 118, 101,  95, 114, 101, 
++    115, 111, 108, 118, 101,  95, 
++    115, 111, 117, 114,  99, 101, 
++      0, 120, 101,  95, 110,  97, 
++    116, 105, 118, 101,  95, 114, 
++    101, 115, 111, 108, 118, 101, 
++     95, 100, 101, 115, 116,   0, 
++     88, 101,  78,  97, 116, 105, 
++    118, 101,  82, 101, 115, 111, 
++    108, 118, 101,  67, 111, 110, 
++    115, 116,  97, 110, 116, 115, 
++      0, 171, 171, 171, 228,   0, 
++      0,   0,   5,   0,   0,   0, 
++     24,   1,   0,   0,  32,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0, 224,   1, 
++      0,   0,   0,   0,   0,   0, 
++      4,   0,   0,   0,   2,   0, 
++      0,   0,   0,   2,   0,   0, 
++      0,   0,   0,   0, 255, 255, 
++    255, 255,   0,   0,   0,   0, 
++    255, 255, 255, 255,   0,   0, 
++      0,   0,  36,   2,   0,   0, 
++      4,   0,   0,   0,   4,   0, 
++      0,   0,   2,   0,   0,   0, 
++     68,   2,   0,   0,   0,   0, 
++      0,   0, 255, 255, 255, 255, 
++      0,   0,   0,   0, 255, 255, 
++    255, 255,   0,   0,   0,   0, 
++    104,   2,   0,   0,   8,   0, 
++      0,   0,   8,   0,   0,   0, 
++      2,   0,   0,   0, 144,   2, 
++      0,   0,   0,   0,   0,   0, 
++    255, 255, 255, 255,   0,   0, 
++      0,   0, 255, 255, 255, 255, 
++      0,   0,   0,   0, 180,   2, 
++      0,   0,  16,   0,   0,   0, 
++      8,   0,   0,   0,   2,   0, 
++      0,   0, 144,   2,   0,   0, 
++      0,   0,   0,   0, 255, 255, 
++    255, 255,   0,   0,   0,   0, 
++    255, 255, 255, 255,   0,   0, 
++      0,   0, 210,   2,   0,   0, 
++     24,   0,   0,   0,   8,   0, 
++      0,   0,   2,   0,   0,   0, 
++    240,   2,   0,   0,   0,   0, 
++      0,   0, 255, 255, 255, 255, 
++      0,   0,   0,   0, 255, 255, 
++    255, 255,   0,   0,   0,   0, 
++    120, 101,  95, 110,  97, 116, 
++    105, 118, 101,  95, 114, 101, 
++    115, 111, 108, 118, 101,  95, 
++    109, 111, 100, 101,   0, 100, 
++    119, 111, 114, 100,   0, 171, 
++    171, 171,   0,   0,  19,   0, 
++      1,   0,   1,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0, 247,   1, 
++      0,   0, 120, 101,  95, 110, 
++     97, 116, 105, 118, 101,  95, 
++    114, 101, 115, 111, 108, 118, 
++    101,  95, 115,  99,  97, 108, 
++    101,   0, 102, 108, 111,  97, 
++    116,   0, 171, 171,   0,   0, 
++      3,   0,   1,   0,   1,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     60,   2,   0,   0, 120, 101, 
++     95, 110,  97, 116, 105, 118, 
++    101,  95, 114, 101, 115, 111, 
++    108, 118, 101,  95, 115, 111, 
++    117, 114,  99, 101,  95, 111, 
++    102, 102, 115, 101, 116,   0, 
++    105, 110, 116,  50,   0, 171, 
++    171, 171,   1,   0,   2,   0, 
++      1,   0,   2,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0, 136,   2, 
++      0,   0, 120, 101,  95, 110, 
++     97, 116, 105, 118, 101,  95, 
++    114, 101, 115, 111, 108, 118, 
++    101,  95, 100, 101, 115, 116, 
++     95, 111, 102, 102, 115, 101, 
++    116,   0, 120, 101,  95, 110, 
++     97, 116, 105, 118, 101,  95, 
++    114, 101, 115, 111, 108, 118, 
++    101,  95, 115, 105, 122, 101, 
++      0, 117, 105, 110, 116,  50, 
++      0, 171,   1,   0,  19,   0, 
++      1,   0,   2,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0, 233,   2, 
++      0,   0,  77, 105,  99, 114, 
++    111, 115, 111, 102, 116,  32, 
++     40,  82,  41,  32,  72,  76, 
++     83,  76,  32,  83, 104,  97, 
++    100, 101, 114,  32,  67, 111, 
++    109, 112, 105, 108, 101, 114, 
++     32,  49,  48,  46,  49,   0, 
++     73,  83,  71,  78,   8,   0, 
++      0,   0,   0,   0,   0,   0, 
++      8,   0,   0,   0,  79,  83, 
++     71,  78,   8,   0,   0,   0, 
++      0,   0,   0,   0,   8,   0, 
++      0,   0,  83,  72,  69,  88, 
++     56,   2,   0,   0,  81,   0, 
++      5,   0, 142,   0,   0,   0, 
++    106,   8,   0,   1,  89,   0, 
++      0,   7,  70, 142,  48,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      2,   0,   0,   0,   0,   0, 
++      0,   0,  88,  24,   0,   7, 
++     70, 126,  48,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,  85,  85, 
++      0,   0,   0,   0,   0,   0, 
++    156,  24,   0,   7,  70, 238, 
++     49,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,  85,  85,   0,   0, 
++      0,   0,   0,   0,  95,   0, 
++      0,   2,  50,   0,   2,   0, 
++    104,   0,   0,   2,   2,   0, 
++      0,   0, 155,   0,   0,   4, 
++      8,   0,   0,   0,   8,   0, 
++      0,   0,   1,   0,   0,   0, 
++     80,   0,   0,   8,  50,   0, 
++     16,   0,   0,   0,   0,   0, 
++     70,   0,   2,   0, 230, 138, 
++     48,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,  60,   0,   0,   7, 
++     18,   0,  16,   0,   0,   0, 
++      0,   0,  26,   0,  16,   0, 
++      0,   0,   0,   0,  10,   0, 
++     16,   0,   0,   0,   0,   0, 
++     31,   0,   4,   3,  10,   0, 
++     16,   0,   0,   0,   0,   0, 
++     62,   0,   0,   1,  21,   0, 
++      0,   1,  30,   0,   0,   8, 
++     50,   0,  16,   0,   0,   0, 
++      0,   0,  70,   0,   2,   0, 
++    230, 138,  48,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,  54,   0, 
++      0,   8, 194,   0,  16,   0, 
++      0,   0,   0,   0,   2,  64, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     45,   0,   0,   8, 242,   0, 
++     16,   0,   0,   0,   0,   0, 
++     70,  14,  16,   0,   0,   0, 
++      0,   0, 102, 124,  32,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,  32,   0,   0,   9, 
++     18,   0,  16,   0,   1,   0, 
++      0,   0,  10, 128,  48,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      1,  64,   0,   0,   1,   0, 
++      0,   0,  31,   0,   0,   3, 
++     10,   0,  16,   0,   1,   0, 
++      0,   0,  32,   0,   0,   9, 
++     18,   0,  16,   0,   1,   0, 
++      0,   0,  10, 128,  48,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      1,  64,   0,   0,   2,   0, 
++      0,   0,  31,   0,   4,   3, 
++     10,   0,  16,   0,   1,   0, 
++      0,   0,  54,   0,   0,   5, 
++     18,   0,  16,   0,   0,   0, 
++      0,   0,  42,   0,  16,   0, 
++      0,   0,   0,   0,  54,   0, 
++      0,   8, 226,   0,  16,   0, 
++      0,   0,   0,   0,   2,  64, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     18,   0,   0,   1,  56,   0, 
++      0,   9, 242,   0,  16,   0, 
++      0,   0,   0,   0, 102,  12, 
++     16,   0,   0,   0,   0,   0, 
++     86, 133,  48,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,  21,   0, 
++      0,   1,  21,   0,   0,   1, 
++     30,   0,   0,   8, 242,   0, 
++     16,   0,   1,   0,   0,   0, 
++     70,   5,   2,   0,  70, 133, 
++     48,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0, 164,   0,   0,   8, 
++    242, 224,  33,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     70,  14,  16,   0,   1,   0, 
++      0,   0,  70,  14,  16,   0, 
++      0,   0,   0,   0,  62,   0, 
++      0,   1,  83,  84,  65,  84, 
++    148,   0,   0,   0,  21,   0, 
++      0,   0,   2,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,   1,   0,   0,   0, 
++      4,   0,   0,   0,   2,   0, 
++      0,   0,   3,   0,   0,   0, 
++      3,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   3,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0
++};
+diff --git a/src/graphics/shaders/native_resolve.cs.hlsl b/src/graphics/shaders/native_resolve.cs.hlsl
+new file mode 100644
+index 0000000..e053298
+--- /dev/null
++++ b/src/graphics/shaders/native_resolve.cs.hlsl
+@@ -0,0 +1,47 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2025 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ */
++
++// gpu_native_resolves: writes a resolve rectangle from a host render target
++// straight into a texture cache texture when the resolve is not a plain copy of
++// the render target bits.
++// Each thread handles one host pixel (already scaled with resolution scaling).
++//
++// Modes:
++// 0 - out = in * xe_native_resolve_scale (exponent bias of float formats).
++// 1 - out = in.bgra (red and blue swapped).
++// 2 - out.r = depth (the source SRV returns the depth in the red component).
++
++cbuffer XeNativeResolveConstants : register(b0) {
++  uint xe_native_resolve_mode;
++  float xe_native_resolve_scale;
++  int2 xe_native_resolve_source_offset;
++  int2 xe_native_resolve_dest_offset;
++  uint2 xe_native_resolve_size;
++};
++
++Texture2D<float4> xe_native_resolve_source : register(t0);
++RWTexture2D<float4> xe_native_resolve_dest : register(u0);
++
++[numthreads(8, 8, 1)]
++void main(uint3 xe_thread_id : SV_DispatchThreadID) {
++  [branch] if (any(xe_thread_id.xy >= xe_native_resolve_size)) {
++    return;
++  }
++  int2 pixel = int2(xe_thread_id.xy);
++  float4 value = xe_native_resolve_source.Load(
++      int3(xe_native_resolve_source_offset + pixel, 0));
++  [branch] if (xe_native_resolve_mode == 1u) {
++    value = value.bgra;
++  } else if (xe_native_resolve_mode == 2u) {
++    value = float4(value.r, 0.0, 0.0, 0.0);
++  } else {
++    value *= xe_native_resolve_scale;
++  }
++  xe_native_resolve_dest[uint2(xe_native_resolve_dest_offset + pixel)] = value;
++}
