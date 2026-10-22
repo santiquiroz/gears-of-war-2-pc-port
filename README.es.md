@@ -37,7 +37,7 @@ Read in English: [README.md](README.md)
 - [x] Puntería con el mouse por los ejes de mouse de PC del propio juego, sin zona muerta de stick (`gow2_mouse_aim`, activado por defecto)
 - [x] Reescalado temporal FSR 4 y FSR 3.1 (`gow2_temporal`, `gow2_upscaler`; apagado por defecto). La versión publicada no trae DLSS
 - [x] Teclas y botones del mouse que el juego recibe como en un PC mientras se juega un nivel (`gow2_native_keys`, parche SDK 0022); los menús, el menú de pausa y las escenas siguen pasando por el mando emulado
-- [x] Indicaciones de teclado como teclas dibujadas que siguen tus teclas configuradas y vuelven a los botones del mando mientras haya uno conectado (`gow2_keycaps`; el paquete se crea con `scripts/build-keycaps.ps1`, ver [tools/keycaps](tools/keycaps/README.md))
+- [x] Indicaciones de teclado como teclas dibujadas que siguen tus teclas configuradas y vuelven a los botones del mando mientras haya uno conectado (`gow2_keycaps`; el paquete se crea desde tu propia copia con `Build keycap pack.cmd` del zip, sin Python desde la 0.2.9, o con `scripts/build-keycaps.ps1` desde el código, ver [tools/keycaps](tools/keycaps/README.md))
 - [ ] Teclas que el juego reciba como en un PC (todavía pasan por un mando emulado)
 - [x] Ultrawide: una imagen realmente más ancha (Hor+) en vez de 16:9 con barras, hasta 1680 píxeles (`gow2_widescreen`, ver [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); necesita la ruta de render targets ROV (NVIDIA e Intel por defecto)
 - [ ] Campaña completa de principio a fin

@@ -175,6 +175,24 @@ function Copy-RepoDocs([string]$Root, [string]$StageDir, [string]$ConfigPath) {
     }
 }
 
+# Keycap prompts without Python (issue #10): build-keycaps.ps1 next to gow2.exe runs the frozen
+# keycaps\keycaps-pack.exe on the player's own texture dump; no game art is in the zip.
+function Copy-KeycapTool([string]$Root, [string]$StageDir) {
+    & (Join-Path $PSScriptRoot 'build-keycaps-tool.ps1')
+    if ($LASTEXITCODE -ne 0) { Fail 'scripts\build-keycaps-tool.ps1 failed.' }
+    $dist = Join-Path $Root 'out\keycaps-tool\dist'
+    $tool = Join-Path $StageDir 'keycaps'
+    New-Item -ItemType Directory -Force -Path $tool | Out-Null
+    Copy-Item -Force (Join-Path $dist 'keycaps-pack.exe') (Join-Path $tool 'keycaps-pack.exe')
+    Copy-Item -Recurse -Force (Join-Path $dist 'licenses') (Join-Path $tool 'licenses')
+    foreach ($name in 'font_info.json', 'atlas_info.json') {
+        Copy-Item -Force (Join-Path $Root "tools\keycaps\$name") (Join-Path $tool $name)
+    }
+    Copy-Item -Force (Join-Path $Root 'scripts\build-keycaps.ps1') (Join-Path $StageDir 'build-keycaps.ps1')
+    $cmd = @('@echo off', 'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-keycaps.ps1" %*', 'pause')
+    Set-Content -Path (Join-Path $StageDir 'Build keycap pack.cmd') -Value $cmd -Encoding ASCII
+}
+
 function Write-QuickstartFile([string]$StageDir) {
     $lines = @(
         'Gears of War 2 - unofficial PC port (gow2-recomp) - QUICKSTART',
@@ -198,6 +216,11 @@ function Write-QuickstartFile([string]$StageDir) {
         'Space cover/roadie run, F or V melee (hold: chainsaw), E use/revive,',
         'R reload, Q point of interest, G tactical display, Z or middle mouse zoom,',
         '1-4 weapons, Enter or Esc pause, Tab back. All keys are in gow2.toml.',
+        '',
+        'KEYCAP PROMPTS (optional)',
+        'Double-click "Build keycap pack.cmd" to draw the menu and hint prompts as your keys.',
+        'It starts the game for about two minutes to read the font from your own copy',
+        '(do not press keys while it runs) and writes the pack into textures\. No Python needed.',
         '',
         'SETTINGS AND LOGS',
         'Settings live in gow2.toml next to the exe.',
@@ -228,6 +251,11 @@ function Write-QuickstartFile([string]$StageDir) {
         'Espacio cobertura/carrera, F o V cuerpo a cuerpo (mantener: motosierra), E usar/revivir,',
         'R recargar, Q punto de interes, G pantalla tactica, Z o clic central zoom,',
         '1-4 armas, Enter o Esc pausa, Tab atras. Todas las teclas estan en gow2.toml.',
+        '',
+        'TECLAS DIBUJADAS EN LOS AVISOS (opcional)',
+        'Haz doble clic en "Build keycap pack.cmd" para que los avisos muestren tus teclas.',
+        'Arranca el juego unos dos minutos para leer la fuente de tu propia copia',
+        '(no pulses teclas mientras corre) y guarda el paquete en textures\. No necesita Python.',
         '',
         'AJUSTES Y REGISTROS',
         'Los ajustes estan en gow2.toml junto al exe.',
@@ -304,6 +332,9 @@ Copy-VcRuntime $stageDir
 Step 'Docs and QUICKSTART.txt'
 Copy-RepoDocs $root $stageDir $Config
 Write-QuickstartFile $stageDir
+
+Step 'Keycap pack tool'
+Copy-KeycapTool $root $stageDir
 
 Step 'Game-data safety check'
 Assert-NoGameFiles $stageDir

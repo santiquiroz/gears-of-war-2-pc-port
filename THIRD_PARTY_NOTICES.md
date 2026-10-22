@@ -229,7 +229,8 @@ TinySHA1, the SDL3 Android project template) apply to the APK as well.
 `rexruntime.dll` and `rexgpu-xenos.dll` that `scripts/build-sdk.ps1 -NoDlss` builds from ReXGlue
 `923c1a5` with the patches in `sdk/patches/`. It also holds the AMD FidelityFX DLLs, the
 Microsoft Visual C++ runtime and `config/gamecontrollerdb.txt` (all described above), `LICENSE`,
-this file, `README.md`, `gow2.toml` and `tools/texpack.py`. It holds no game files.
+this file, `README.md`, `gow2.toml`, `tools/texpack.py`, `build-keycaps.ps1`, `Build keycap pack.cmd`
+and the `keycaps` folder (below). It holds no game files.
 
 ### gow2.exe
 
@@ -278,6 +279,22 @@ It calls `amd_fidelityfx_dx12.dll` through that DLL's import library and contain
 - SIMDe.
 
 It holds no NVIDIA NGX code (see NVIDIA DLSS above).
+
+### keycaps\keycaps-pack.exe
+
+`tools/keycaps/pack.py` frozen by `scripts/build-keycaps-tool.ps1` with PyInstaller, so the keycap pack
+can be built without installing Python. It holds no game data: it reads the player's own texture dump
+when it runs. `keycaps\font_info.json` and `keycaps\atlas_info.json` are this repository's files.
+The exe bundles, with their license texts in `keycaps\licenses`:
+
+- Python 3.12 (Python Software Foundation License).
+- Pillow 13.0.0 (MIT-CMU).
+- NumPy 2.5.4 (BSD 3-Clause, with the bundled components its license folder lists).
+- resvg-py 0.5.0 (MIT), which bundles resvg (Apache-2.0 or MIT) and its Rust dependencies.
+- fontTools 4.67.0 (MIT).
+- The PyInstaller 6.22.3 bootloader (GPL 2.0 or later with the bootloader exception, which allows
+  distributing programs built with it).
+- DejaVu Sans Bold (see above).
 
 ## Component licenses
 

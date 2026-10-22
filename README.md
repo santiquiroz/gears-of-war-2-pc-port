@@ -37,7 +37,7 @@ Leer en español: [README.es.md](README.es.md)
 - [x] Mouse aim through the game's own PC mouse axes, with no stick dead zone (`gow2_mouse_aim`, on by default)
 - [x] FSR 4 and FSR 3.1 temporal upscaling (`gow2_temporal`, `gow2_upscaler`; off by default). The release has no DLSS
 - [x] Keyboard keys and mouse buttons handled as on a PC while a level is played (`gow2_native_keys`, SDK patch 0022); menus, the pause menu and cutscenes still pass through the emulated controller
-- [x] Keyboard prompts as keycap pictures that follow your keybinds and switch back to the pad's buttons while a controller is connected (`gow2_keycaps`; build the pack with `scripts/build-keycaps.ps1`, see [tools/keycaps](tools/keycaps/README.md))
+- [x] Keyboard prompts as keycap pictures that follow your keybinds and switch back to the pad's buttons while a controller is connected (`gow2_keycaps`; build the pack from your own copy with `Build keycap pack.cmd` in the release zip, no Python needed since 0.2.9, or `scripts/build-keycaps.ps1` from source, see [tools/keycaps](tools/keycaps/README.md))
 - [ ] Keyboard keys handled as on a PC (they still pass through an emulated controller)
 - [x] Ultrawide: a really wider picture (Hor+) instead of 16:9 with bars, up to 1680 pixels wide (`gow2_widescreen`, see [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); needs the ROV render target path (NVIDIA and Intel by default)
 - [ ] Full campaign play-through

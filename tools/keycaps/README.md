@@ -21,9 +21,15 @@ pack.py        lays the caps out in the free space of the two pages, renders the
 
 ## Using it
 
-`scripts/build-keycaps.ps1` does everything: it installs the Python packages, makes the game dump
-its two font pages (play to the Select Difficulty screen once), runs `pack.py` and puts the result
+`scripts/build-keycaps.ps1` does everything: it makes the game dump its two font pages (the game
+plays itself to the Select Difficulty screen and the first level), runs `pack.py` and puts the result
 in `textures\4D53082D\replace` next to `gow2.exe`. The pack holds game art: do not share it.
+
+- In the release zip it sits next to `gow2.exe` (double-click `Build keycap pack.cmd`) and runs
+  `keycaps\keycaps-pack.exe`, `pack.py` frozen with Python and its packages by
+  `scripts/build-keycaps-tool.ps1` (issue #10), so no Python is needed.
+- In a source checkout it installs the Python packages (pillow, numpy, resvg-py, fonttools) for your
+  user and runs `pack.py`, which also rewrites `src/gow2_keycap_layout.inc`; the frozen tool does not.
 
 The SVGs in `assets/keycaps/svg` are original artwork and can be used on their own.
 

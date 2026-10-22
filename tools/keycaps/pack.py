@@ -267,6 +267,15 @@ def write_include(info: dict, placed: list, path: str, cell_h: int) -> None:
         f.write("\n".join(lines))
 
 
+def write_layout_files(info: dict, placed: list, cell_height: int) -> None:
+    write_include(info, placed, os.path.join(ROOT, "src", "gow2_keycap_layout.inc"), cell_height)
+    os.makedirs(os.path.join(ROOT, "assets", "keycaps"), exist_ok=True)
+    with open(os.path.join(ROOT, "assets", "keycaps", "layout.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump({"cell_height": cell_height, "page_hashes": info["page_hashes"], "glyphs": placed}, f, indent=1)
+        f.write("\n")
+    print("wrote src/gow2_keycap_layout.inc and assets/keycaps/layout.json")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dump", help="the port's texture dump folder (needed to write the pages)")
@@ -282,12 +291,9 @@ def main() -> int:
     catalog = {k.id: k for k in entries}
     placed, prot = layout(info, entries, args.cell_height)
 
-    write_include(info, placed, os.path.join(ROOT, "src", "gow2_keycap_layout.inc"), args.cell_height)
-    os.makedirs(os.path.join(ROOT, "assets", "keycaps"), exist_ok=True)
-    with open(os.path.join(ROOT, "assets", "keycaps", "layout.json"), "w", encoding="utf-8", newline="\n") as f:
-        json.dump({"cell_height": args.cell_height, "page_hashes": info["page_hashes"], "glyphs": placed}, f, indent=1)
-        f.write("\n")
-    print("wrote src/gow2_keycap_layout.inc and assets/keycaps/layout.json")
+    # The frozen tool in the release zip (keycaps-pack.exe) has no source tree to write the layout into.
+    if not getattr(sys, "frozen", False):
+        write_layout_files(info, placed, args.cell_height)
     if args.layout_only:
         return 0
     if not args.dump or not args.out:
