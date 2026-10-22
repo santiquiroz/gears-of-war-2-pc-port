@@ -35,7 +35,8 @@ param(
     [int]$TitleWaitSec = 0,
     [int]$LoadSec = 0,
     [double]$WaitScale = 1.0,
-    [string]$Common = ''
+    [string]$Common = '',
+    [string]$PerInstance = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -253,6 +254,7 @@ function Invoke-SetupScenario {
     $startArgs += @('-SeedUser', $SeedUser)
     if ($SeedCache) { $startArgs += @('-SeedCache', $SeedCache) }
     if ($Common) { $startArgs += @('-Common', $Common) }
+    if ($PerInstance) { $startArgs += @('-PerInstance', $PerInstance) }
     Invoke-Instances @startArgs | Out-Null
     for ($i = 1; $i -le $Players; $i++) {
         $r = Invoke-Instances 'waitlog' '-Instance' "$i" '-Pattern' 'DEVCMD on:' '-FromStart' '-TimeoutSec' '120'

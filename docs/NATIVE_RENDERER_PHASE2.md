@@ -51,6 +51,15 @@ dropped kinds found the one the light shafts read: `k_16_16` colour into depth a
 | Native surfaces + native resolves | Matches ROV | 192 |
 | Native surfaces + native resolves, 16:9 | Matches | 243 |
 
+## Depth resolves and chapter 4 (patch 0043)
+
+Chapter 4 with native resolves showed white distant trees and ground and striped motion blur; with
+native surfaces alone it matched. The game reads its D24FS8 depth back from a `k_24_8_FLOAT` texture
+(distance fog, motion blur), and the host render target keeps guest float24 depth [0, 2) as [0, 1), so
+the native write handed the game half the depth. 0043 doubles it (`write.scale = 2` for D24FS8, the
+shader's depth mode now applies the scale) on D3D12 and Vulkan. Chapter 4 then matches ROV, with smooth
+motion blur. Chapters 1 and 8 matched before the fix.
+
 ## Next
 
 - More resolve pairs (the scaled resolves, which fall back while
