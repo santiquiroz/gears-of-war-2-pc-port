@@ -33,6 +33,11 @@ REXCVAR_DEFINE_STRING(gow2_widescreen, "auto", "Display",
                       "start. Videos and some menus are still 16:9 stretched.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
+REXCVAR_DEFINE_STRING(gow2_native_renderer, "auto", "Display",
+                      "Native renderer: render targets are host surfaces and resolves write textures directly (faster, "
+                      "any aspect). auto = on for AMD on Windows unless render_target_path_d3d12 is set; on; off.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 REXCVAR_DEFINE_BOOL(gow2_ui_projection_fix, true, "Display",
                     "With widescreen on, keep the menus the size they have at 16:9: the game's UI scene client "
                     "builds its canvas-to-screen projection with a distance that grows with the square of the "
@@ -208,8 +213,9 @@ double WidescreenAspect() {
     if (mode != "auto" || parsed <= 0.0) return parsed;
     const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
     const std::string gpu = ChooseRenderGpu().name;
-    if (widescreen::AutoWidescreenSafe(path, gpu)) return parsed;
-    if (widescreen::AutoWidescreenSwitchesToRov(path, gpu) &&
+    const bool native = NativeRendererActive();
+    if (widescreen::AutoWidescreenSafe(native, path, gpu)) return parsed;
+    if (widescreen::AutoWidescreenSwitchesToRov(native, path, gpu) &&
         rex::cvar::SetFlagByName("render_target_path_d3d12", "rov")) {
       REXLOG_INFO("WIDESCREEN auto on {}: render target path set to 'rov' (host render targets show artifacts above "
                   "1280 wide); set render_target_path_d3d12 = \"rtv\" to keep 16:9 on host render targets", gpu);

@@ -5,10 +5,28 @@
 
 #include <rex/cvar.h>
 
+#include "gow2_native_renderer_math.h"
+
 REXCVAR_DEFINE_STRING(gow2_gpu, "auto", "UI/D3D12",
                       "GPU to render on: auto (the one Windows sets as high performance), part "
                       "of its name (for example 7800) or its adapter index. Takes effect on the "
                       "next start");
+
+REXCVAR_DECLARE(std::string, gow2_native_renderer);
+
+namespace rex::glue {
+
+bool NativeRendererActive() {
+  static const bool active = [] {
+    const std::string mode = REXCVAR_GET(gow2_native_renderer);
+    const bool path_set_by_player =
+        rex::cvar::GetFlagSource("render_target_path_d3d12") != rex::cvar::Source::kDefault;
+    return native_renderer::UseNativeRenderer(mode, path_set_by_player, ChooseRenderGpu().name);
+  }();
+  return active;
+}
+
+}  // namespace rex::glue
 
 #ifdef _WIN32
 

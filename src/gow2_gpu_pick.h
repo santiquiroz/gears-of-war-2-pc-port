@@ -29,6 +29,9 @@ inline constexpr bool LooksIntegrated(bool uma_known, bool uma, uint64_t dedicat
 // Reads the gow2_gpu cvar: "auto", part of an adapter's name (e.g. "7800") or an adapter index.
 GpuChoice ChooseRenderGpu();
 
+// gow2_native_renderer decided against the GPU and render_target_path_d3d12, computed once.
+bool NativeRendererActive();
+
 struct GpuAdapterInfo {
   int index;
   std::string name;

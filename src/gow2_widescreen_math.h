@@ -27,8 +27,10 @@ inline bool GpuNameHas(const std::string& gpu_name, const char* vendor) {
 // Patch 0026 widens the EDRAM only on the pixel shader interlock (ROV) render target path. With "auto",
 // widescreen therefore turns on only where that path is in use: render_target_path_d3d12 = "rov", or the
 // automatic choice on NVIDIA and Intel; on AMD the automatic choice is host render targets ("rtv"), which
-// still wrap the half-resolution targets onto the scene depth above 1280 wide.
-inline bool AutoWidescreenSafe(const std::string& render_target_path, const std::string& gpu_name) {
+// still wrap the half-resolution targets onto the scene depth above 1280 wide. The native renderer keeps host
+// render targets without that wrap, so it widens on AMD too.
+inline bool AutoWidescreenSafe(bool native_renderer, const std::string& render_target_path, const std::string& gpu_name) {
+  if (native_renderer) return true;
   if (render_target_path == "rov") return true;
   if (render_target_path == "rtv") return false;
   return GpuNameHas(gpu_name, "NVIDIA") || GpuNameHas(gpu_name, "INTEL");
@@ -37,7 +39,10 @@ inline bool AutoWidescreenSafe(const std::string& render_target_path, const std:
 // On AMD, "auto" asks for the ROV path when the player left the render target path unset (issue #11). Measured on
 // an RX 7800 XT (2026-10-21): ROV draws the chapter 2 hospital right at 16:9 and at 1680 wide and holds the game's
 // 30 fps; with the frame rate unlocked at resolution_scale 2 it is about 19 % slower than host render targets.
-inline bool AutoWidescreenSwitchesToRov(const std::string& render_target_path, const std::string& gpu_name) {
+// The native renderer keeps the host render targets, so nothing switches.
+inline bool AutoWidescreenSwitchesToRov(bool native_renderer, const std::string& render_target_path,
+                                        const std::string& gpu_name) {
+  if (native_renderer) return false;
   return render_target_path.empty() && (GpuNameHas(gpu_name, "AMD") || GpuNameHas(gpu_name, "RADEON"));
 }
 

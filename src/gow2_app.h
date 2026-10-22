@@ -261,6 +261,15 @@ class Gow2App : public rex::ReXApp {
     }
   }
 
+  // Before PrepareWidescreen: the automatic aspect depends on it.
+  static void PrepareNativeRenderer() {
+    if (!rex::glue::NativeRendererActive()) return;
+    SetIfUnset("gpu_native_surfaces", "true");
+    SetIfUnset("gpu_native_resolves", "true");
+    REXLOG_INFO("gow2 native renderer on (gow2_native_renderer '{}'; set gow2_native_renderer = \"off\" in gow2.toml "
+                "to change)", rex::cvar::Query<std::string>("gow2_native_renderer"));
+  }
+
   // Coalesced tweaks (mouse look, key prompts) work on a cached copy of the player's own bundles.
   // Runs from OnPreSetup: OnConfigurePaths comes before gow2.toml is loaded and before logging,
   // and the overrides must be live before the runtime mounts the game folder.
@@ -344,6 +353,7 @@ class Gow2App : public rex::ReXApp {
     SetIfUnset("mnk_mode", "true");
 #endif
     rex::glue::PrepareNativeMouseAim();
+    PrepareNativeRenderer();
     rex::glue::PrepareWidescreen();
     PrepareCoalesced();
 #ifdef _WIN32
