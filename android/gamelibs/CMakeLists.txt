@@ -160,7 +160,7 @@ foreach(_windows_only IN LISTS GOW2_WINDOWS_ONLY_SOURCES)
     list(REMOVE_ITEM GOW2_SOURCES "${GOW2_ROOT}/src/${_windows_only}")
 endforeach()
 add_library(gow2 SHARED ${GOW2_SOURCES} gow2_android_glue.cpp gow2_gpu_driver.cpp)
-target_compile_definitions(gow2 PRIVATE GOW2_VERSION="0.2.8")
+target_compile_definitions(gow2 PRIVATE GOW2_VERSION="0.2.9")
 target_include_directories(gow2 PRIVATE
     "${GOW2_GENERATED_INCLUDE_ROOT}"
     "${GOW2_ROOT}/src"
