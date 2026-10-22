@@ -24,10 +24,18 @@ needed while the SDK's own Direct3D 12 and Vulkan providers and presenter are re
 | Emulation, default path | 92-99 | 8.4-9.1 ms |
 | `gpu_native=true` (no draws, no resolves) | 200-253 | 3.7-4.6 ms |
 
-On this PC the GPU emulation takes about 60 % of the frame; the game itself runs at about 240 fps. The
-Android numbers are still to measure (the phone was not connected; the APK with patch 0032 builds): set
-`gpu_native = true` and `gow2_unlock_fps = true` in the phone's `gow2.toml`, travel to chapter 2, read
-the `FRAMESTATS` lines.
+On this PC the GPU emulation takes about 60 % of the frame; the game itself runs at about 240 fps.
+
+Galaxy S25 Ultra (Adreno 830, Vulkan), same scene, `gow2_unlock_fps = true`, 100 seconds after the
+travel, phone cooled between runs:
+
+| Mode | fps | p50 | Battery temperature after |
+|---|---|---|---|
+| Emulation | 38-40 | 24.3-27.0 ms | 35.7 °C |
+| `gpu_native=true` | 60, the phone's frame-rate limit | 16.6 ms | 36.5 °C |
+
+On the phone the ceiling is at least 1.5x: without the GPU emulation the game reaches the 60 fps the
+Android frame-rate hint allows (`present_android_frame_rate`), so the real ceiling is higher.
 
 ## Where the emulation cost is: EDRAM ownership transfers
 
