@@ -92,7 +92,7 @@ Good places to start for contributors (see [CONTRIBUTING.md](CONTRIBUTING.md); o
 - **Horde and versus over System Link.** Never tried; campaign co-op works through patches 0010-0012.
 - **Keycap packs without Python.** Players of the release zip cannot run `scripts/build-keycaps.ps1`; generate the pack inside the game (C++) or ship a self-contained tool.
 - **Widescreen on host render targets.** AMD now uses ROV for widescreen (issue #11), which costs about 19 % of GPU time there; making patch 0026's wider EDRAM work on the host render target path would avoid it ([docs/WIDESCREEN_AMD_TESTING.md](docs/WIDESCREEN_AMD_TESTING.md), section 7).
-- **Testing controller remapping** (0.2.7, issue #12) on Xbox and other controllers, on PC and Android.
+- **Testing controller remapping on Android** (0.2.7; confirmed on PC with a DualSense in issue #12).
 - **Title Update 6** (`.xexp`), needed for Road to Ruin and later multiplayer fixes.
 - **Linux x64 build** (Vulkan), then Steam Deck.
 - **Co-op for more than four players** (Stage 3, 8-10) and **AI difficulty that scales with the number of players** ([docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md)).
