@@ -190,6 +190,23 @@ Phone measurements need the order alternated: two identical runs back to back on
 and then 35-40 fps, the second one warmer (37.1 against 39.5 °C), so a single A-then-B pair is noise.
 Waiting for the battery to cool to 34.5 °C before each run and alternating the order (on, off, on, off), `gpu_msaa_fill_at_1x` averaged 43.2 and 40.8 fps against 41.4 and 40.0 off: about 3 %, always in its favour but inside the run-to-run spread. The phone is not limited by these copies; its frame is still about 40 fps against the 60 fps cap.
 
+## The phone: render passes broken by uploads (0036, 0037, 0038)
+
+`vulkan_android_stats_log` on the S25 (hospital, `gpu_msaa_fill_at_1x` on, about 41 fps): per frame about
+1,100 draws, 60 render passes, 53 of them ended by a barrier, and about 35 guest memory uploads (150 KB,
+two thirds of it index buffers). On a tiling GPU every pass end stores and reloads the tiles, and each
+upload is a copy command that cannot run inside a render pass. Three switches, all off by default, each
+measured from a cool start with the order alternated (on, off, on, off):
+
+| Switch | Effect per frame | fps (on / off) |
+|---|---|---|
+| `gpu_copy_guest_indices` (0037): index buffers copied on the CPU into the per-frame host index buffer | index uploads 0 KB (from 100 KB), but the same ~33 uploads and 60 passes: the same draws also need vertex data | 44.4, 42.0 / 42.2, 41.9 |
+| `gpu_upload_whole_blocks` (0036): each upload takes the rest of its 256 KB block | uploads 35 to 2.5, passes 60 to 33, upload bytes 3.5x | 42.0, 41.5 / 43.6, 41.9 |
+| `vulkan_shared_memory_host_writes` (0038): the GPU copy of guest memory in host-visible memory, idle blocks written directly | see below | see below |
+
+Whole blocks start higher (49 against 46 fps in the first ten seconds) and fall to 36-39 within a minute:
+the phone is thermally limited, so halving the render passes raises the peak, not the sustained rate.
+
 ## Also found: AMD's default path tinted the hospital teal (fixed by 0033)
 
 With the host render target path (`rtv`, the default on AMD) the hospital had a strong teal cast that
