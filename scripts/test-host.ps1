@@ -193,7 +193,8 @@ function Test-SdkHeaderUnits([string]$outDir) {
     $tests = 'tests\unit\ppc\fpscr_rounding_test.cpp',
         'tests\unit\graphics\android_draw_experiments_test.cpp',
         'tests\unit\graphics\pipeline_cache_file_test.cpp',
-        'tests\unit\input\pad_remap_test.cpp'
+        'tests\unit\input\pad_remap_test.cpp',
+        'tests\unit\graphics\native_surfaces_test.cpp'
     $ok = $true
     foreach ($test in $tests) {
         if (-not (Test-SdkHeaderUnit $sdk $catchBuild $test $outDir)) { $ok = $false }

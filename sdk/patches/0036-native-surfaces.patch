@@ -1,0 +1,325 @@
+diff --git a/include/rex/graphics/flags.h b/include/rex/graphics/flags.h
+index 68a61a6..f4ac6a1 100644
+--- a/include/rex/graphics/flags.h
++++ b/include/rex/graphics/flags.h
+@@ -43,6 +43,7 @@ REXCVAR_DECLARE(bool, native_2x_msaa);
+ REXCVAR_DECLARE(bool, snorm16_render_target_full_range);
+ REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
+ REXCVAR_DECLARE(bool, direct_host_resolve);
++REXCVAR_DECLARE(bool, gpu_native_surfaces);
+ 
+ // GPU Textures
+ REXCVAR_DECLARE(bool, texture_dump);
+diff --git a/include/rex/graphics/pipeline/render_target/cache.h b/include/rex/graphics/pipeline/render_target/cache.h
+index 3bbd52e..112ce15 100644
+--- a/include/rex/graphics/pipeline/render_target/cache.h
++++ b/include/rex/graphics/pipeline/render_target/cache.h
+@@ -10,6 +10,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <chrono>
+ #include <cmath>
+ #include <cstdint>
+ #include <functional>
+@@ -21,6 +22,7 @@
+ #include <fmt/format.h>
+ 
+ #include <rex/assert.h>
++#include <rex/graphics/pipeline/render_target/native_surfaces.h>
+ #include <rex/graphics/pipeline/shader/shader.h>
+ #include <rex/graphics/register_file.h>
+ #include <rex/graphics/registers.h>
+@@ -648,6 +650,11 @@ class RenderTargetCache {
+   void ChangeOwnership(RenderTargetKey dest, uint32_t start_tiles_base_relative,
+                        uint32_t length_tiles, std::vector<Transfer>* transfers_append_out,
+                        const Transfer::Rectangle* resolve_clear_cutout = nullptr);
++  // gpu_native_surfaces: removes the transfers into dest_key that the mode drops and counts them.
++  void DropNativeSurfaceTransfers(std::vector<Transfer>& transfers,
++                                  const RenderTargetKey& dest_key);
++  // gpu_native_surfaces: logs the dropped transfer counts every few seconds.
++  void ReportNativeSurfaceDrops();
+ 
+   // If failed to create, may contain nullptr to prevent attempting to create a
+   // render target twice.
+@@ -684,6 +691,11 @@ class RenderTargetCache {
+   // render targets. They are reordered so for one source, all transfers are
+   // consecutive in the array.
+   std::vector<Transfer> last_update_transfers_[1 + xenos::kMaxColorRenderTargets];
++
++  // gpu_native_surfaces: ownership transfers dropped since the last report.
++  native_surfaces::DropCounters native_surface_drops_;
++  std::chrono::steady_clock::time_point native_surface_drops_last_report_ =
++      std::chrono::steady_clock::now();
+ };
+ 
+ }  // namespace rex::graphics
+diff --git a/include/rex/graphics/pipeline/render_target/native_surfaces.h b/include/rex/graphics/pipeline/render_target/native_surfaces.h
+new file mode 100644
+index 0000000..e5eaab2
+--- /dev/null
++++ b/include/rex/graphics/pipeline/render_target/native_surfaces.h
+@@ -0,0 +1,88 @@
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++#include <cstdio>
++#include <map>
++#include <string>
++#include <tuple>
++#include <utility>
++#include <vector>
++
++namespace rex::graphics::native_surfaces {
++
++struct SurfaceKind {
++  bool is_depth;
++  uint32_t format;
++  uint32_t msaa_samples_log2;
++};
++
++// Which EDRAM ownership copies survive in the native surfaces mode: only depth to depth
++// (the game reads depth back across the two depth formats at the same EDRAM base).
++inline bool KeepTransfer(const SurfaceKind& source, const SurfaceKind& dest) {
++  return source.is_depth && dest.is_depth;
++}
++
++class DropCounters {
++ public:
++  void Record(const SurfaceKind& source, const SurfaceKind& dest, uint32_t tiles) {
++    Totals& totals = counters_[Key(source, dest)];
++    ++totals.count;
++    totals.tiles += tiles;
++  }
++
++  std::string ReportAndReset(double seconds) {
++    std::vector<std::pair<uint64_t, std::string>> entries;
++    for (const auto& [key, totals] : counters_) {
++      entries.emplace_back(totals.tiles, FormatEntry(key, totals, seconds));
++    }
++    counters_.clear();
++    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
++      return a.first != b.first ? a.first > b.first : a.second < b.second;
++    });
++    std::string report;
++    for (const auto& entry : entries) {
++      if (!report.empty()) {
++        report += "; ";
++      }
++      report += entry.second;
++    }
++    return report;
++  }
++
++  bool empty() const { return counters_.empty(); }
++
++ private:
++  using KindKey = std::tuple<bool, uint32_t, uint32_t>;
++  using PairKey = std::pair<KindKey, KindKey>;
++
++  struct Totals {
++    uint64_t count = 0;
++    uint64_t tiles = 0;
++  };
++
++  static KindKey ToKey(const SurfaceKind& kind) {
++    return {kind.is_depth, kind.format, kind.msaa_samples_log2};
++  }
++
++  static PairKey Key(const SurfaceKind& source, const SurfaceKind& dest) {
++    return {ToKey(source), ToKey(dest)};
++  }
++
++  static std::string FormatKind(const KindKey& kind) {
++    const auto& [is_depth, format, msaa_samples_log2] = kind;
++    return std::string(is_depth ? "D" : "C") + std::to_string(format) + "x" +
++           std::to_string(1u << msaa_samples_log2);
++  }
++
++  static std::string FormatEntry(const PairKey& key, const Totals& totals, double seconds) {
++    char rates[64];
++    std::snprintf(rates, sizeof(rates), " %.1f/s %.0f tiles/s", totals.count / seconds,
++                  totals.tiles / seconds);
++    return FormatKind(key.first) + "->" + FormatKind(key.second) + rates;
++  }
++
++  std::map<PairKey, Totals> counters_;
++};
++
++}  // namespace rex::graphics::native_surfaces
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 19928f7..2dc9b50 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -1646,7 +1646,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+       // gpu_native: a native renderer draws from the game's Direct3D calls instead; IssueDraw also
+       // runs the resolves (EDRAM copy mode), so skipping it skips all EDRAM work.
+       MsaaFillAt1x msaa_fill_at_1x(*register_file_);
+-      if (REXCVAR_GET(gpu_msaa_fill_at_1x) &&
++      if ((REXCVAR_GET(gpu_msaa_fill_at_1x) || REXCVAR_GET(gpu_native_surfaces)) &&
+           IsMsaaFillAt1xEligible(*register_file_, active_vertex_shader_, active_pixel_shader_)) {
+         msaa_fill_at_1x.Apply();
+         ReportMsaaFillAt1x();
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 697e1ef..be949b2 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -176,7 +176,12 @@ bool D3D12RenderTargetCache::Initialize() {
+   const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
+   ID3D12Device* device = provider.GetDevice();
+ 
+-  if (REXCVAR_GET(render_target_path_d3d12) == "rtv") {
++  if (REXCVAR_GET(gpu_native_surfaces)) {
++    path_ = Path::kHostRenderTargets;
++    if (REXCVAR_GET(render_target_path_d3d12) == "rov") {
++      REXGPU_INFO("NATIVESURF host render targets forced (render_target_path_d3d12 = rov ignored)");
++    }
++  } else if (REXCVAR_GET(render_target_path_d3d12) == "rtv") {
+     path_ = Path::kHostRenderTargets;
+   } else if (REXCVAR_GET(render_target_path_d3d12) == "rov") {
+     path_ = Path::kPixelShaderInterlock;
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index 953c5fd..f550ae5 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ #include <iterator>
+@@ -41,8 +42,25 @@ REXCVAR_DEFINE_BOOL(direct_host_resolve, true, "GPU",
+                     "Resolve from host render targets directly to shared memory when possible")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_BOOL(gpu_native_surfaces, false, "GPU",
++                    "Native renderer, phase 2a: render targets are host surfaces; EDRAM ownership "
++                    "copies between them are dropped (depth to depth kept) and counted; forces "
++                    "host render targets and draws Direct3D's 4x clears at 1x")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ namespace rex::graphics {
+ 
++namespace {
++
++// A template so the protected RenderTargetCache::RenderTargetKey doesn't need to be named here.
++template <typename Key>
++native_surfaces::SurfaceKind KindOf(const Key& key) {
++  return native_surfaces::SurfaceKind{key.is_depth != 0, key.resource_format,
++                                      uint32_t(key.msaa_samples)};
++}
++
++}  // namespace
++
+ void RenderTargetCache::GetPSIColorFormatInfo(xenos::ColorRenderTargetFormat format,
+                                               uint32_t write_mask, float& clamp_rgb_low,
+                                               float& clamp_alpha_low, float& clamp_rgb_high,
+@@ -688,6 +706,12 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+     uint32_t rt_bit_index = rt_base_index.second;
+     ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
+                     interlock_barrier_only ? nullptr : &last_update_transfers_[rt_bit_index]);
++    if (!interlock_barrier_only && REXCVAR_GET(gpu_native_surfaces)) {
++      DropNativeSurfaceTransfers(last_update_transfers_[rt_bit_index], rt_keys[rt_bit_index]);
++    }
++  }
++  if (REXCVAR_GET(gpu_native_surfaces)) {
++    ReportNativeSurfaceDrops();
+   }
+ 
+   if (interlock_barrier_only) {
+@@ -1385,4 +1409,33 @@ void RenderTargetCache::ChangeOwnership(RenderTargetKey dest, uint32_t start_til
+   }
+ }
+ 
++void RenderTargetCache::DropNativeSurfaceTransfers(std::vector<Transfer>& transfers,
++                                                   const RenderTargetKey& dest_key) {
++  const native_surfaces::SurfaceKind dest_kind = KindOf(dest_key);
++  auto dropped_begin =
++      std::remove_if(transfers.begin(), transfers.end(), [&](const Transfer& transfer) {
++        const native_surfaces::SurfaceKind source_kind = KindOf(transfer.source->key());
++        if (native_surfaces::KeepTransfer(source_kind, dest_kind)) {
++          return false;
++        }
++        native_surface_drops_.Record(source_kind, dest_kind,
++                                     transfer.end_tiles - transfer.start_tiles);
++        return true;
++      });
++  transfers.erase(dropped_begin, transfers.end());
++}
++
++void RenderTargetCache::ReportNativeSurfaceDrops() {
++  const auto now = std::chrono::steady_clock::now();
++  const double seconds =
++      std::chrono::duration<double>(now - native_surface_drops_last_report_).count();
++  if (seconds < 5.0) {
++    return;
++  }
++  native_surface_drops_last_report_ = now;
++  if (!native_surface_drops_.empty()) {
++    REXGPU_INFO("NATIVESURF dropped {}", native_surface_drops_.ReportAndReset(seconds));
++  }
++}
++
+ }  // namespace rex::graphics
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 12abf77..aff9779 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -206,7 +206,13 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
+       device_properties.fragmentStoresAndAtomics && device_properties.sampleRateShading &&
+       device_properties.standardSampleLocations &&
+       shared_memory_binding_count < device_properties.maxPerStageDescriptorStorageBuffers;
+-  if (REXCVAR_GET(render_target_path_vulkan) == "fsi") {
++  if (REXCVAR_GET(gpu_native_surfaces)) {
++    path_ = Path::kHostRenderTargets;
++    if (REXCVAR_GET(render_target_path_vulkan) == "fsi") {
++      REXGPU_INFO(
++          "NATIVESURF host render targets forced (render_target_path_vulkan = fsi ignored)");
++    }
++  } else if (REXCVAR_GET(render_target_path_vulkan) == "fsi") {
+     path_ = Path::kPixelShaderInterlock;
+   } else {
+     path_ = Path::kHostRenderTargets;
+diff --git a/tests/unit/graphics/native_surfaces_test.cpp b/tests/unit/graphics/native_surfaces_test.cpp
+new file mode 100644
+index 0000000..69d49e6
+--- /dev/null
++++ b/tests/unit/graphics/native_surfaces_test.cpp
+@@ -0,0 +1,34 @@
++#include <catch2/catch_test_macros.hpp>
++
++#include <rex/graphics/pipeline/render_target/native_surfaces.h>
++
++namespace ns = rex::graphics::native_surfaces;
++
++TEST_CASE("depth to depth transfers are kept", "[native_surfaces]") {
++  CHECK(ns::KeepTransfer({true, 0, 0}, {true, 1, 0}));
++  CHECK(ns::KeepTransfer({true, 1, 0}, {true, 0, 0}));
++  CHECK(ns::KeepTransfer({true, 0, 2}, {true, 1, 0}));
++  CHECK(ns::KeepTransfer({true, 1, 0}, {true, 0, 2}));
++}
++
++TEST_CASE("transfers involving colour are dropped", "[native_surfaces]") {
++  CHECK_FALSE(ns::KeepTransfer({false, 3, 0}, {true, 0, 0}));
++  CHECK_FALSE(ns::KeepTransfer({true, 1, 0}, {false, 6, 0}));
++  CHECK_FALSE(ns::KeepTransfer({false, 3, 0}, {false, 6, 0}));
++}
++
++TEST_CASE("drop counters report rates and reset", "[native_surfaces]") {
++  ns::DropCounters counters;
++  CHECK(counters.empty());
++  for (int i = 0; i < 24; ++i) {
++    counters.Record({false, 3, 0}, {true, 0, 0}, 700);
++  }
++  for (int i = 0; i < 4; ++i) {
++    counters.Record({true, 1, 0}, {false, 6, 0}, 100);
++  }
++  CHECK_FALSE(counters.empty());
++  CHECK(counters.ReportAndReset(2.0) ==
++        "C3x1->D0x1 12.0/s 8400 tiles/s; D1x1->C6x1 2.0/s 200 tiles/s");
++  CHECK(counters.empty());
++  CHECK(counters.ReportAndReset(1.0) == "");
++}
