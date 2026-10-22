@@ -1,0 +1,91 @@
+diff --git a/include/rex/graphics/primitive_processor.h b/include/rex/graphics/primitive_processor.h
+index 2945731..e8fc051 100644
+--- a/include/rex/graphics/primitive_processor.h
++++ b/include/rex/graphics/primitive_processor.h
+@@ -781,6 +781,11 @@ class PrimitiveProcessor {
+     ResultType result_type_ = ResultType::kNewUnset;
+   };
+ 
++  // gpu_copy_guest_indices: the guest indices into the per-frame host index buffer, endian-swapped.
++  bool CopyGuestIndicesToHost(uint32_t guest_index_base, uint32_t index_count,
++                              xenos::IndexFormat format, xenos::Endian endian,
++                              bool primitive_reset_enabled, CachedResult& cacheable);
++
+   std::deque<CacheEntry> cache_entry_pool_;
+ 
+   void* memory_invalidation_callback_handle_ = nullptr;
+diff --git a/src/graphics/primitive_processor.cpp b/src/graphics/primitive_processor.cpp
+index d49e9c3..3e979bf 100644
+--- a/src/graphics/primitive_processor.cpp
++++ b/src/graphics/primitive_processor.cpp
+@@ -36,6 +36,11 @@ REXCVAR_DEFINE_BOOL(force_convert_quad_lists_to_triangle_lists, false, "GPU",
+ REXCVAR_DEFINE_BOOL(force_convert_triangle_fans_to_lists, false, "GPU",
+                     "Force convert triangle fans to lists");
+ 
++REXCVAR_DEFINE_BOOL(gpu_copy_guest_indices, false, "GPU",
++                    "Copy guest index buffers on the CPU into the per-frame host index buffer instead of "
++                    "uploading them to the GPU's copy of guest memory: no buffer copy and barrier per draw "
++                    "(on tiling GPUs, no render pass break)");
++
+ REXCVAR_DEFINE_INT32(primitive_processor_cache_min_indices, 0, "GPU",
+                      "Minimum indices for primitive processor cache")
+     .range(0, 1000000);
+@@ -276,6 +281,43 @@ void PrimitiveProcessor::ClearPerFrameCache() {
+   std::memset(cache_buckets_non_empty_l2_, 0, sizeof(cache_buckets_non_empty_l2_));
+ }
+ 
++bool PrimitiveProcessor::CopyGuestIndicesToHost(uint32_t guest_index_base, uint32_t index_count,
++                                                xenos::IndexFormat format, xenos::Endian endian,
++                                                bool primitive_reset_enabled, CachedResult& cacheable) {
++  CacheTransaction cache_transaction(
++      *this, CacheKey(guest_index_base, index_count, format, endian, primitive_reset_enabled,
++                      xenos::PrimitiveType::kNone, true));
++  if (cache_transaction.GetFoundResult()) {
++    cacheable = *cache_transaction.GetFoundResult();
++    return true;
++  }
++  void* host_indices = RequestHostConvertedIndexBufferForCurrentFrame(
++      format, index_count, false, guest_index_base, cacheable.host_index_buffer_handle);
++  if (!host_indices) {
++    return false;
++  }
++  if (format == xenos::IndexFormat::kInt16) {
++    // The caller already reduced 16-bit endian modes to none or 8-in-16.
++    auto guest = memory_.TranslatePhysical<const uint16_t*>(guest_index_base);
++    auto host = static_cast<uint16_t*>(host_indices);
++    bool swap = endian == xenos::Endian::k8in16;
++    for (uint32_t i = 0; i < index_count; ++i) {
++      host[i] = swap ? uint16_t((guest[i] >> 8) | (guest[i] << 8)) : guest[i];
++    }
++  } else {
++    auto guest = memory_.TranslatePhysical<const uint32_t*>(guest_index_base);
++    auto host = static_cast<uint32_t*>(host_indices);
++    for (uint32_t i = 0; i < index_count; ++i) {
++      host[i] = xenos::GpuSwap(guest[i], endian) & xenos::kVertexIndexMask;
++    }
++  }
++  cacheable.index_buffer_type = ProcessedIndexBufferType::kHostConverted;
++  cacheable.host_index_format = format;
++  cacheable.host_shader_index_endian = xenos::Endian::kNone;
++  cache_transaction.SetNewResult(cacheable);
++  return true;
++}
++
+ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
+   SCOPE_profile_cpu_f("gpu");
+ 
+@@ -902,6 +944,14 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
+           cache_transaction.SetNewResult(cacheable);
+         }
+       }
++
++      if (cacheable.index_buffer_type == ProcessedIndexBufferType::kGuestDMA &&
++          host_vertex_shader_type == Shader::HostVertexShaderType::kVertex &&
++          REXCVAR_GET(gpu_copy_guest_indices) &&
++          !CopyGuestIndicesToHost(guest_index_base, guest_draw_vertex_count, guest_index_format,
++                                  guest_index_endian, guest_primitive_reset_enabled, cacheable)) {
++        return false;
++      }
+     }
+   }
+ 
