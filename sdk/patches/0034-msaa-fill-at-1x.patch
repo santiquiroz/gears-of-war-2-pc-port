@@ -1,0 +1,284 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 0a4f516..19928f7 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -10,8 +10,10 @@
+  */
+ 
+ #include <algorithm>
++#include <array>
+ #include <cinttypes>
+ #include <cmath>
++#include <cstdlib>
+ #include <cstring>
+ #include <string_view>
+ 
+@@ -23,13 +25,16 @@
+ #include <rex/chrono/clock.h>
+ #include <rex/graphics/command_processor.h>
+ #include <rex/graphics/flags.h>
++#include <rex/graphics/pipeline/shader/shader.h>
+ #include <rex/graphics/graphics_system.h>
+ #include <rex/graphics/pipeline/texture/info.h>
+ #include <rex/graphics/sampler_info.h>
++#include <rex/graphics/util/draw.h>
+ #include <rex/graphics/xenos.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/memory.h>
++#include <rex/memory/utils.h>
+ #include <rex/memory/ring_buffer.h>
+ #include <rex/platform.h>
+ #include <rex/stream.h>
+@@ -49,6 +54,11 @@ REXCVAR_DEFINE_BOOL(gpu_native, false, "GPU",
+                    "run, so nothing of the frame is emulated")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
++REXCVAR_DEFINE_BOOL(gpu_msaa_fill_at_1x, false, "GPU",
++                    "Run Direct3D's 4x MSAA fills (clears drawn with its embedded shaders) as 1x draws at twice "
++                    "the size on the same EDRAM, so the 1x render target that owns that EDRAM keeps it and "
++                    "nothing is copied to a 4x render target and back");
++
+ #if REX_PLATFORM_ANDROID
+ REXCVAR_DEFINE_INT32(gpu_worker_spin_us, -1, "GPU",
+                      "Microseconds the GPU command thread polls for new commands, pausing with an "
+@@ -116,6 +126,202 @@ using namespace rex::graphics::xenos;
+ 
+ namespace {
+ 
++// Whether the bound shaders came embedded in the packet stream (IM_LOAD_IMMEDIATE: Direct3D's own
++// clears and copies) rather than from the game's memory.
++bool g_vertex_shader_embedded = false;
++bool g_pixel_shader_embedded = false;
++
++constexpr uint32_t kMsaaFillMaxPitchPixels = 4096;
++constexpr uint32_t kMsaaFillMaxWindowOffset = 4096;
++constexpr uint32_t kScissorUnbounded = 8192;
++
++bool IsConstantFillShader(const Shader* shader) {
++  return shader && shader->is_ucode_analyzed() && shader->texture_bindings().empty() &&
++         !shader->memexport_eM_written();
++}
++
++bool BlendReplaces(const RegisterFile& regs, uint32_t rt_index) {
++  auto blend = regs.Get<reg::RB_BLENDCONTROL>(reg::RB_BLENDCONTROL::rt_register_indices[rt_index]);
++  return blend.color_srcblend == xenos::BlendFactor::kOne &&
++         blend.color_destblend == xenos::BlendFactor::kZero &&
++         blend.color_comb_fcn == xenos::BlendOp::kAdd &&
++         blend.alpha_srcblend == xenos::BlendFactor::kOne &&
++         blend.alpha_destblend == xenos::BlendFactor::kZero &&
++         blend.alpha_comb_fcn == xenos::BlendOp::kAdd;
++}
++
++bool ColorWritesReplace(const RegisterFile& regs, const Shader* pixel_shader) {
++  uint32_t color_mask =
++      pixel_shader ? draw_util::GetNormalizedColorMask(regs, pixel_shader->writes_color_targets()) : 0;
++  for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
++    if (((color_mask >> (4 * i)) & 0b1111) && !BlendReplaces(regs, i)) {
++      return false;
++    }
++  }
++  return true;
++}
++
++bool RasterizesLikeAFill(const RegisterFile& regs) {
++  // Alpha test of a constant colour passes or fails everywhere alike; alpha to coverage depends on the
++  // sample count.
++  if (regs.Get<reg::RB_COLORCONTROL>().alpha_to_mask_enable) {
++    return false;
++  }
++  auto mode = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
++  if (mode.poly_offset_front_enable || mode.poly_offset_back_enable ||
++      mode.poly_mode != xenos::PolygonModeEnable::kDisabled) {
++    return false;
++  }
++  // Direct3D draws its clears as rectangle lists.
++  return draw_util::IsPrimitivePolygonal(regs) ||
++         regs.Get<reg::VGT_DRAW_INITIATOR>().prim_type == xenos::PrimitiveType::kRectangleList;
++}
++
++bool FitsAtTwiceTheSize(const RegisterFile& regs) {
++  auto window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
++  return regs.Get<reg::RB_SURFACE_INFO>().surface_pitch <= kMsaaFillMaxPitchPixels &&
++         uint32_t(std::abs(int32_t(window_offset.window_x_offset))) < kMsaaFillMaxWindowOffset &&
++         uint32_t(std::abs(int32_t(window_offset.window_y_offset))) < kMsaaFillMaxWindowOffset;
++}
++
++// A 4x MSAA pixel covers a 2x2 block of samples, the same EDRAM a 1x draw at twice the size covers. A fill
++// with a constant value writes the same bits to every sample either way, so it can run at 1x on the
++// render target that already owns the EDRAM instead of moving the EDRAM to a 4x render target and back.
++// Only Direct3D's embedded shaders without textures qualify (its clears), drawn without blending, alpha
++// to coverage or polygon offset.
++bool IsMsaaFillAt1xEligible(const RegisterFile& regs, const Shader* vertex_shader, const Shader* pixel_shader) {
++  if (!g_vertex_shader_embedded) {
++    return false;
++  }
++  xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
++  bool depth_only = edram_mode == xenos::EdramMode::kDepthOnly;
++  if ((edram_mode != xenos::EdramMode::kColorDepth && !depth_only) ||
++      regs.Get<reg::RB_SURFACE_INFO>().msaa_samples != xenos::MsaaSamples::k4X) {
++    return false;
++  }
++  if (!IsConstantFillShader(vertex_shader)) {
++    return false;
++  }
++  // In kDepth mode the pixel shader does not run and no colour is written.
++  if (depth_only) {
++    return RasterizesLikeAFill(regs) && FitsAtTwiceTheSize(regs);
++  }
++  if (!g_pixel_shader_embedded) {
++    return false;
++  }
++  if (pixel_shader &&
++      (!IsConstantFillShader(pixel_shader) || pixel_shader->writes_depth() || pixel_shader->kills_pixels())) {
++    return false;
++  }
++  return RasterizesLikeAFill(regs) && ColorWritesReplace(regs, pixel_shader) && FitsAtTwiceTheSize(regs);
++}
++
++uint32_t DoubledScissor(uint32_t value) { return std::min(value * 2, kScissorUnbounded); }
++
++class MsaaFillAt1x {
++ public:
++  explicit MsaaFillAt1x(RegisterFile& regs) : regs_(regs) {}
++  MsaaFillAt1x(const MsaaFillAt1x&) = delete;
++  MsaaFillAt1x& operator=(const MsaaFillAt1x&) = delete;
++  ~MsaaFillAt1x() { Restore(); }
++
++  void Apply() {
++    for (size_t i = 0; i < kRegisters.size(); ++i) {
++      saved_[i] = regs_[kRegisters[i]];
++    }
++    applied_ = true;
++    DoubleSurface();
++    DoubleViewport();
++    DoubleWindow();
++  }
++
++ private:
++  static constexpr std::array<uint32_t, 11> kRegisters = {
++      XE_GPU_REG_RB_SURFACE_INFO,      XE_GPU_REG_PA_CL_VTE_CNTL,         XE_GPU_REG_PA_CL_VPORT_XSCALE,
++      XE_GPU_REG_PA_CL_VPORT_XOFFSET,  XE_GPU_REG_PA_CL_VPORT_YSCALE,     XE_GPU_REG_PA_CL_VPORT_YOFFSET,
++      XE_GPU_REG_PA_SC_WINDOW_OFFSET,  XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL, XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR,
++      XE_GPU_REG_PA_SC_SCREEN_SCISSOR_TL, XE_GPU_REG_PA_SC_SCREEN_SCISSOR_BR};
++
++  void Restore() {
++    if (!applied_) {
++      return;
++    }
++    for (size_t i = 0; i < kRegisters.size(); ++i) {
++      regs_[kRegisters[i]] = saved_[i];
++    }
++    applied_ = false;
++  }
++
++  void DoubleSurface() {
++    auto surface_info = regs_.Get<reg::RB_SURFACE_INFO>();
++    surface_info.surface_pitch = surface_info.surface_pitch * 2;
++    surface_info.msaa_samples = xenos::MsaaSamples::k1X;
++    regs_[XE_GPU_REG_RB_SURFACE_INFO] = surface_info.value;
++  }
++
++  // Screen position u (4x pixels) to U (1x pixels): U = 2u for pixel centres at .5, U = 2u + 0.5 for
++  // Direct3D's centres at .0 (a 4x pixel's edge u = p - 0.5 lands on the edge 2p - 0.5 of its 1x block).
++  void DoubleViewport() {
++    auto vte = regs_.Get<reg::PA_CL_VTE_CNTL>();
++    float centre = regs_.Get<reg::PA_SU_VTX_CNTL>().pix_center == xenos::PixelCenter::kD3DZero ? 0.5f : 0.0f;
++    DoubleAxis(vte.vport_x_scale_ena, vte.vport_x_offset_ena, XE_GPU_REG_PA_CL_VPORT_XSCALE,
++               XE_GPU_REG_PA_CL_VPORT_XOFFSET, centre);
++    DoubleAxis(vte.vport_y_scale_ena, vte.vport_y_offset_ena, XE_GPU_REG_PA_CL_VPORT_YSCALE,
++               XE_GPU_REG_PA_CL_VPORT_YOFFSET, centre);
++    vte.vport_x_scale_ena = 1;
++    vte.vport_x_offset_ena = 1;
++    vte.vport_y_scale_ena = 1;
++    vte.vport_y_offset_ena = 1;
++    regs_[XE_GPU_REG_PA_CL_VTE_CNTL] = vte.value;
++  }
++
++  void DoubleAxis(uint32_t scale_enabled, uint32_t offset_enabled, uint32_t scale_register,
++                  uint32_t offset_register, float centre) {
++    float scale = scale_enabled ? regs_.Get<float>(scale_register) : 1.0f;
++    float offset = offset_enabled ? regs_.Get<float>(offset_register) : 0.0f;
++    regs_[scale_register] = rex::memory::Reinterpret<uint32_t>(scale * 2.0f);
++    regs_[offset_register] = rex::memory::Reinterpret<uint32_t>(offset * 2.0f + centre);
++  }
++
++  void DoubleWindow() {
++    auto window_offset = regs_.Get<reg::PA_SC_WINDOW_OFFSET>();
++    window_offset.window_x_offset = window_offset.window_x_offset * 2;
++    window_offset.window_y_offset = window_offset.window_y_offset * 2;
++    regs_[XE_GPU_REG_PA_SC_WINDOW_OFFSET] = window_offset.value;
++    auto window_tl = regs_.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
++    window_tl.tl_x = DoubledScissor(window_tl.tl_x);
++    window_tl.tl_y = DoubledScissor(window_tl.tl_y);
++    regs_[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL] = window_tl.value;
++    auto window_br = regs_.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
++    window_br.br_x = DoubledScissor(window_br.br_x);
++    window_br.br_y = DoubledScissor(window_br.br_y);
++    regs_[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR] = window_br.value;
++    auto screen_tl = regs_.Get<reg::PA_SC_SCREEN_SCISSOR_TL>();
++    screen_tl.tl_x = int32_t(DoubledScissor(uint32_t(std::max(int32_t(screen_tl.tl_x), int32_t(0)))));
++    screen_tl.tl_y = int32_t(DoubledScissor(uint32_t(std::max(int32_t(screen_tl.tl_y), int32_t(0)))));
++    regs_[XE_GPU_REG_PA_SC_SCREEN_SCISSOR_TL] = screen_tl.value;
++    auto screen_br = regs_.Get<reg::PA_SC_SCREEN_SCISSOR_BR>();
++    screen_br.br_x = int32_t(DoubledScissor(uint32_t(std::max(int32_t(screen_br.br_x), int32_t(0)))));
++    screen_br.br_y = int32_t(DoubledScissor(uint32_t(std::max(int32_t(screen_br.br_y), int32_t(0)))));
++    regs_[XE_GPU_REG_PA_SC_SCREEN_SCISSOR_BR] = screen_br.value;
++  }
++
++  RegisterFile& regs_;
++  std::array<uint32_t, kRegisters.size()> saved_{};
++  bool applied_ = false;
++};
++
++void ReportMsaaFillAt1x() {
++  static uint64_t count = 0;
++  if ((count++ & 0x3FFF) == 0) {
++    REXGPU_INFO("MSAAFILL1X {} 4x fills drawn at 1x", count);
++  }
++}
++
++}  // namespace
++
++namespace {
++
+ #if REX_PLATFORM_ANDROID
+ static void PauseGpuWorkerPoll() {
+ #if defined(__aarch64__)
+@@ -1439,6 +1645,12 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+           xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type);
+       // gpu_native: a native renderer draws from the game's Direct3D calls instead; IssueDraw also
+       // runs the resolves (EDRAM copy mode), so skipping it skips all EDRAM work.
++      MsaaFillAt1x msaa_fill_at_1x(*register_file_);
++      if (REXCVAR_GET(gpu_msaa_fill_at_1x) &&
++          IsMsaaFillAt1xEligible(*register_file_, active_vertex_shader_, active_pixel_shader_)) {
++        msaa_fill_at_1x.Apply();
++        ReportMsaaFillAt1x();
++      }
+       draw_succeeded = REXCVAR_GET(gpu_native) ||
+                        IssueDraw(vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
+                                  is_indexed ? &index_buffer_info : nullptr, major_mode_explicit);
+@@ -1591,9 +1803,11 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD(memory::RingBuffer* reader, ui
+   switch (shader_type) {
+     case xenos::ShaderType::kVertex:
+       active_vertex_shader_ = shader;
++      g_vertex_shader_embedded = false;
+       break;
+     case xenos::ShaderType::kPixel:
+       active_pixel_shader_ = shader;
++      g_pixel_shader_embedded = false;
+       break;
+     default:
+       assert_unhandled_case(shader_type);
+@@ -1621,9 +1835,11 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD_IMMEDIATE(memory::RingBuffer*
+   switch (shader_type) {
+     case xenos::ShaderType::kVertex:
+       active_vertex_shader_ = shader;
++      g_vertex_shader_embedded = true;
+       break;
+     case xenos::ShaderType::kPixel:
+       active_pixel_shader_ = shader;
++      g_pixel_shader_embedded = true;
+       break;
+     default:
+       assert_unhandled_case(shader_type);

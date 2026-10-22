@@ -1,3 +1,84 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 19928f7..bd71452 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <map>
+ #include <array>
+ #include <cinttypes>
+ #include <cmath>
+@@ -216,6 +217,40 @@ bool IsMsaaFillAt1xEligible(const RegisterFile& regs, const Shader* vertex_shade
+   return RasterizesLikeAFill(regs) && ColorWritesReplace(regs, pixel_shader) && FitsAtTwiceTheSize(regs);
+ }
+ 
++// SPIKE: why 4x draws are not eligible, as a bit mask, logged every 4096 4x draws.
++void SpikeMsaaFillDiag(const RegisterFile& regs, const Shader* vs, const Shader* ps) {
++  auto spike_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
++  if ((spike_mode != xenos::EdramMode::kColorDepth && spike_mode != xenos::EdramMode::kDepthOnly) ||
++      regs.Get<reg::RB_SURFACE_INFO>().msaa_samples != xenos::MsaaSamples::k4X) {
++    return;
++  }
++  uint32_t mask = 0;
++  if (!g_vertex_shader_embedded) mask |= 1;
++  if (!g_pixel_shader_embedded) mask |= 2;
++  if (!vs || !vs->is_ucode_analyzed()) mask |= 4;
++  else if (!IsConstantFillShader(vs)) mask |= 8;
++  if (ps && !ps->is_ucode_analyzed()) mask |= 16;
++  else if (ps && !IsConstantFillShader(ps)) mask |= 32;
++  if (ps && ps->is_ucode_analyzed() && (ps->writes_depth() || ps->kills_pixels())) mask |= 64;
++  auto color_control = regs.Get<reg::RB_COLORCONTROL>();
++  if (color_control.alpha_test_enable || color_control.alpha_to_mask_enable) mask |= 128;
++  auto mode = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
++  if (mode.poly_offset_front_enable || mode.poly_offset_back_enable) mask |= 256;
++  if (mode.poly_mode != xenos::PolygonModeEnable::kDisabled) mask |= 512;
++  if (!RasterizesLikeAFill(regs)) mask |= 1024;
++  if (ps && ps->is_ucode_analyzed() && !ColorWritesReplace(regs, ps)) mask |= 2048;
++  if (!FitsAtTwiceTheSize(regs)) mask |= 4096;
++  static std::map<uint64_t, uint32_t> counts;
++  static uint32_t total = 0;
++  ++counts[(uint64_t(mask) << 32) | regs[XE_GPU_REG_RB_DEPTHCONTROL]];
++  if ((++total & 0xFFF) == 0) {
++    for (const auto& [m, c] : counts) {
++      REXGPU_INFO("SPIKEFILL mask {:04X} dc {:08X} count {}", uint32_t(m >> 32), uint32_t(m), c);
++    }
++    counts.clear();
++  }
++}
++
+ uint32_t DoubledScissor(uint32_t value) { return std::min(value * 2, kScissorUnbounded); }
+ 
+ class MsaaFillAt1x {
+@@ -1646,6 +1681,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+       // gpu_native: a native renderer draws from the game's Direct3D calls instead; IssueDraw also
+       // runs the resolves (EDRAM copy mode), so skipping it skips all EDRAM work.
+       MsaaFillAt1x msaa_fill_at_1x(*register_file_);
++      SpikeMsaaFillDiag(*register_file_, active_vertex_shader_, active_pixel_shader_);
+       if (REXCVAR_GET(gpu_msaa_fill_at_1x) &&
+           IsMsaaFillAt1xEligible(*register_file_, active_vertex_shader_, active_pixel_shader_)) {
+         msaa_fill_at_1x.Apply();
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 3f6c5f4..e0e8aef 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -2343,10 +2343,15 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+   const RegisterFile& regs = *register_file_;
+ 
+   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
++  // SPIKE (native renderer, GPU cost split): SPIKE_SKIP_COPY drops the resolves, SPIKE_SKIP_DRAWS the draws.
++  static const bool spike_skip_copy = std::getenv("SPIKE_SKIP_COPY") != nullptr;
++  static const bool spike_skip_draws = std::getenv("SPIKE_SKIP_DRAWS") != nullptr;
+   if (edram_mode == xenos::EdramMode::kCopy) {
++    if (spike_skip_copy) return true;
+     // Special copy handling.
+     return IssueCopy();
+   }
++  if (spike_skip_draws) return true;
+ 
+   bool surface_pitch_is_zero = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 0;
+ 
 diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
 index 697e1ef..06db2f1 100644
 --- a/src/graphics/d3d12/render_target_cache.cpp

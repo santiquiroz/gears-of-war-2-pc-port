@@ -92,12 +92,43 @@ The copies were also what tinted the hospital teal on `rtv`: with 0033 the pictu
 At 21:9 `rtv` keeps the pale rectangles over the light shafts (it emulates 2,048 tiles, ROV 4,096 since
 patch 0026), so `auto` widescreen still picks ROV on AMD. The phone picture does not change.
 
-What is left is mostly the clear trick itself: per light, a depth clear at 4x then the shadow map at 1x
-in the same EDRAM, and a stencil clear at 4x on the scene depth then the light volume at 1x. Each is a
-copy in and a copy back of the target. Dropping every copy between targets that differ only in MSAA
-(a ceiling test, wrong picture allowed) gave 98-105 fps against 114-116: no gain, the remaining copies
-are not where the frame goes. With 0033 the emulation runs at about half the `gpu_native` ceiling
-(200-253 fps); the rest of the gap is the draws themselves.
+## Direct3D's 4x clears drawn at 1x: patch 0034
+
+What is left after 0033 is mostly the clear trick itself: per light, a depth clear at 4x then the
+shadow map at 1x in the same EDRAM, and a stencil clear at 4x on the scene depth then the light volume
+at 1x. Each is a copy into a 4x render target and a copy back. Ceiling tests with the same build
+(temporary switches in the spike patch, wrong picture allowed), hospital, `rtv`:
+
+| Run | fps |
+|---|---|
+| Emulation | 116-120 |
+| No copies between targets that differ only in MSAA (black picture: the clears never reach the 1x targets) | 125-147 |
+| No resolves | 137-141 |
+| No draws (resolves still run) | 246-280 |
+| The GPU's 3D engine during emulation | 89-95 % busy; no CPU thread above 84 % |
+
+So the emulated frame is GPU-bound and the draws are most of it. (A first ceiling run reported "no gain"
+for the MSAA copies; it ran with the previous DLLs, because `build-sdk.ps1` installs the DLLs in
+`out/sdk-nodlss` and only `build.ps1` copies them next to `gow2.exe`.)
+
+SDK patch `0034-msaa-fill-at-1x.patch` (branch only, `gpu_msaa_fill_at_1x`, off by default) removes
+those copies correctly. A 4x pixel covers a 2x2 block of samples, the same EDRAM a 1x draw at twice the
+size covers, and a fill with a constant value writes the same bits to every sample either way. So when
+the vertex shader came embedded in the packet stream (`IM_LOAD_IMMEDIATE`, Direct3D's own clears), uses
+no textures or memexport, and the draw is a fill (no blending on the colour it writes, no alpha to
+coverage, no polygon offset, triangles or rectangles; in `kColorDepth` mode the pixel shader must be
+embedded too, without textures, depth output or kill), the command processor rewrites the surface to 1x
+at twice the pitch, doubles the viewport (plus half a pixel with Direct3D's pixel centres), the window
+offset and the scissors, issues the draw, and restores the registers. The 1x render target that owns
+the EDRAM keeps it; nothing moves to a 4x target.
+
+| Run (hospital, RX 7800 XT, `rtv`, same build) | Copies a frame | fps |
+|---|---|---|
+| `gpu_msaa_fill_at_1x = false` | 13,000 tiles | 117-119 |
+| `gpu_msaa_fill_at_1x = true` | 3,500 tiles, none between MSAA modes | 122 |
+
+The picture matches. What is left are copies between colour and depth targets that reuse the same EDRAM
+(for example a depth clear over the previous colour target), once per frame each.
 
 ## Phase 2, revised
 
