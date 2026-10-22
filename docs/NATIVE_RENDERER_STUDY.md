@@ -82,4 +82,4 @@ Effort: phase 0 is days; phases 1-3 are weeks each. Phase 0 is the decision poin
 
 Phase 0 started on 2026-10-21; its measurements are in
 [NATIVE_RENDERER_PHASE0.md](NATIVE_RENDERER_PHASE0.md): the scene draws are accounted for by four
-hookable functions, and the replayed command buffers and the resolves are the open gaps.
+hookable functions, Clear and Resolve are named too, and phase 0 met its exit criterion: phase 1 is next.

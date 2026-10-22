@@ -62,6 +62,9 @@ def scan_function(lines):
             opcode = header_opcode(upper[args[0]])
             if opcode is not None:
                 found[opcode] += 1
+        elif op == "li" and len(args) == 2:
+            # The low half first, the 0xC0.. half added by a later oris.
+            upper[args[0]] = u32(parse_imm(args[1]))
         elif op in ("ori", "addi", "oris") and len(args) == 3 and args[1] in upper:
             imm = parse_imm(args[2])
             if op == "ori":

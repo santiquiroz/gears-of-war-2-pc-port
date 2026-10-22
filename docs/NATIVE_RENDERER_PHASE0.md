@@ -18,6 +18,8 @@ tools are in `tools/native/`.
    the SDK, not part of `sdk/patches`): per 150 frames, the draw packets executed, how many are
    predicated, how many indirect buffers ran (and how many ran more than once in a frame), and the
    draws by EDRAM mode (`RB_MODECONTROL.edram_mode`: 4 colour, 5 depth only, 6 copy/resolve).
+   It also tells draws whose shader came embedded in the packet (`IM_LOAD_IMMEDIATE`) from the game's.
+4. **Register scan** (`tools/native/reg_scan.py`): which functions mention given GPU registers.
 
 Reproduce: `python tools/native/pm4_scan.py --json out/native/pm4_scan.json`,
 `python tools/native/gen_probe.py out/native/pm4_scan.json`, configure with `-DGOW2_NATIVE_PROBE=ON`,
@@ -45,29 +47,57 @@ Per frame:
 | Predicated draws, colour | 782 | the hooked draw functions |
 | Predicated draws, depth only | 226 | the hooked draw functions |
 | Hooked draw-function calls | 1008 (`sub_82980B20` 900, `sub_82980210` 77, `sub_829813F0` 25, `sub_8297FD30` 5.7) | |
-| Non-predicated draws, colour | 168, the same every frame | not yet: see below |
-| Non-predicated draws, copy (resolves) | 17 | the Resolve function, not yet named |
-| Indirect buffers run | 41 (26 distinct, 4 run more than once) | 20 from `sub_8298BAB0` (`INDIRECT_BUFFER`) |
+| Non-predicated draws, colour | 168 = 24 unique x 7 tiling passes | Direct3D's internal draws (clears): see below |
+| Non-predicated draws, copy (resolves) | 17 | `sub_8298A128`, Resolve (17 calls a frame) |
+| Indirect buffers run | 41 (26 distinct, 4 run more than once) | about 28 from `sub_8298BAB0` |
 
 The predicated draws match the hooked draw-function calls exactly (1008 = 1008): those four functions
 draw the scene, once per call. Every draw packet arrives through an indirect buffer (the ring buffer
 only holds indirect-buffer packets).
 
-## Open: the 185 non-predicated draws
+## The 185 non-predicated draws
 
-- **168 colour draws a frame, constant**, 144 of them in indirect buffers that run several times in a
-  frame. This looks like **command buffers recorded once and replayed** (the XDK's
-  `BeginCommandBuffer`/`RunCommandBuffer`; UE3 uses them for fixed passes), replayed through
-  `sub_8298BAB0`. Their draw functions do not run per frame, so per-call hooks cannot see them. A native
-  renderer must either hook the recording (and keep what was recorded) or interpret the recorded PM4
-  when `sub_8298BAB0` replays it. Next: log `sub_8298BAB0`'s arguments (buffer address and size) and
-  the draws inside each replayed buffer, then find who records them.
-- **17 resolves a frame** (EDRAM copies). Their headers are not built with `lis`/`ori` in a way the
-  scan catches; next: find the Resolve function (it writes `RB_COPY_*` registers and an
-  `EVENT_WRITE`), for example by hooking the `EVENT_WRITE` builders (`sub_8298DC90`, 528 calls a frame).
+- **They are not recorded command buffers.** `sub_8298BAB0` builds the `INDIRECT_BUFFER` packet of each
+  command segment Direct3D submits: every call comes from one caller inside the library (`8298C190`),
+  about 28 a frame, and the buffers (alternating 11-dword and ~16,000-dword segments) are new every
+  frame. It is the library's segment kick-off, not a replay of recorded buffers.
+- **168 colour draws = 24 unique draws x 7 tiling passes.** All of them run with a shader loaded by
+  `IM_LOAD_IMMEDIATE`, that is, with microcode embedded in the packet: Direct3D's internal shaders,
+  not the game's. 24 of them run in the first pass of their buffer; the others are the same draws
+  replayed by predicated tiling (they carry no predicate, so they run in every tile). Their packets are
+  copied from templates in the executable's data (`sub_82981ED8` copies a 108-byte PM4 block with
+  `memcpy`), which is why the header scan does not see a draw there.
+  - `sub_82981ED8` (18 calls a frame) writes `SQ_PROGRAM_CNTL`, depth, blend and an embedded shader:
+    **Clear** (`reg_scan.py`). With `sub_82981970` (18 a frame, which splits the clear rectangle into
+    EDRAM tiles through `sub_829816E0`) it accounts for most of the 24; the rest are the library's
+    other internal draws.
+  - The predicated draws of `sub_829813F0` (`DRAW_INDX_2`, 25 a frame) also use an embedded shader:
+    a draw with user-supplied vertices (`DrawVerticesUP`-style).
+- **17 resolves a frame: `sub_8298A128`** (17 calls a frame), the only Direct3D function writing
+  `RB_COPY_CONTROL` and `RB_COPY_DEST_INFO`.
+
+## Named so far
+
+| Function | Calls a frame | Role |
+|---|---|---|
+| `sub_8298C760` | at start | Device creation, ring-buffer setup (`ME_INIT`) |
+| `sub_8298D430` | 1 | `Swap` (`VdSwap`) |
+| `sub_82980B20`, `sub_82980210`, `sub_8297FD30` | 900, 77, 5.7 | Indexed draws (`DRAW_INDX`) |
+| `sub_829813F0` | 25 | Draw with user vertices and an embedded shader (`DRAW_INDX_2`) |
+| `sub_8298A128` | 17 | Resolve |
+| `sub_82981ED8` (+ `sub_82981970`, `sub_829816E0`) | 18 | Clear |
+| `sub_8298F600` | 743 | Writes `RB_COLOR_INFO`, `RB_MODECONTROL` and constants: render-target and state flush before draws (to confirm in phase 1) |
+| `sub_8298F378` | 1211 | `LOAD_ALU_CONSTANT`: shader constants |
+| `sub_8298BAB0` | ~28 | Command segment kick-off (`INDIRECT_BUFFER`) |
+
+`tools/native/reg_scan.py` lists which functions mention a given set of GPU registers;
+`RB_SURFACE_INFO` (`0x2000` = 8192) also matches unrelated constants.
 
 ## Status
 
-Phase 0 is not finished. The scene draws are fully accounted for by four hookable functions, which
-retires most of the "no symbols" risk; the replayed command buffers and the resolves are the known
-gaps, each with a concrete next step above.
+**Phase 0 met its exit criterion on 2026-10-21**: every draw of a frame in the chapter 2 hospital is
+accounted for by a named, hookable function: 1008 scene draws by four draw functions, 24 internal draws
+by Clear and the library's internal draws (repeated by tiling, which a native renderer does not need),
+and 17 resolves by Resolve. LTCG did not inline the draw, clear or resolve entry points into the game.
+Phase 1 (a plugin skeleton that hooks device creation and Swap, then clears and presents) can start;
+the internal draws are the one place where a native renderer must handle Direct3D's own embedded shaders.

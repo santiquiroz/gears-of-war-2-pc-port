@@ -9,12 +9,16 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
+#include <mutex>
+#include <tuple>
 
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc.h>
 
 #include "gow2_engine_tick.h"
+#include "gow2_guest.h"
 
 namespace {
 
@@ -35,7 +39,26 @@ constexpr uint32_t kFramesPerReport = 150;
 std::array<std::atomic<uint64_t>, kProbeCount> g_calls{};
 uint32_t g_frames = 0;
 
+// sub_8298BAB0 emits INDIRECT_BUFFER for a command buffer: r4 -> {size | flags << 24, address}. Keyed by
+// caller (the return address) and the buffer, to tell recorded buffers replayed every frame from new ones.
+using ReplayKey = std::tuple<uint32_t, uint32_t, uint32_t>;  // caller, address, header word
+std::mutex g_replay_lock;
+std::map<ReplayKey, uint32_t> g_replays;
+std::map<ReplayKey, uint32_t> g_replay_windows;  // how many report windows saw the key
+
+void ReportReplays() {
+  std::lock_guard<std::mutex> hold(g_replay_lock);
+  for (const auto& [key, count] : g_replays) {
+    const auto [caller, address, word0] = key;
+    const uint32_t windows = ++g_replay_windows[key];
+    REXLOG_INFO("NATIVEPROBE replay caller {:08X} buffer {:08X} dwords {} flags {:02X}: {:.2f}/frame, seen in {} windows",
+                caller, address, word0 & 0xFFFFFF, word0 >> 24, double(count) / kFramesPerReport, windows);
+  }
+  g_replays.clear();
+}
+
 void Report() {
+  ReportReplays();
   for (size_t i = 0; i < kProbeCount; ++i) {
     const uint64_t calls = g_calls[i].exchange(0, std::memory_order_relaxed);
     if (calls == 0) continue;
@@ -52,6 +75,18 @@ void OnEngineTick(const PPCContext&, uint8_t*) {
 [[maybe_unused]] const bool kTickRegistered = (rex::glue::AddEngineTickListener(&OnEngineTick), true);
 
 }  // namespace
+
+REX_EXTERN(__imp__sub_8298BAB0);
+REX_HOOK_RAW(sub_8298BAB0) {
+  const uint32_t caller = uint32_t(ctx.lr);
+  const uint32_t word0 = rex::glue::guest::LoadU32(base, ctx.r4.u32);
+  const uint32_t address = rex::glue::guest::LoadU32(base, ctx.r4.u32 + 4);
+  {
+    std::lock_guard<std::mutex> hold(g_replay_lock);
+    ++g_replays[ReplayKey{caller, address, word0}];
+  }
+  __imp__sub_8298BAB0(ctx, base);
+}
 
 #define PROBE(name, index, opcodes)                              \
   REX_EXTERN(__imp__##name);                                     \
