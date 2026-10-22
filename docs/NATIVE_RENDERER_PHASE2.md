@@ -70,6 +70,15 @@ paths until someone measures them. Checked 2026-10-22 on the RX 7800 XT at the s
 `resolution_scale` 2: the log says `gow2 native renderer on`, the hospital matches ROV, and native
 resolves are written.
 
+Shipped settings (`resolution_scale` 2, unlocked, hospital, RX 7800 XT, 2026-10-22, all patches through
+0045):
+
+| Mode | 16:9 fps | 21:9 fps | Picture |
+|---|---|---|---|
+| Native renderer (the default on AMD now) | 224 | 211 | Matches ROV at both aspects |
+| Host render targets, emulation (`gow2_native_renderer = "off"`, `rtv`) | 202 | — | Artifacts above 1280 wide |
+| ROV (the AMD widescreen default before) | 86 | 80 | The reference |
+
 Soaks with the native renderer (10 minutes of scripted movement, aiming and firing, 1600x900,
 `resolution_scale` 1, unlocked): chapter 4 mean 186 fps, chapter 2 mean 211 fps, no faults or GPU errors.
 
