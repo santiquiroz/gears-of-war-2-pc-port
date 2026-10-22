@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <utility>
 
@@ -258,10 +259,13 @@ bool HasFidelityFx() {
   return std::find(allowed.begin(), allowed.end(), "fsr") != allowed.end();
 }
 
+// A runtime built with NVIDIA's SDK (scripts/build-sdk.ps1 without -NoDlss) is installed with
+// nvngx_dlss.dll; the release never ships it. Checked at run time so self-built DLSS DLLs next to the
+// release exe get the menu entry too (issue #18).
 bool HasDlss() {
-#ifdef GOW2_DLSS_RUNTIME
-  // Defined by CMake only when the runtime next to the exe was built with NVIDIA's SDK (never the release).
-  return rex::cvar::GetFlagInfo("gow2_dlss") != nullptr;
+#ifdef _WIN32
+  std::error_code ec;
+  return std::filesystem::exists(rex::filesystem::GetExecutableFolder() / "nvngx_dlss.dll", ec);
 #else
   return false;
 #endif

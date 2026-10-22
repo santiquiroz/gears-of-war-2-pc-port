@@ -136,7 +136,8 @@ and measured GoW2 render sizes replacing Judgment's 720p/1440p assumptions.
   it as the view format. NGX's D3D12 evaluate takes bare resources and views them with their own
   format, so DLSS reads a typed copy of the render region instead (`CopyTextureRegion` into an
   `R8G8B8A8_UNORM` texture; log `the upscaler reads a typed copy of the frame (dxgi 27 -> 28,
-  1280x704)`). DLSS itself has not run on NVIDIA hardware yet. `gow2_upscale_typed_copy = true`
+  1280x704)`). DLSS runs on NVIDIA hardware through that copy: confirmed on an RTX 5060 Ti (driver
+  32.0.16.1742, `nvngx_dlss.dll` 310.9.16, 1280x704 -> 2560x1408, issue #18). `gow2_upscale_typed_copy = true`
   gives FSR the same copy so that input path can be checked on any GPU: with it on, FSR 4's
   image matches the direct read (mean RGB within 0.2 levels, same frame-to-frame difference).
 - `gow2_upscaler = auto` falls back to FSR 3.1 when DLSS is unavailable. One flag used to mean

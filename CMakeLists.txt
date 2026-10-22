@@ -90,10 +90,6 @@ endif()
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
 set(GOW2_VERSION "0.2.7" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
-# The menu offers DLSS only with a runtime built with NVIDIA's SDK (scripts/build-sdk.ps1 without -NoDlss).
-if(EXISTS "${GOW2_SDK_DIR}/nvngx_dlss.dll")
-    target_compile_definitions(gow2 PRIVATE GOW2_DLSS_RUNTIME=1)
-endif()
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the
 # default build: cmake --build <dir> --target gow2_script_patch_test, then run the exe.

@@ -149,7 +149,7 @@ Measured on a Ryzen 9 7900X3D + Radeon RX 7800 XT, Act 1, `resolution_scale = 2`
 - Native resolution via `resolution_scale` (see Settings).
 - FSR: the release runtime is built with AMD FidelityFX. `present_effect = "fsr"` renders at a lower `resolution_scale` and upscales with FSR 1 plus sharpening; `"cas"` only sharpens. Measured with `resolution_scale = 1` and FSR 1 to 1440p: about 85 fps in Act 1.
 - Temporal upscaling: FSR 4.1 on Radeon RX 7000/9000 and FSR 3.1 on other GPUs, through AMD's signed FidelityFX SDK 2.3 DLLs, ported from the Gears of War: Judgment recompilation. Off by default: set `gow2_temporal = true` and `gow2_upscaler = "fsr4"` or `"fsr3"`, and lower `resolution_scale` so the upscaler has room to work. FSR 4 was checked in game on a Radeon RX 7800 XT (1280x704 upscaled to 2560x1408).
-- No DLSS in the release: NVIDIA's DLSS SDK license does not allow it in an open-source release (see THIRD_PARTY_NOTICES.md). Only builds made from source with your own copy of NVIDIA's DLSS SDK can use it.
+- No DLSS in the release: NVIDIA's DLSS SDK license does not allow it in an open-source release (see THIRD_PARTY_NOTICES.md). Only builds made from source with your own copy of NVIDIA's DLSS SDK can use it. To use it with the release `gow2.exe`, build the SDK DLLs with `scripts/build-sdk.ps1` (without `-NoDlss`) and copy `rexruntime.dll`, `rexgpu-xenos.dll` and `nvngx_dlss.dll` next to it; the PC Options menu then offers DLSS. Confirmed on an RTX 5060 Ti (issue #18).
 - Texture packs: see the next section. Tested with a texture replaced by a version twice its size:
 
   ![A title-screen texture replaced by a recoloured 2048x2048 version](docs/screenshots/texture-pack-test.jpg)
