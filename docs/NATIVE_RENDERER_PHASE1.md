@@ -53,6 +53,17 @@ with the same draws), but the game needs some of them: without any, or without t
 library's internal draws, the frame comes out black. Some internal draws only partly cover their
 target or read what the copy brings (partial clears, restores).
 
+### Clears are not where the cost is
+
+A hook on `sub_82981ED8` (`D3DDevice_ClearF`: flags in r4, rectangle in r5) shows 18 clears a frame in
+the hospital, every one with the whole surface as its rectangle: colour (`0xF`) 4, depth (`0x10`) 5,
+stencil only (`0x20`) 7, depth and stencil (`0x30`) 2. A stencil-only clear keeps the depth, which is why
+skipping transfers for every internal draw lost the frame. The experiment's second version skips a
+transfer only for an internal draw that replaces the whole target (all colour channels without blending;
+an ALWAYS depth write with a full stencil REPLACE): about 90 fps against 90 without it. The transfers
+before clears are cheap; the third of the frame that transfers cost is in other ownership changes (the
+same EDRAM read with another format or pixel size). Counting the transfers by kind is the next step.
+
 ## Phase 2, revised
 
 Skipping a copy is only safe when the draw that follows overwrites the whole range without reading it:

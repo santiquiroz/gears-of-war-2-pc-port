@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <string>
 #include <tuple>
 
 #include <rex/hook.h>
@@ -57,8 +58,26 @@ void ReportReplays() {
   g_replays.clear();
 }
 
+// sub_82981ED8, D3DDevice_ClearF(device r3, flags r4, D3DRECT* r5 or null for the whole target,
+// D3DVECTOR4* colour r6, z f1, stencil r7). Keyed by flags and rectangle.
+using ClearKey = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>;  // flags, x1, y1, x2, y2
+std::map<ClearKey, uint32_t> g_clears;  // under g_replay_lock
+
+void ReportClears() {
+  std::lock_guard<std::mutex> hold(g_replay_lock);
+  for (const auto& [key, count] : g_clears) {
+    const auto [flags, x1, y1, x2, y2] = key;
+    const bool whole = x1 == 0 && y1 == 0 && x2 == 0 && y2 == 0;
+    REXLOG_INFO("NATIVEPROBE clear flags {:08X} rect {}: {:.2f}/frame", flags,
+                whole ? std::string("whole target") : fmt::format("{},{}-{},{}", x1, y1, x2, y2),
+                double(count) / kFramesPerReport);
+  }
+  g_clears.clear();
+}
+
 void Report() {
   ReportReplays();
+  ReportClears();
   for (size_t i = 0; i < kProbeCount; ++i) {
     const uint64_t calls = g_calls[i].exchange(0, std::memory_order_relaxed);
     if (calls == 0) continue;
@@ -86,6 +105,22 @@ REX_HOOK_RAW(sub_8298BAB0) {
     ++g_replays[ReplayKey{caller, address, word0}];
   }
   __imp__sub_8298BAB0(ctx, base);
+}
+
+REX_EXTERN(__imp__sub_82981ED8);
+REX_HOOK_RAW(sub_82981ED8) {
+  const uint32_t flags = ctx.r4.u32;
+  const uint32_t rect = ctx.r5.u32;
+  ClearKey key{flags, 0, 0, 0, 0};
+  if (rect != 0) {
+    key = ClearKey{flags, rex::glue::guest::LoadU32(base, rect), rex::glue::guest::LoadU32(base, rect + 4),
+                   rex::glue::guest::LoadU32(base, rect + 8), rex::glue::guest::LoadU32(base, rect + 12)};
+  }
+  {
+    std::lock_guard<std::mutex> hold(g_replay_lock);
+    ++g_clears[key];
+  }
+  __imp__sub_82981ED8(ctx, base);
 }
 
 #define PROBE(name, index, opcodes)                              \

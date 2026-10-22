@@ -39,10 +39,10 @@ index 0a4f516..0ed2e17 100644
      default:
        assert_unhandled_case(shader_type);
 diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
-index 953c5fd..0eafa4e 100644
+index 953c5fd..e1f31c1 100644
 --- a/src/graphics/pipeline/render_target/cache.cpp
 +++ b/src/graphics/pipeline/render_target/cache.cpp
-@@ -41,8 +41,14 @@ REXCVAR_DEFINE_BOOL(direct_host_resolve, true, "GPU",
+@@ -41,8 +41,55 @@ REXCVAR_DEFINE_BOOL(direct_host_resolve, true, "GPU",
                      "Resolve from host render targets directly to shared memory when possible")
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
@@ -54,10 +54,51 @@ index 953c5fd..0eafa4e 100644
 +extern bool g_gpu_internal_vertex_shader;
 +extern bool g_gpu_internal_pixel_shader;
 +
++namespace {
++
++// EXPERIMENT (native renderer phase 2): whether the draw replaces every bit of this render target without
++// reading it, so the EDRAM contents a transfer would bring are dead. Direct3D's ClearF always passes the
++// whole surface as its rectangle (measured in the chapter 2 hospital), so for its internal draws the state
++// decides: colour needs all four channels and no blending; depth needs an ALWAYS depth write and, as
++// depth and stencil share the target, a stencil REPLACE of all eight bits (a stencil-only clear keeps the
++// depth, a depth-only clear keeps the stencil).
++bool DrawReplacesDepthStencil(const RegisterFile& regs, reg::RB_DEPTHCONTROL depth_control) {
++  if (!depth_control.z_enable || !depth_control.z_write_enable ||
++      depth_control.zfunc != xenos::CompareFunction::kAlways || !depth_control.stencil_enable) {
++    return false;
++  }
++  auto stencil = regs.Get<reg::RB_STENCILREFMASK>();
++  return depth_control.stencilfunc == xenos::CompareFunction::kAlways &&
++         depth_control.stencilzpass == xenos::StencilOp::kReplace && stencil.stencilwritemask == 0xFF;
++}
++
++bool DrawReplacesColor(const RegisterFile& regs, uint32_t color_mask, uint32_t rt_index) {
++  if (((color_mask >> (4 * rt_index)) & 0b1111) != 0b1111) {
++    return false;
++  }
++  auto blend = regs.Get<reg::RB_BLENDCONTROL>(reg::RB_BLENDCONTROL::rt_register_indices[rt_index]);
++  return blend.color_srcblend == xenos::BlendFactor::kOne &&
++         blend.color_destblend == xenos::BlendFactor::kZero &&
++         blend.color_comb_fcn == xenos::BlendOp::kAdd &&
++         blend.alpha_srcblend == xenos::BlendFactor::kOne &&
++         blend.alpha_destblend == xenos::BlendFactor::kZero;
++}
++
++bool InternalDrawReplaces(const RegisterFile& regs, reg::RB_DEPTHCONTROL depth_control, uint32_t color_mask,
++                          uint32_t rt_bit_index) {
++  if (!g_gpu_internal_vertex_shader || !g_gpu_internal_pixel_shader) {
++    return false;
++  }
++  return rt_bit_index == 0 ? DrawReplacesDepthStencil(regs, depth_control)
++                           : DrawReplacesColor(regs, color_mask, rt_bit_index - 1);
++}
++
++}  // namespace
++
  void RenderTargetCache::GetPSIColorFormatInfo(xenos::ColorRenderTargetFormat format,
                                                uint32_t write_mask, float& clamp_rgb_low,
                                                float& clamp_alpha_low, float& clamp_rgb_high,
-@@ -686,8 +692,14 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+@@ -686,8 +733,15 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
    for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
      const std::pair<uint32_t, uint32_t>& rt_base_index = edram_bases_sorted[i];
      uint32_t rt_bit_index = rt_base_index.second;
@@ -66,8 +107,9 @@ index 953c5fd..0eafa4e 100644
      ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
 -                    interlock_barrier_only ? nullptr : &last_update_transfers_[rt_bit_index]);
 +                    (interlock_barrier_only || !REXCVAR_GET(gpu_edram_transfers) ||
-+                     (REXCVAR_GET(gpu_edram_skip_internal) && g_gpu_internal_vertex_shader &&
-+                      g_gpu_internal_pixel_shader))
++                     (REXCVAR_GET(gpu_edram_skip_internal) &&
++                      InternalDrawReplaces(regs, normalized_depth_control, normalized_color_mask,
++                                           rt_bit_index)))
 +                        ? nullptr
 +                        : &last_update_transfers_[rt_bit_index]);
    }

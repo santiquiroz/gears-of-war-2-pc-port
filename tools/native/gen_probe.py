@@ -8,7 +8,7 @@ import os
 import sys
 
 # Hooked by hand in native_probe.cpp (it logs their arguments too).
-CUSTOM = {"sub_8298BAB0"}
+CUSTOM = {"sub_8298BAB0", "sub_82981ED8"}
 
 
 def main():
