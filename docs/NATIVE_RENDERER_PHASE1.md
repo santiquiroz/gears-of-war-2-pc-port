@@ -11,7 +11,7 @@ command processor. Skipping the command processor means doing its side effects b
 Direct3D waits on fences written by `EVENT_WRITE_SHD`/`MEM_WRITE` packets, on the ring buffer's read
 pointer write-back and on interrupts. From the hooks that is a small command processor written again.
 
-So phase 1 is SDK patch `0031-gpu-native-skeleton.patch`: `gpu_native` (off by default) keeps the
+So phase 1 is SDK patch `0032-gpu-native-skeleton.patch`: `gpu_native` (off by default) keeps the
 command processor reading every packet (fences, interrupts, swaps keep working) and skips `IssueDraw`,
 which also runs the resolves. Nothing of the frame is emulated, and the screen is not drawn. A native
 renderer then draws from the game's Direct3D calls (phase 0 named them) inside this mode. `plume` is not
@@ -25,7 +25,7 @@ needed while the SDK's own Direct3D 12 and Vulkan providers and presenter are re
 | `gpu_native=true` (no draws, no resolves) | 200-253 | 3.7-4.6 ms |
 
 On this PC the GPU emulation takes about 60 % of the frame; the game itself runs at about 240 fps. The
-Android numbers are still to measure (the phone was not connected; the APK with patch 0031 builds): set
+Android numbers are still to measure (the phone was not connected; the APK with patch 0032 builds): set
 `gpu_native = true` and `gow2_unlock_fps = true` in the phone's `gow2.toml`, travel to chapter 2, read
 the `FRAMESTATS` lines.
 
