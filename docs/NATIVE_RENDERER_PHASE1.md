@@ -146,6 +146,47 @@ rectangles, and phase 0 named the restore and resolve functions. Next steps:
 
 Each step stays behind a switch that is off by default.
 
+## The rest of the gap: a buffer barrier pair per draw (master, SDK 0035)
+
+With the copies gone the frame was still at half the `gpu_native` ceiling and GPU-bound. Two more
+subtraction tests in the spike patch, same build, hospital, 720p:
+
+| Run | fps |
+|---|---|
+| Emulation | 117-122 |
+| Every draw clipped to one pixel (`SPIKE_TINY_SCISSOR`) | 166 |
+| Guest memory uploads stopped once in the hospital (`SPIKE_SKIP_UPLOADS`, stale geometry) | 249 in the last window |
+
+Pixels were only about 2 of the 8 ms. The rest followed the uploads: about 400 uploads and 740 barrier
+batches a frame. Each draw whose vertex data changed moved the whole shared-memory buffer to
+`COPY_DEST`, copied, and moved it back for reading, and each such pair waits for the GPU to drain. The
+uploads were the SDK's `clear_memory_page_state`, on by default on the desktop: at every frame end it
+marks every page the CPU uploaded as stale, so the whole working set went up again each frame (1 GB/s).
+Android has had it off since patch 0007 (it halved the frame rate there too), and Xenia has it off.
+
+The game meant to turn it off on integrated GPUs and to pick `resolution_scale` and
+`anisotropic_override` per GPU in `OnPreSetup`, but none of that applied on Windows: those cvars
+belong to `rexgpu-xenos.dll`, which loads after `OnPreSetup`, and `SetFlagByName` rejected the unknown
+names silently. SDK patch `0035-runtime-defaults-for-late-cvars.patch` keeps such a value and applies it
+at registration as the default (gow2.toml, `REX_*` and the command line still win, and `GetFlagSource`
+reports their pending source), and the game now turns `clear_memory_page_state` off on every GPU.
+Batching each upload with the rest of its 256 KB block also helped (122 to 198 fps) but loses to
+turning the re-upload off (240, and 213 with both).
+
+| Hospital, RX 7800 XT, unlocked (master a906596) | fps |
+|---|---|
+| 720p, before | 116 |
+| 720p, `clear_memory_page_state = false` | 217-223 |
+| 1440p (`resolution_scale = 2`, the dedicated-GPU default that now applies), before | 77 |
+| 1440p, after | 126 |
+| Guest uploads | 1 GB/s before, 37 MB/s after |
+
+Chapters 1 (the opening cinematic), 4 and 8 look the same with the old and the new setting. On the
+branch, `gpu_msaa_fill_at_1x` adds to it: 213 to 240 fps at 720p, 123 to 144 at 1440p.
+
+Phone measurements need the order alternated: two identical runs back to back on the S25 gave 41-48
+and then 35-40 fps, the second one warmer (37.1 against 39.5 °C), so a single A-then-B pair is noise.
+
 ## Also found: AMD's default path tinted the hospital teal (fixed by 0033)
 
 With the host render target path (`rtv`, the default on AMD) the hospital had a strong teal cast that
