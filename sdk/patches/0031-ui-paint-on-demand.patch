@@ -1,0 +1,28 @@
+diff --git a/src/ui/imgui_drawer.cpp b/src/ui/imgui_drawer.cpp
+index 2277b79..ef2e1b1 100644
+--- a/src/ui/imgui_drawer.cpp
++++ b/src/ui/imgui_drawer.cpp
+@@ -430,6 +430,7 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
+ 
+   ImGui::Render();
+   ImDrawData* draw_data = ImGui::GetDrawData();
++  [[maybe_unused]] const bool drew_something = draw_data && draw_data->TotalVtxCount > 0;
+   if (draw_data) {
+     RenderDrawLists(draw_data, ui_draw_context);
+   }
+@@ -449,10 +450,14 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
+   if (!dialogs_.empty()) {
+     // Repaint (and handle input) continuously if still active. In detached mode
+     // there is no presenter; the app drives repaint via its own present loop.
++    // Elsewhere than Android, "active" is "drew something this frame": a dialog that only waits (a
++    // closed menu, an empty notification queue) would otherwise make the presenter repaint at the
++    // display rate and show every guest frame an uneven number of times. Decided here so the
++    // ImGuiDialog interface (and the vtable the game's dialogs are built against) stays as it is.
+ #if REX_PLATFORM_ANDROID
+     if (presenter_ && AnyDialogWantsContinuousPaint(dialogs_)) {
+ #else
+-    if (presenter_) {
++    if (presenter_ && drew_something) {
+ #endif
+       presenter_->RequestUIPaintFromUIThread();
+     }
