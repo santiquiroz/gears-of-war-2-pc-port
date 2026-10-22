@@ -1,0 +1,1053 @@
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index 294b825..29ef7ec 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -431,6 +431,11 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+       // + 1 bit because this is a signed difference between two EDRAM bases.
+       // 0 for host_depth_source_is_copy (ignored in this case anyway as
+       // destination == source anyway).
++      // Not widened for 12-bit bases (gpu_native_surfaces) - the fields fill
++      // all 32 bits. The truncated difference is the same modulo
++      // xenos::kEdramTileCount, which the shader wraps the source tile index
++      // to; RenderTargetCache::DropNativeWideTransfers removes the transfers
++      // for which that wrapping is wrong.
+       int32_t source_to_dest : xenos::kEdramBaseTilesBits + 1;
+     };
+     TransferAddressConstant() : constant(0) { static_assert_size(*this, sizeof(constant)); }
+@@ -517,9 +522,11 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+     uint32_t offsets;
+     struct {
+       // May be beyond the EDRAM tile count in case of EDRAM addressing
+-      // wrapping, thus + 1 bit.
+-      uint32_t dispatch_first_tile : xenos::kEdramBaseTilesBits + 1;
+-      uint32_t source_base_tiles : xenos::kEdramBaseTilesBits;
++      // wrapping, thus + 1 bit. Both are in the ownership map's address space,
++      // with 12-bit render target bases with gpu_native_surfaces; the dump
++      // shader wraps the EDRAM buffer address to xenos::kEdramTileCount.
++      uint32_t dispatch_first_tile : xenos::kEdramVirtualBaseTilesBits + 1;
++      uint32_t source_base_tiles : xenos::kEdramVirtualBaseTilesBits;
+     };
+     DumpOffsets() : offsets(0) { static_assert_size(*this, sizeof(offsets)); }
+     bool operator==(const DumpOffsets& other_offsets) const {
+diff --git a/include/rex/graphics/pipeline/render_target/cache.h b/include/rex/graphics/pipeline/render_target/cache.h
+index 112ce15..2934ed6 100644
+--- a/include/rex/graphics/pipeline/render_target/cache.h
++++ b/include/rex/graphics/pipeline/render_target/cache.h
+@@ -188,13 +188,19 @@ class RenderTargetCache {
+       : register_file_(register_file),
+         draw_extent_estimator_(register_file, memory),
+         draw_resolution_scale_x_(draw_resolution_scale_x),
+-        draw_resolution_scale_y_(draw_resolution_scale_y) {
++        draw_resolution_scale_y_(draw_resolution_scale_y),
++        edram_tile_count_(GetConfiguredEdramTileCount()) {
+     assert_not_zero(draw_resolution_scale_x);
+     assert_not_zero(draw_resolution_scale_y);
+   }
+ 
+   const RegisterFile& register_file() const { return register_file_; }
+ 
++  // Size of the EDRAM tile address space tracked by the ownership map and used to wrap render
++  // target ranges: xenos::kEdramVirtualTileCount with gpu_native_surfaces (12-bit render target
++  // bases), xenos::kEdramTileCount otherwise.
++  uint32_t edram_tile_count() const { return edram_tile_count_; }
++
+   virtual bool IsGammaFormatHostStorageSeparate() const = 0;
+ 
+   // Call last in implementation-specific initialization (when things like path
+@@ -227,15 +233,20 @@ class RenderTargetCache {
+   union RenderTargetKey {
+     uint32_t key;
+     struct {
+-      uint32_t base_tiles : xenos::kEdramBaseTilesBits;  // 11
++      // [0, 2047], or [0, 4095] with gpu_native_surfaces (edram_tile_count_).
++      uint32_t base_tiles : xenos::kEdramVirtualBaseTilesBits;  // 12
+       // At 4x MSAA (2 horizontal samples), max. align(8192 * 2, 80) / 80 = 205.
+       // For pitch at 64bpp, multiply by 2 (or use GetPitchTiles).
+-      uint32_t pitch_tiles_at_32bpp : 8;                          // 19
+-      xenos::MsaaSamples msaa_samples : xenos::kMsaaSamplesBits;  // 21
+-      uint32_t is_depth : 1;                                      // 22
++      uint32_t pitch_tiles_at_32bpp : 8;                          // 20
++      xenos::MsaaSamples msaa_samples : xenos::kMsaaSamplesBits;  // 22
++      uint32_t is_depth : 1;                                      // 23
+       // Ignoring the blending precision and sRGB.
+-      uint32_t resource_format : xenos::kRenderTargetFormatBits;  // 26
++      uint32_t resource_format : xenos::kRenderTargetFormatBits;  // 27
+     };
++    static_assert(xenos::kEdramVirtualBaseTilesBits + 8 + xenos::kMsaaSamplesBits + 1 +
++                          xenos::kRenderTargetFormatBits <=
++                      32,
++                  "RenderTargetKey must fit in 32 bits");
+ 
+     RenderTargetKey() : key(0) { static_assert_size(*this, sizeof(key)); }
+ 
+@@ -328,16 +339,18 @@ class RenderTargetCache {
+         kMaxRectanglesWithoutCutout * kMaxCutoutBorderRectangles;
+     // Cutout can be specified for resolve clears - not to transfer areas that
+     // will be cleared to a single value anyway.
++    // edram_tile_count is the size of the ownership address space
++    // (RenderTargetCache::edram_tile_count()).
+     static uint32_t GetRangeRectangles(uint32_t start_tiles, uint32_t end_tiles,
+-                                       uint32_t base_tiles, uint32_t pitch_tiles,
+-                                       xenos::MsaaSamples msaa_samples, bool is_64bpp,
+-                                       Rectangle* rectangles_out,
++                                       uint32_t edram_tile_count, uint32_t base_tiles,
++                                       uint32_t pitch_tiles, xenos::MsaaSamples msaa_samples,
++                                       bool is_64bpp, Rectangle* rectangles_out,
+                                        const Rectangle* cutout = nullptr);
+-    uint32_t GetRectangles(uint32_t base_tiles, uint32_t pitch_tiles,
++    uint32_t GetRectangles(uint32_t edram_tile_count, uint32_t base_tiles, uint32_t pitch_tiles,
+                            xenos::MsaaSamples msaa_samples, bool is_64bpp,
+                            Rectangle* rectangles_out, const Rectangle* cutout = nullptr) const {
+-      return GetRangeRectangles(start_tiles, end_tiles, base_tiles, pitch_tiles, msaa_samples,
+-                                is_64bpp, rectangles_out, cutout);
++      return GetRangeRectangles(start_tiles, end_tiles, edram_tile_count, base_tiles, pitch_tiles,
++                                msaa_samples, is_64bpp, rectangles_out, cutout);
+     }
+     bool AreSourcesSame(const Transfer& other_transfer) const {
+       return source == other_transfer.source &&
+@@ -517,10 +530,25 @@ class RenderTargetCache {
+                                       uint32_t& group_count_x_out,
+                                       uint32_t& group_count_y_out) const;
+ 
++  // ResolveInfo::GetCopyEdramTileSpan in the ownership map's address space: with
++  // gpu_native_surfaces the base includes bit 11 of the render target base (wrapped to
++  // edram_tile_count()), which keeps it congruent modulo xenos::kEdramTileCount to the 11-bit
++  // ResolveEdramInfo::base_tiles that the resolve shaders use. Pass the result to
++  // GetResolveCopyRectanglesToDump / DumpRenderTargets.
++  void GetResolveCopyEdramTileSpan(const draw_util::ResolveInfo& resolve_info, uint32_t& base_out,
++                                   uint32_t& row_length_used_out, uint32_t& rows_out,
++                                   uint32_t& pitch_out) const;
++  // The resolve source's base in the ownership map's address space (see
++  // GetResolveCopyEdramTileSpan) - ResolveEdramInfo::base_tiles of the copy source otherwise.
++  uint32_t GetResolveCopyEdramBaseTiles(const draw_util::ResolveInfo& resolve_info) const;
++
+   // Returns mappings between ranges within the specified tile rectangle (not
+   // render target texture rectangle - textures may have any pitch they need)
+-  // from ResolveInfo::GetCopyEdramTileSpan and render targets owning them to
++  // from GetResolveCopyEdramTileSpan and render targets owning them to
+   // rectangles_out.
++  // gpu_native_surfaces: the dump goes to the xenos::kEdramTileCount-tile EDRAM buffer modulo
++  // xenos::kEdramTileCount, so only the first xenos::kEdramTileCount tiles of a longer span are
++  // returned (counted), not to overwrite them with the tiles xenos::kEdramTileCount later.
+   void GetResolveCopyRectanglesToDump(uint32_t base, uint32_t row_length, uint32_t rows,
+                                       uint32_t pitch,
+                                       std::vector<ResolveCopyDumpRectangle>& rectangles_out) const;
+@@ -551,12 +579,18 @@ class RenderTargetCache {
+   void PixelShaderInterlockFullEdramBarrierPlaced();
+ 
+  private:
++  // xenos::kEdramVirtualTileCount if gpu_native_surfaces is on, xenos::kEdramTileCount otherwise.
++  static uint32_t GetConfiguredEdramTileCount();
++
+   const RegisterFile& register_file_;
+   uint32_t draw_resolution_scale_x_;
+   uint32_t draw_resolution_scale_y_;
+ 
+   DrawExtentEstimator draw_extent_estimator_;
+ 
++  // Set once at construction, see edram_tile_count(). Power of two.
++  uint32_t edram_tile_count_;
++
+   // For host render targets.
+ 
+   struct OwnershipRange {
+@@ -653,6 +687,11 @@ class RenderTargetCache {
+   // gpu_native_surfaces: removes the transfers into dest_key that the mode drops and counts them.
+   void DropNativeSurfaceTransfers(std::vector<Transfer>& transfers,
+                                   const RenderTargetKey& dest_key);
++  // gpu_native_surfaces: removes (and counts) the transfers into dest_key that the transfer and
++  // host depth store shaders can't address. They wrap the source tile index (and the host depth
++  // copy's destination tile index) to xenos::kEdramTileCount, which is only correct if the range
++  // lies within the first xenos::kEdramTileCount tiles of the render target it's read from.
++  void DropNativeWideTransfers(std::vector<Transfer>& transfers, const RenderTargetKey& dest_key);
+   // gpu_native_surfaces: logs the dropped transfer counts every few seconds.
+   void ReportNativeSurfaceDrops();
+ 
+@@ -694,6 +733,12 @@ class RenderTargetCache {
+ 
+   // gpu_native_surfaces: ownership transfers dropped since the last report.
+   native_surfaces::DropCounters native_surface_drops_;
++  // gpu_native_surfaces: transfers dropped by DropNativeWideTransfers, and resolve dump spans
++  // clamped to xenos::kEdramTileCount tiles (per GetResolveCopyRectanglesToDump call), since the
++  // last report.
++  uint64_t native_wide_transfer_drops_ = 0;
++  uint64_t native_wide_transfer_drop_tiles_ = 0;
++  mutable uint64_t native_wide_resolve_span_clamps_ = 0;
+   std::chrono::steady_clock::time_point native_surface_drops_last_report_ =
+       std::chrono::steady_clock::now();
+ };
+diff --git a/include/rex/graphics/util/draw.h b/include/rex/graphics/util/draw.h
+index 3da182d..cf3aaa5 100644
+--- a/include/rex/graphics/util/draw.h
++++ b/include/rex/graphics/util/draw.h
+@@ -346,6 +346,8 @@ union ResolveEdramInfo {
+     xenos::MsaaSamples msaa_samples : xenos::kMsaaSamplesBits;
+     uint32_t is_depth : 1;
+     // With offset to the region that edram_offset_x/y_div_8 are relative to.
++    // 11 bits even with gpu_native_surfaces (see ResolveInfo::*_edram_base_tiles_virtual): the
++    // precompiled resolve shaders unpack the fields after this one at fixed bit offsets.
+     uint32_t base_tiles : xenos::kEdramBaseTilesBits;
+     uint32_t format : xenos::kRenderTargetFormatBits;
+     uint32_t format_is_64bpp : 1;
+@@ -485,6 +487,16 @@ struct ResolveInfo {
+   // transfers between clears and first usage if clearing a subregion.
+   uint32_t depth_original_base;
+   uint32_t color_original_base;
++  // The same with RB_DEPTH_INFO::depth_base_bit_11 / RB_COLOR_INFO::color_base_bit_11
++  // (xenos::kEdramVirtualBaseTilesBits), and the depth_edram_info / color_edram_info base_tiles
++  // equivalents wrapped to xenos::kEdramVirtualTileCount instead of 11 bits. Only used by
++  // gpu_native_surfaces, whose ownership map covers xenos::kEdramVirtualTileCount tiles.
++  // ResolveEdramInfo::base_tiles stays 11-bit: the shaders address the 2048-tile EDRAM buffer
++  // modulo 2048, and the virtual base is congruent to it modulo 2048.
++  uint32_t depth_original_base_virtual;
++  uint32_t color_original_base_virtual;
++  uint32_t depth_edram_base_tiles_virtual;
++  uint32_t color_edram_base_tiles_virtual;
+ 
+   ResolveCoordinateInfo coordinate_info;
+   // Like coordinate_info.width_div_8, but not needed for shaders.
+diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
+index 05042b7..06f1415 100644
+--- a/include/rex/graphics/vulkan/render_target_cache.h
++++ b/include/rex/graphics/vulkan/render_target_cache.h
+@@ -393,14 +393,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+ 
+     // Same as RenderTargetKey::pitch_tiles_at_32bpp.
+     uint32_t pitch_tiles_at_32bpp : 8;  // 8
+-    // [0, 2047].
+-    uint32_t depth_base_tiles : xenos::kEdramBaseTilesBits;    // 19
+-    uint32_t color_0_base_tiles : xenos::kEdramBaseTilesBits;  // 30
++    // Same as RenderTargetKey::base_tiles: [0, 2047], or [0, 4095] with
++    // gpu_native_surfaces - render targets 2048 tiles apart are different.
++    uint32_t depth_base_tiles : xenos::kEdramVirtualBaseTilesBits;    // 20
++    uint32_t color_0_base_tiles : xenos::kEdramVirtualBaseTilesBits;  // 32
+ 
+-    uint32_t color_1_base_tiles : xenos::kEdramBaseTilesBits;  // 43
+-    uint32_t color_2_base_tiles : xenos::kEdramBaseTilesBits;  // 54
++    uint32_t color_1_base_tiles : xenos::kEdramVirtualBaseTilesBits;  // 44
++    uint32_t color_2_base_tiles : xenos::kEdramVirtualBaseTilesBits;  // 56
+ 
+-    uint32_t color_3_base_tiles : xenos::kEdramBaseTilesBits;  // 75
++    uint32_t color_3_base_tiles : xenos::kEdramVirtualBaseTilesBits;  // 76
+ 
+     // Including all the padding, for a stable hash.
+     FramebufferKey() { Reset(); }
+@@ -591,6 +592,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+       // + 1 bit because this is a signed difference between two EDRAM bases.
+       // 0 for host_depth_source_is_copy (ignored in this case anyway as
+       // destination == source anyway).
++      // Not widened for 12-bit bases (gpu_native_surfaces) - the fields fill
++      // all 32 bits. The truncated difference is the same modulo
++      // xenos::kEdramTileCount, which the shader wraps the source tile index
++      // to; RenderTargetCache::DropNativeWideTransfers removes the transfers
++      // for which that wrapping is wrong.
+       int32_t source_to_dest : xenos::kEdramBaseTilesBits + 1;
+     };
+     TransferAddressConstant() : constant(0) { static_assert_size(*this, sizeof(constant)); }
+@@ -695,9 +701,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+     uint32_t offsets;
+     struct {
+       // May be beyond the EDRAM tile count in case of EDRAM addressing
+-      // wrapping, thus + 1 bit.
+-      uint32_t dispatch_first_tile : xenos::kEdramBaseTilesBits + 1;
+-      uint32_t source_base_tiles : xenos::kEdramBaseTilesBits;
++      // wrapping, thus + 1 bit. Both are in the ownership map's address space,
++      // with 12-bit render target bases with gpu_native_surfaces; the dump
++      // shader wraps the EDRAM buffer address to xenos::kEdramTileCount.
++      uint32_t dispatch_first_tile : xenos::kEdramVirtualBaseTilesBits + 1;
++      uint32_t source_base_tiles : xenos::kEdramVirtualBaseTilesBits;
+     };
+     DumpOffsets() : offsets(0) { static_assert_size(*this, sizeof(offsets)); }
+     bool operator==(const DumpOffsets& other_offsets) const {
+diff --git a/include/rex/graphics/xenos.h b/include/rex/graphics/xenos.h
+index fb1e795..f38d2f9 100644
+--- a/include/rex/graphics/xenos.h
++++ b/include/rex/graphics/xenos.h
+@@ -423,6 +423,10 @@ constexpr uint32_t kEdramPitchPixelsBits = 14;
+ // The part of RB_COLOR_INFO::color_base and RB_DEPTH_INFO::depth_base width
+ // usable on the Xenos, which has periodic 11-bit EDRAM tile addressing.
+ constexpr uint32_t kEdramBaseTilesBits = 11;
++// color_base / depth_base with color_base_bit_11 / depth_base_bit_11, addressing
++// kEdramVirtualTileCount tiles (gpu_native_surfaces on the host render target path).
++constexpr uint32_t kEdramVirtualBaseTilesBits = kEdramBaseTilesBits + 1;
++static_assert((uint32_t(1) << kEdramVirtualBaseTilesBits) == kEdramVirtualTileCount);
+ 
+ constexpr uint32_t GetSurfacePitchTiles(uint32_t pitch_pixels, MsaaSamples msaa_samples,
+                                         bool is_64bpp) {
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 6a59d08..d92f243 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -1422,7 +1422,8 @@ bool D3D12RenderTargetCache::ResolveImpl(const memory::Memory& memory,
+           uint32_t dump_row_length_used;
+           uint32_t dump_rows;
+           uint32_t dump_pitch;
+-          resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used, dump_rows, dump_pitch);
++          GetResolveCopyEdramTileSpan(resolve_info, dump_base, dump_row_length_used, dump_rows,
++                                      dump_pitch);
+           if (!DumpRenderTargets(dump_base, dump_row_length_used, dump_rows, dump_pitch)) {
+             REXGPU_ERROR("D3D12RenderTargetCache: Failed to dump host render targets for resolve");
+             return false;
+@@ -4124,8 +4125,8 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
+       }
+       Transfer::Rectangle transfer_rectangles[Transfer::kMaxRectanglesWithCutout];
+       uint32_t transfer_rectangle_count = transfer.GetRectangles(
+-          dest_rt_key.base_tiles, dest_rt_key.pitch_tiles_at_32bpp, dest_rt_key.msaa_samples, false,
+-          transfer_rectangles, resolve_clear_rectangle);
++          edram_tile_count(), dest_rt_key.base_tiles, dest_rt_key.pitch_tiles_at_32bpp,
++          dest_rt_key.msaa_samples, false, transfer_rectangles, resolve_clear_rectangle);
+       assert_not_zero(transfer_rectangle_count);
+       HostDepthStoreRectangleConstant host_depth_store_rectangle_constant;
+       for (uint32_t j = 0; j < transfer_rectangle_count; ++j) {
+@@ -4411,8 +4412,8 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
+                                                ? TransferMode::kDepthToStencilBit
+                                                : TransferMode::kColorToStencilBit;
+             stencil_clear_rectangle_count += transfer.GetRectangles(
+-                dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-                nullptr, resolve_clear_rectangle);
++                edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++                dest_rt_key.msaa_samples, dest_is_64bpp, nullptr, resolve_clear_rectangle);
+           } else {
+             if (dest_rt_key.is_depth) {
+               if (host_depth_source_d3d12_rt) {
+@@ -4448,9 +4449,10 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
+         assert_not_null(stencil_clear_rect_write_ptr);
+         for (const Transfer& transfer : current_transfers) {
+           Transfer::Rectangle transfer_stencil_clear_rectangles[Transfer::kMaxRectanglesWithCutout];
+-          uint32_t transfer_stencil_clear_rectangle_count = transfer.GetRectangles(
+-              dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              transfer_stencil_clear_rectangles, resolve_clear_rectangle);
++          uint32_t transfer_stencil_clear_rectangle_count =
++              transfer.GetRectangles(edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++                                     dest_rt_key.msaa_samples, dest_is_64bpp,
++                                     transfer_stencil_clear_rectangles, resolve_clear_rectangle);
+           for (uint32_t j = 0; j < transfer_stencil_clear_rectangle_count; ++j) {
+             const Transfer::Rectangle& stencil_clear_rectangle =
+                 transfer_stencil_clear_rectangles[j];
+@@ -4500,16 +4502,16 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
+         // Will be merging transfers from the same source into one mesh.
+         auto it_merged_first = it, it_merged_last = it;
+         uint32_t transfer_rectangle_count = transfer_invocation_first.transfer.GetRectangles(
+-            dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-            nullptr, resolve_clear_rectangle);
++            edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples,
++            dest_is_64bpp, nullptr, resolve_clear_rectangle);
+         for (auto it_merge = std::next(it_merged_first);
+              it_merge != current_transfer_invocations_.cend(); ++it_merge) {
+           if (!transfer_invocation_first.CanBeMergedIntoOneDraw(*it_merge)) {
+             break;
+           }
+           transfer_rectangle_count += it_merge->transfer.GetRectangles(
+-              dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              nullptr, resolve_clear_rectangle);
++              edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++              dest_rt_key.msaa_samples, dest_is_64bpp, nullptr, resolve_clear_rectangle);
+           it_merged_last = it_merge;
+         }
+         assert_not_zero(transfer_rectangle_count);
+@@ -4566,8 +4568,9 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
+         for (auto it_merged = it_merged_first; it_merged <= it_merged_last; ++it_merged) {
+           Transfer::Rectangle transfer_invocation_rectangles[Transfer::kMaxRectanglesWithCutout];
+           uint32_t transfer_invocation_rectangle_count = it_merged->transfer.GetRectangles(
+-              dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              transfer_invocation_rectangles, resolve_clear_rectangle);
++              edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++              dest_rt_key.msaa_samples, dest_is_64bpp, transfer_invocation_rectangles,
++              resolve_clear_rectangle);
+           assert_not_zero(transfer_invocation_rectangle_count);
+           for (uint32_t j = 0; j < transfer_invocation_rectangle_count; ++j) {
+             const Transfer::Rectangle& transfer_rectangle = transfer_invocation_rectangles[j];
+@@ -5347,7 +5350,7 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(DumpPipelin
+   // r0.y = Y sample position within the tile
+   // r0.z = first EDRAM tile index in the dispatch
+   // r0.w = tile index relative to the dump rectangle base
+-  a.OpUBFE(dxbc::Dest::R(0, 0b0100), dxbc::Src::LU(xenos::kEdramBaseTilesBits + 1),
++  a.OpUBFE(dxbc::Dest::R(0, 0b0100), dxbc::Src::LU(xenos::kEdramVirtualBaseTilesBits + 1),
+            dxbc::Src::LU(0),
+            dxbc::Src::CB(kDumpCbufferOffsets, kDumpCbufferOffsets, 0, dxbc::Src::kXXXX));
+   // Add the base tile in the dispatch to the dispatch-local tile index to r0.w,
+@@ -5419,8 +5422,8 @@ ID3D12PipelineState* D3D12RenderTargetCache::GetOrCreateDumpPipeline(DumpPipelin
+   // r0.z = sample offset in the EDRAM
+   // r0.w = non-wrapped tile index in the EDRAM
+   // r1.x = source texture base tile index
+-  a.OpUBFE(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(xenos::kEdramBaseTilesBits),
+-           dxbc::Src::LU(xenos::kEdramBaseTilesBits + 1),
++  a.OpUBFE(dxbc::Dest::R(1, 0b0001), dxbc::Src::LU(xenos::kEdramVirtualBaseTilesBits),
++           dxbc::Src::LU(xenos::kEdramVirtualBaseTilesBits + 1),
+            dxbc::Src::CB(kDumpCbufferOffsets, kDumpCbufferOffsets, 0, dxbc::Src::kXXXX));
+   // Get the linear tile index within the source texture to r0.w.
+   // r0.x = X sample position within the tile
+@@ -5777,7 +5780,7 @@ bool D3D12RenderTargetCache::TryResolveCopyDirectly(const draw_util::ResolveInfo
+   uint32_t dump_row_length_used;
+   uint32_t dump_rows;
+   uint32_t dump_pitch;
+-  resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used, dump_rows, dump_pitch);
++  GetResolveCopyEdramTileSpan(resolve_info, dump_base, dump_row_length_used, dump_rows, dump_pitch);
+   GetResolveCopyDispatchesToDump(dump_base, dump_row_length_used, dump_rows, dump_pitch,
+                                  dump_rectangles_, direct_resolve_dispatches_);
+   if (direct_resolve_dispatches_.empty()) {
+@@ -6206,7 +6209,7 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   uint32_t dump_row_length_used;
+   uint32_t dump_rows;
+   uint32_t dump_pitch;
+-  resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used, dump_rows, dump_pitch);
++  GetResolveCopyEdramTileSpan(resolve_info, dump_base, dump_row_length_used, dump_rows, dump_pitch);
+   GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows, dump_pitch,
+                                  dump_rectangles_);
+   if (dump_rectangles_.empty()) {
+@@ -6241,7 +6244,8 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   // The resolve origin in the render target: the resolve EDRAM base tile relative to the render
+   // target's, laid out with the same pitch, plus the offset within that tile.
+   const uint32_t rt_pitch_tiles = rt_key.GetPitchTiles();
+-  const uint32_t resolve_base_tiles = edram_info.base_tiles;
++  // With gpu_native_surfaces, 12-bit like the render target key's base.
++  const uint32_t resolve_base_tiles = GetResolveCopyEdramBaseTiles(resolve_info);
+   if (!rt_pitch_tiles || rt_pitch_tiles != edram_info.pitch_tiles ||
+       resolve_base_tiles < rt_key.base_tiles) {
+     fallback(NativeResolveFallback::kSourcePlacement);
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index d083608..6ab1a87 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -194,6 +194,7 @@ void RenderTargetCache::GetPSIColorFormatInfo(xenos::ColorRenderTargetFormat for
+ }
+ 
+ uint32_t RenderTargetCache::Transfer::GetRangeRectangles(uint32_t start_tiles, uint32_t end_tiles,
++                                                         uint32_t edram_tile_count,
+                                                          uint32_t base_tiles, uint32_t pitch_tiles,
+                                                          xenos::MsaaSamples msaa_samples,
+                                                          bool is_64bpp, Rectangle* rectangles_out,
+@@ -201,8 +202,8 @@ uint32_t RenderTargetCache::Transfer::GetRangeRectangles(uint32_t start_tiles, u
+   // EDRAM addressing wrapping must be handled by doing GetRangeRectangles for
+   // two clamped ranges, in this case start_tiles == end_tiles will also
+   // unambiguously mean an empty range rather than the entire EDRAM.
+-  assert_true(start_tiles < xenos::kEdramTileCount);
+-  assert_true(end_tiles <= xenos::kEdramTileCount);
++  assert_true(start_tiles < edram_tile_count);
++  assert_true(end_tiles <= edram_tile_count);
+   assert_true(start_tiles <= end_tiles);
+   // If start_tiles < base_tiles, this is the tail after EDRAM addressing
+   // wrapping.
+@@ -220,7 +221,7 @@ uint32_t RenderTargetCache::Transfer::GetRangeRectangles(uint32_t start_tiles, u
+   uint32_t rectangle_count = 0;
+   // If start_tiles < base_tiles, this is the tail after EDRAM addressing
+   // wrapping.
+-  uint32_t local_offset = start_tiles < base_tiles ? xenos::kEdramTileCount : 0;
++  uint32_t local_offset = start_tiles < base_tiles ? edram_tile_count : 0;
+   uint32_t local_start = local_offset + start_tiles - base_tiles;
+   uint32_t local_end = local_offset + end_tiles - base_tiles;
+   // Inclusive.
+@@ -357,10 +358,14 @@ RenderTargetCache::~RenderTargetCache() {
+   ShutdownCommon();
+ }
+ 
++uint32_t RenderTargetCache::GetConfiguredEdramTileCount() {
++  return REXCVAR_GET(gpu_native_surfaces) ? xenos::kEdramVirtualTileCount : xenos::kEdramTileCount;
++}
++
+ void RenderTargetCache::InitializeCommon() {
+   assert_true(ownership_ranges_.empty());
+   ownership_ranges_.emplace(std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
+-                            std::forward_as_tuple(xenos::kEdramTileCount, RenderTargetKey(),
++                            std::forward_as_tuple(edram_tile_count_, RenderTargetKey(),
+                                                   RenderTargetKey(), RenderTargetKey()));
+ }
+ 
+@@ -368,7 +373,7 @@ void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
+   ownership_ranges_.clear();
+   if (!shutting_down) {
+     ownership_ranges_.emplace(std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
+-                              std::forward_as_tuple(xenos::kEdramTileCount, RenderTargetKey(),
++                              std::forward_as_tuple(edram_tile_count_, RenderTargetKey(),
+                                                     RenderTargetKey(), RenderTargetKey()));
+   }
+ 
+@@ -482,11 +487,17 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+   uint32_t edram_bases[1 + xenos::kMaxColorRenderTargets];
+   uint32_t resource_formats[1 + xenos::kMaxColorRenderTargets];
+   uint32_t rts_are_64bpp = 0;
++  // gpu_native_surfaces: 12-bit bases, so a render target past tile 2048 doesn't alias the one
++  // 2048 tiles earlier.
++  const bool edram_bases_virtual = edram_tile_count_ != xenos::kEdramTileCount;
+   if (is_rasterization_done) {
+     if (normalized_depth_control.z_enable || normalized_depth_control.stencil_enable) {
+       depth_and_color_rts_used_bits |= 1;
+       auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
+       edram_bases[0] = rb_depth_info.depth_base;
++      if (edram_bases_virtual) {
++        edram_bases[0] |= uint32_t(rb_depth_info.depth_base_bit_11) << xenos::kEdramBaseTilesBits;
++      }
+       // With pixel shader interlock, always the same addressing disregarding
+       // the format.
+       resource_formats[0] = interlock_barrier_only ? 0 : uint32_t(rb_depth_info.depth_format);
+@@ -499,6 +510,10 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+       uint32_t rt_bit_index = 1 + i;
+       depth_and_color_rts_used_bits |= uint32_t(1) << rt_bit_index;
+       edram_bases[rt_bit_index] = color_info.color_base;
++      if (edram_bases_virtual) {
++        edram_bases[rt_bit_index] |= uint32_t(color_info.color_base_bit_11)
++                                     << xenos::kEdramBaseTilesBits;
++      }
+       xenos::ColorRenderTargetFormat color_format =
+           regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[i]).color_format;
+       bool is_64bpp = xenos::IsColorRenderTargetFormat64bpp(color_format);
+@@ -625,7 +640,7 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+   // after rounding to tiles, with a 32bpp depth buffer at 0 requiring 675
+   // tiles, and a 64bpp color buffer at 675 requiring 1350 tiles, but the
+   // smallest distance between two render target bases is 675 tiles).
+-  uint32_t rt_max_distance_tiles_at_64bpp = xenos::kEdramTileCount * 2;
++  uint32_t rt_max_distance_tiles_at_64bpp = edram_tile_count_ * 2;
+   if (REXCVAR_GET(mrt_edram_used_range_clamp_to_min) && edram_bases_sorted_count >= 2) {
+     for (uint32_t i = 1; i < edram_bases_sorted_count; ++i) {
+       const std::pair<uint32_t, uint32_t>& rt_base_prev = edram_bases_sorted[i - 1];
+@@ -640,7 +655,7 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+         edram_bases_sorted[edram_bases_sorted_count - 1];
+     rt_max_distance_tiles_at_64bpp =
+         std::min(rt_max_distance_tiles_at_64bpp,
+-                 (xenos::kEdramTileCount + edram_bases_sorted[0].first - rt_base_last.first)
++                 (edram_tile_count_ + edram_bases_sorted[0].first - rt_base_last.first)
+                      << (((rts_are_64bpp >> rt_base_last.second) & 1) ^ 1));
+   }
+ 
+@@ -674,12 +689,12 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+     // The last render target can occupy the EDRAM until the base of the first
+     // render target (itself in case of 1 render target) with EDRAM addressing
+     // wrapping.
+-    rt_lengths_tiles[i] = std::min(std::min(length_used_tiles_at_32bpp << rt_is_64bpp,
+-                                            rt_max_distance_tiles_at_64bpp >> (rt_is_64bpp ^ 1)),
+-                                   ((i + 1 < edram_bases_sorted_count)
+-                                        ? edram_bases_sorted[i + 1].first
+-                                        : (xenos::kEdramTileCount + edram_bases_sorted[0].first)) -
+-                                       rt_base);
++    rt_lengths_tiles[i] = std::min(
++        std::min(length_used_tiles_at_32bpp << rt_is_64bpp,
++                 rt_max_distance_tiles_at_64bpp >> (rt_is_64bpp ^ 1)),
++        ((i + 1 < edram_bases_sorted_count) ? edram_bases_sorted[i + 1].first
++                                            : (edram_tile_count_ + edram_bases_sorted[0].first)) -
++            rt_base);
+   }
+ 
+   if (interlock_barrier_only) {
+@@ -714,6 +729,7 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+                     interlock_barrier_only ? nullptr : &last_update_transfers_[rt_bit_index]);
+     if (!interlock_barrier_only && REXCVAR_GET(gpu_native_surfaces)) {
+       DropNativeSurfaceTransfers(last_update_transfers_[rt_bit_index], rt_keys[rt_bit_index]);
++      DropNativeWideTransfers(last_update_transfers_[rt_bit_index], rt_keys[rt_bit_index]);
+     }
+   }
+   if (REXCVAR_GET(gpu_native_surfaces)) {
+@@ -822,9 +838,9 @@ uint32_t RenderTargetCache::GetRenderTargetHeight(uint32_t pitch_tiles_at_32bpp,
+   if (!pitch_tiles_at_32bpp) {
+     return 0;
+   }
+-  // Down to the beginning of the render target in the next 11-bit EDRAM
+-  // addressing period.
+-  uint32_t tile_rows = (xenos::kEdramTileCount + (pitch_tiles_at_32bpp - 1)) / pitch_tiles_at_32bpp;
++  // Down to the beginning of the render target in the next 11-bit (12-bit with
++  // gpu_native_surfaces) EDRAM addressing period.
++  uint32_t tile_rows = (edram_tile_count_ + (pitch_tiles_at_32bpp - 1)) / pitch_tiles_at_32bpp;
+   // Clamp to the guest limit (tile padding should exceed it) and to the host
+   // limit (tile padding mustn't exceed it).
+   static_assert(!(xenos::kTexture2DCubeMaxWidthHeight % xenos::kEdramTileHeightSamples),
+@@ -937,13 +953,50 @@ void RenderTargetCache::GetResolveCopyRectanglesToDump(
+           std::min(pitch - (rows_end * pitch - range_local_end), row_length));
+     }
+   };
+-  uint32_t resolve_area_end = base + (rows - 1) * pitch + row_length;
+-  get_rectangles_in_extent(base, std::min(resolve_area_end, xenos::kEdramTileCount), 0);
+-  if (resolve_area_end > xenos::kEdramTileCount) {
++  uint32_t resolve_area_length = (rows - 1) * pitch + row_length;
++  if (edram_tile_count_ != xenos::kEdramTileCount && resolve_area_length > xenos::kEdramTileCount) {
++    // gpu_native_surfaces: the dump writes tile (base + i) to the EDRAM buffer tile
++    // (base + i) % xenos::kEdramTileCount, and the resolve shader reads it back the same way, so
++    // tiles i and i + xenos::kEdramTileCount of the span would overwrite each other. Dump only
++    // the first xenos::kEdramTileCount tiles - the resolve reads the rest as the tiles
++    // xenos::kEdramTileCount earlier, like without 12-bit bases.
++    ++native_wide_resolve_span_clamps_;
++    resolve_area_length = xenos::kEdramTileCount;
++  }
++  uint32_t resolve_area_end = base + resolve_area_length;
++  get_rectangles_in_extent(base, std::min(resolve_area_end, edram_tile_count_), 0);
++  if (resolve_area_end > edram_tile_count_) {
+     // The resolve area goes to the next EDRAM addressing period.
+-    get_rectangles_in_extent(0, std::min(resolve_area_end & (xenos::kEdramTileCount - 1), base),
+-                             xenos::kEdramTileCount);
++    get_rectangles_in_extent(0, std::min(resolve_area_end & (edram_tile_count_ - 1), base),
++                             edram_tile_count_);
++  }
++}
++
++void RenderTargetCache::GetResolveCopyEdramTileSpan(const draw_util::ResolveInfo& resolve_info,
++                                                    uint32_t& base_out,
++                                                    uint32_t& row_length_used_out,
++                                                    uint32_t& rows_out, uint32_t& pitch_out) const {
++  resolve_info.GetCopyEdramTileSpan(base_out, row_length_used_out, rows_out, pitch_out);
++  if (edram_tile_count_ == xenos::kEdramTileCount) {
++    return;
+   }
++  // base_out is ResolveEdramInfo::base_tiles plus the tile offset of the copied area - move it
++  // to the virtual base, which is the same modulo xenos::kEdramTileCount.
++  const draw_util::ResolveEdramInfo& edram_info =
++      resolve_info.IsCopyingDepth() ? resolve_info.depth_edram_info : resolve_info.color_edram_info;
++  base_out =
++      base_out - uint32_t(edram_info.base_tiles) + GetResolveCopyEdramBaseTiles(resolve_info);
++}
++
++uint32_t RenderTargetCache::GetResolveCopyEdramBaseTiles(
++    const draw_util::ResolveInfo& resolve_info) const {
++  const bool is_depth = resolve_info.IsCopyingDepth();
++  if (edram_tile_count_ == xenos::kEdramTileCount) {
++    return is_depth ? resolve_info.depth_edram_info.base_tiles
++                    : resolve_info.color_edram_info.base_tiles;
++  }
++  return is_depth ? resolve_info.depth_edram_base_tiles_virtual
++                  : resolve_info.color_edram_base_tiles_virtual;
+ }
+ 
+ void RenderTargetCache::GetResolveCopyDispatchesToDump(
+@@ -970,18 +1023,33 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
+     RenderTarget*& color_render_target_out, std::vector<Transfer>& color_transfers_out) {
+   assert_true(GetPath() == Path::kHostRenderTargets);
+ 
++  // gpu_native_surfaces: the render targets are keyed and owned by 12-bit bases.
++  const bool edram_bases_virtual = edram_tile_count_ != xenos::kEdramTileCount;
++  const uint32_t depth_original_base = edram_bases_virtual
++                                           ? resolve_info.depth_original_base_virtual
++                                           : resolve_info.depth_original_base;
++  const uint32_t color_original_base = edram_bases_virtual
++                                           ? resolve_info.color_original_base_virtual
++                                           : resolve_info.color_original_base;
++
+   uint32_t pitch_tiles_at_32bpp;
+   uint32_t base_offset_tiles_at_32bpp;
+   xenos::MsaaSamples msaa_samples;
+   if (resolve_info.IsClearingDepth()) {
+     pitch_tiles_at_32bpp = resolve_info.depth_edram_info.pitch_tiles;
+     base_offset_tiles_at_32bpp =
+-        resolve_info.depth_edram_info.base_tiles - resolve_info.depth_original_base;
++        edram_bases_virtual
++            ? (resolve_info.depth_edram_base_tiles_virtual - depth_original_base) &
++                  (edram_tile_count_ - 1)
++            : resolve_info.depth_edram_info.base_tiles - resolve_info.depth_original_base;
+     msaa_samples = resolve_info.depth_edram_info.msaa_samples;
+   } else if (resolve_info.IsClearingColor()) {
+     pitch_tiles_at_32bpp = resolve_info.color_edram_info.pitch_tiles;
+     base_offset_tiles_at_32bpp =
+-        resolve_info.color_edram_info.base_tiles - resolve_info.color_original_base;
++        edram_bases_virtual
++            ? (resolve_info.color_edram_base_tiles_virtual - color_original_base) &
++                  (edram_tile_count_ - 1)
++            : resolve_info.color_edram_info.base_tiles - resolve_info.color_original_base;
+     if (resolve_info.color_edram_info.format_is_64bpp) {
+       assert_zero(pitch_tiles_at_32bpp & 1);
+       pitch_tiles_at_32bpp >>= 1;
+@@ -1062,10 +1130,9 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
+   uint32_t depth_clear_start_tiles_base_relative = 0;
+   uint32_t depth_clear_length_tiles = 0;
+   if (resolve_info.IsClearingDepth()) {
+-    depth_clear_start_tiles_base_relative =
+-        std::min(clear_start_tiles_at_32bpp, xenos::kEdramTileCount);
++    depth_clear_start_tiles_base_relative = std::min(clear_start_tiles_at_32bpp, edram_tile_count_);
+     depth_clear_length_tiles =
+-        std::min(clear_start_tiles_at_32bpp + clear_length_tiles_at_32bpp, xenos::kEdramTileCount) -
++        std::min(clear_start_tiles_at_32bpp + clear_length_tiles_at_32bpp, edram_tile_count_) -
+         depth_clear_start_tiles_base_relative;
+   }
+   uint32_t color_clear_start_tiles_base_relative = 0;
+@@ -1073,39 +1140,36 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
+   if (resolve_info.IsClearingColor()) {
+     color_clear_start_tiles_base_relative =
+         std::min(clear_start_tiles_at_32bpp << resolve_info.color_edram_info.format_is_64bpp,
+-                 xenos::kEdramTileCount);
++                 edram_tile_count_);
+     color_clear_length_tiles = std::min((clear_start_tiles_at_32bpp + clear_length_tiles_at_32bpp)
+                                             << resolve_info.color_edram_info.format_is_64bpp,
+-                                        xenos::kEdramTileCount) -
++                                        edram_tile_count_) -
+                                color_clear_start_tiles_base_relative;
+   }
+   if (depth_clear_length_tiles && color_clear_length_tiles) {
+     // Prevent overlap - clear the depth only until the color, the color only
+-    // until the depth, in the current or the next 11 bits of the tile index.
++    // until the depth, in the current or the next 11 (12 with
++    // gpu_native_surfaces) bits of the tile index.
+     uint32_t depth_clear_start_tiles_wrapped =
+-        (resolve_info.depth_original_base + depth_clear_start_tiles_base_relative) &
+-        (xenos::kEdramTileCount - 1);
++        (depth_original_base + depth_clear_start_tiles_base_relative) & (edram_tile_count_ - 1);
+     uint32_t color_clear_start_tiles_wrapped =
+-        (resolve_info.color_original_base + color_clear_start_tiles_base_relative) &
+-        (xenos::kEdramTileCount - 1);
+-    depth_clear_length_tiles =
+-        std::min(depth_clear_length_tiles,
+-                 ((color_clear_start_tiles_wrapped < depth_clear_start_tiles_wrapped)
+-                      ? xenos::kEdramTileCount
+-                      : 0) +
+-                     color_clear_start_tiles_wrapped - depth_clear_start_tiles_wrapped);
+-    color_clear_length_tiles =
+-        std::min(color_clear_length_tiles,
+-                 ((depth_clear_start_tiles_wrapped < color_clear_start_tiles_wrapped)
+-                      ? xenos::kEdramTileCount
+-                      : 0) +
+-                     depth_clear_start_tiles_wrapped - color_clear_start_tiles_wrapped);
++        (color_original_base + color_clear_start_tiles_base_relative) & (edram_tile_count_ - 1);
++    depth_clear_length_tiles = std::min(
++        depth_clear_length_tiles,
++        ((color_clear_start_tiles_wrapped < depth_clear_start_tiles_wrapped) ? edram_tile_count_
++                                                                             : 0) +
++            color_clear_start_tiles_wrapped - depth_clear_start_tiles_wrapped);
++    color_clear_length_tiles = std::min(
++        color_clear_length_tiles,
++        ((depth_clear_start_tiles_wrapped < color_clear_start_tiles_wrapped) ? edram_tile_count_
++                                                                             : 0) +
++            depth_clear_start_tiles_wrapped - color_clear_start_tiles_wrapped);
+   }
+ 
+   RenderTargetKey depth_render_target_key;
+   RenderTarget* depth_render_target = nullptr;
+   if (depth_clear_length_tiles) {
+-    depth_render_target_key.base_tiles = resolve_info.depth_original_base;
++    depth_render_target_key.base_tiles = depth_original_base;
+     depth_render_target_key.pitch_tiles_at_32bpp = pitch_tiles_at_32bpp;
+     depth_render_target_key.msaa_samples = msaa_samples;
+     depth_render_target_key.is_depth = 1;
+@@ -1120,7 +1184,7 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
+   RenderTargetKey color_render_target_key;
+   RenderTarget* color_render_target = nullptr;
+   if (color_clear_length_tiles) {
+-    color_render_target_key.base_tiles = resolve_info.color_original_base;
++    color_render_target_key.base_tiles = color_original_base;
+     color_render_target_key.pitch_tiles_at_32bpp = pitch_tiles_at_32bpp;
+     color_render_target_key.msaa_samples = msaa_samples;
+     color_render_target_key.is_depth = 0;
+@@ -1144,12 +1208,18 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
+   if (depth_render_target) {
+     ChangeOwnership(depth_render_target_key, depth_clear_start_tiles_base_relative,
+                     depth_clear_length_tiles, &depth_transfers_out, &clear_rectangle);
++    if (edram_bases_virtual) {
++      DropNativeWideTransfers(depth_transfers_out, depth_render_target_key);
++    }
+   }
+   color_render_target_out = color_render_target;
+   color_transfers_out.clear();
+   if (color_render_target) {
+     ChangeOwnership(color_render_target_key, color_clear_start_tiles_base_relative,
+                     color_clear_length_tiles, &color_transfers_out, &clear_rectangle);
++    if (edram_bases_virtual) {
++      DropNativeWideTransfers(color_transfers_out, color_render_target_key);
++    }
+   }
+   return true;
+ }
+@@ -1157,7 +1227,7 @@ bool RenderTargetCache::PrepareHostRenderTargetsResolveClear(
+ void RenderTargetCache::PixelShaderInterlockFullEdramBarrierPlaced() {
+   assert_true(GetPath() == Path::kPixelShaderInterlock);
+   // Clear ownership - any overlap of data written before the barrier is safe.
+-  OwnershipRange empty_range(xenos::kEdramTileCount, RenderTargetKey(), RenderTargetKey(),
++  OwnershipRange empty_range(edram_tile_count_, RenderTargetKey(), RenderTargetKey(),
+                              RenderTargetKey());
+   if (ownership_ranges_.size() == 1) {
+     // Do not reallocate map elements if not needed (either nothing drawn since
+@@ -1166,7 +1236,7 @@ void RenderTargetCache::PixelShaderInterlockFullEdramBarrierPlaced() {
+     // at 0.
+     assert_true(!ownership_ranges_.begin()->first);
+     OwnershipRange& all_edram_range = ownership_ranges_.begin()->second;
+-    assert_true(all_edram_range.end_tiles == xenos::kEdramTileCount);
++    assert_true(all_edram_range.end_tiles == edram_tile_count_);
+     all_edram_range = empty_range;
+     return;
+   }
+@@ -1208,10 +1278,10 @@ RenderTargetCache::RenderTarget* RenderTargetCache::GetOrCreateRenderTarget(Rend
+ bool RenderTargetCache::WouldOwnershipChangeRequireTransfers(RenderTargetKey dest,
+                                                              uint32_t start_tiles_base_relative,
+                                                              uint32_t length_tiles) const {
+-  // xenos::kEdramTileCount with length 0 is fine if both the start and the end
+-  // are clamped to xenos::kEdramTileCount.
+-  assert_true(start_tiles_base_relative <= (xenos::kEdramTileCount - uint32_t(length_tiles != 0)));
+-  assert_true(length_tiles <= xenos::kEdramTileCount);
++  // edram_tile_count_ with length 0 is fine if both the start and the end
++  // are clamped to edram_tile_count_.
++  assert_true(start_tiles_base_relative <= (edram_tile_count_ - uint32_t(length_tiles != 0)));
++  assert_true(length_tiles <= edram_tile_count_);
+   if (length_tiles == 0) {
+     return false;
+   }
+@@ -1249,18 +1319,18 @@ bool RenderTargetCache::WouldOwnershipChangeRequireTransfers(RenderTargetKey des
+     }
+     return false;
+   };
+-  // start_tiles_base_relative may already be in the next 11 bits - wrap the
+-  // start tile index to use the same code as if that was not the case.
+-  uint32_t start_tiles =
+-      (dest.base_tiles + start_tiles_base_relative) & (xenos::kEdramTileCount - 1);
++  // start_tiles_base_relative may already be in the next 11 (12 with
++  // gpu_native_surfaces) bits - wrap the start tile index to use the same code
++  // as if that was not the case.
++  uint32_t start_tiles = (dest.base_tiles + start_tiles_base_relative) & (edram_tile_count_ - 1);
+   uint32_t end_tiles = start_tiles + length_tiles;
+-  if (would_require_transfers_in_extent(start_tiles, std::min(end_tiles, xenos::kEdramTileCount))) {
++  if (would_require_transfers_in_extent(start_tiles, std::min(end_tiles, edram_tile_count_))) {
+     return true;
+   }
+-  if (end_tiles > xenos::kEdramTileCount) {
++  if (end_tiles > edram_tile_count_) {
+     // The check extent goes to the next EDRAM addressing period.
+     if (would_require_transfers_in_extent(
+-            0, std::min(end_tiles & (xenos::kEdramTileCount - 1), start_tiles))) {
++            0, std::min(end_tiles & (edram_tile_count_ - 1), start_tiles))) {
+       return true;
+     }
+   }
+@@ -1271,10 +1341,10 @@ void RenderTargetCache::ChangeOwnership(RenderTargetKey dest, uint32_t start_til
+                                         uint32_t length_tiles,
+                                         std::vector<Transfer>* transfers_append_out,
+                                         const Transfer::Rectangle* resolve_clear_cutout) {
+-  // xenos::kEdramTileCount with length 0 is fine if both the start and the end
+-  // are clamped to xenos::kEdramTileCount.
+-  assert_true(start_tiles_base_relative <= (xenos::kEdramTileCount - uint32_t(length_tiles != 0)));
+-  assert_true(length_tiles <= xenos::kEdramTileCount);
++  // edram_tile_count_ with length 0 is fine if both the start and the end
++  // are clamped to edram_tile_count_.
++  assert_true(start_tiles_base_relative <= (edram_tile_count_ - uint32_t(length_tiles != 0)));
++  assert_true(length_tiles <= edram_tile_count_);
+   if (length_tiles == 0) {
+     return;
+   }
+@@ -1327,9 +1397,9 @@ void RenderTargetCache::ChangeOwnership(RenderTargetKey dest, uint32_t start_til
+         if (!transfer_source.IsEmpty() && transfer_source != dest) {
+           uint32_t transfer_end_tiles = std::min(it->second.end_tiles, extent_end);
+           if (!resolve_clear_cutout ||
+-              Transfer::GetRangeRectangles(it->first, transfer_end_tiles, dest.base_tiles,
+-                                           dest_pitch_tiles, dest.msaa_samples, dest_is_64bpp,
+-                                           nullptr, resolve_clear_cutout)) {
++              Transfer::GetRangeRectangles(it->first, transfer_end_tiles, edram_tile_count_,
++                                           dest.base_tiles, dest_pitch_tiles, dest.msaa_samples,
++                                           dest_is_64bpp, nullptr, resolve_clear_cutout)) {
+             RenderTargetKey transfer_host_depth_source =
+                 host_depth_encoding_different
+                     ? it->second.GetHostDepthRenderTarget(dest.GetDepthFormat())
+@@ -1403,15 +1473,15 @@ void RenderTargetCache::ChangeOwnership(RenderTargetKey dest, uint32_t start_til
+       it = it_next;
+     }
+   };
+-  // start_tiles_base_relative may already be in the next 11 bits - wrap the
+-  // start tile index to use the same code as if that was not the case.
+-  uint32_t start_tiles =
+-      (dest.base_tiles + start_tiles_base_relative) & (xenos::kEdramTileCount - 1);
++  // start_tiles_base_relative may already be in the next 11 (12 with
++  // gpu_native_surfaces) bits - wrap the start tile index to use the same code
++  // as if that was not the case.
++  uint32_t start_tiles = (dest.base_tiles + start_tiles_base_relative) & (edram_tile_count_ - 1);
+   uint32_t end_tiles = start_tiles + length_tiles;
+-  change_ownership_in_extent(start_tiles, std::min(end_tiles, xenos::kEdramTileCount));
+-  if (end_tiles > xenos::kEdramTileCount) {
++  change_ownership_in_extent(start_tiles, std::min(end_tiles, edram_tile_count_));
++  if (end_tiles > edram_tile_count_) {
+     // The ownership change extent goes to the next EDRAM addressing period.
+-    change_ownership_in_extent(0, std::min(end_tiles & (xenos::kEdramTileCount - 1), start_tiles));
++    change_ownership_in_extent(0, std::min(end_tiles & (edram_tile_count_ - 1), start_tiles));
+   }
+ }
+ 
+@@ -1431,6 +1501,38 @@ void RenderTargetCache::DropNativeSurfaceTransfers(std::vector<Transfer>& transf
+   transfers.erase(dropped_begin, transfers.end());
+ }
+ 
++void RenderTargetCache::DropNativeWideTransfers(std::vector<Transfer>& transfers,
++                                                const RenderTargetKey& dest_key) {
++  // The transfer shaders get the source tile index as the destination-relative tile index plus
++  // the difference of the bases, wrapped to xenos::kEdramTileCount (a 12-bit base difference
++  // truncated to TransferAddressConstant::source_to_dest is still the same modulo
++  // xenos::kEdramTileCount). A host depth source that is the destination itself is first stored
++  // to the xenos::kEdramTileCount-tile EDRAM buffer at the destination-relative tile index. Both
++  // are correct only if the range is within the first xenos::kEdramTileCount tiles from the base
++  // of the render target it's read from.
++  auto is_addressable = [this](const Transfer& transfer, const RenderTarget& render_target) {
++    uint32_t relative_start_tiles =
++        (transfer.start_tiles - uint32_t(render_target.key().base_tiles)) & (edram_tile_count_ - 1);
++    return relative_start_tiles + (transfer.end_tiles - transfer.start_tiles) <=
++           xenos::kEdramTileCount;
++  };
++  auto dropped_begin =
++      std::remove_if(transfers.begin(), transfers.end(), [&](const Transfer& transfer) {
++        if (is_addressable(transfer, *transfer.source) &&
++            (!transfer.host_depth_source ||
++             is_addressable(transfer, *transfer.host_depth_source))) {
++          return false;
++        }
++        ++native_wide_transfer_drops_;
++        native_wide_transfer_drop_tiles_ += transfer.end_tiles - transfer.start_tiles;
++        REXGPU_DEBUG("NATIVESURF dropped a transfer of tiles [{}, {}) into {} from {}",
++                     transfer.start_tiles, transfer.end_tiles, dest_key.GetDebugName(),
++                     transfer.source->key().GetDebugName());
++        return true;
++      });
++  transfers.erase(dropped_begin, transfers.end());
++}
++
+ void RenderTargetCache::ReportNativeSurfaceDrops() {
+   const auto now = std::chrono::steady_clock::now();
+   const double seconds =
+@@ -1442,6 +1544,16 @@ void RenderTargetCache::ReportNativeSurfaceDrops() {
+   if (!native_surface_drops_.empty()) {
+     REXGPU_INFO("NATIVESURF dropped {}", native_surface_drops_.ReportAndReset(seconds));
+   }
++  if (native_wide_transfer_drops_ || native_wide_resolve_span_clamps_) {
++    REXGPU_INFO(
++        "NATIVESURF 12-bit bases: dropped {} transfers ({} tiles) past the first {} tiles of a "
++        "render target, clamped {} resolve dump spans to {} tiles",
++        native_wide_transfer_drops_, native_wide_transfer_drop_tiles_, xenos::kEdramTileCount,
++        native_wide_resolve_span_clamps_, xenos::kEdramTileCount);
++    native_wide_transfer_drops_ = 0;
++    native_wide_transfer_drop_tiles_ = 0;
++    native_wide_resolve_span_clamps_ = 0;
++  }
+ }
+ 
+ }  // namespace rex::graphics
+diff --git a/src/graphics/util/draw.cpp b/src/graphics/util/draw.cpp
+index 305380e..22e7c7a 100644
+--- a/src/graphics/util/draw.cpp
++++ b/src/graphics/util/draw.cpp
+@@ -1045,8 +1045,15 @@ bool GetResolveInfo(const RegisterFile& regs, const memory::Memory& memory,
+     depth_edram_info.format_is_64bpp = 0;
+     depth_edram_info.fill_half_pixel_offset = uint32_t(fill_half_pixel_offset);
+     info_out.depth_original_base = rb_depth_info.depth_base;
++    info_out.depth_original_base_virtual =
++        rb_depth_info.depth_base | (rb_depth_info.depth_base_bit_11 << xenos::kEdramBaseTilesBits);
++    info_out.depth_edram_base_tiles_virtual =
++        (info_out.depth_original_base_virtual + edram_base_offset_tiles) &
++        (xenos::kEdramVirtualTileCount - 1);
+   } else {
+     info_out.depth_original_base = 0;
++    info_out.depth_original_base_virtual = 0;
++    info_out.depth_edram_base_tiles_virtual = 0;
+   }
+   info_out.depth_edram_info = depth_edram_info;
+   ResolveEdramInfo color_edram_info;
+@@ -1076,8 +1083,15 @@ bool GetResolveInfo(const RegisterFile& regs, const memory::Memory& memory,
+       exp_bias = std::min(exp_bias + int32_t(5), int32_t(31));
+     }
+     info_out.color_original_base = color_info.color_base;
++    info_out.color_original_base_virtual =
++        color_info.color_base | (color_info.color_base_bit_11 << xenos::kEdramBaseTilesBits);
++    info_out.color_edram_base_tiles_virtual =
++        (info_out.color_original_base_virtual + (edram_base_offset_tiles << is_64bpp)) &
++        (xenos::kEdramVirtualTileCount - 1);
+   } else {
+     info_out.color_original_base = 0;
++    info_out.color_original_base_virtual = 0;
++    info_out.color_edram_base_tiles_virtual = 0;
+   }
+   info_out.color_edram_info = color_edram_info;
+ 
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index aff9779..584cf14 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1189,7 +1189,8 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
+           uint32_t dump_row_length_used;
+           uint32_t dump_rows;
+           uint32_t dump_pitch;
+-          resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used, dump_rows, dump_pitch);
++          GetResolveCopyEdramTileSpan(resolve_info, dump_base, dump_row_length_used, dump_rows,
++                                      dump_pitch);
+           if (!DumpRenderTargets(dump_base, dump_row_length_used, dump_rows, dump_pitch)) {
+             REXGPU_ERROR("VulkanRenderTargetCache: Failed to dump host render targets for resolve");
+             return false;
+@@ -4722,8 +4723,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+       }
+       Transfer::Rectangle transfer_rectangles[Transfer::kMaxRectanglesWithCutout];
+       uint32_t transfer_rectangle_count = transfer.GetRectangles(
+-          dest_rt_key.base_tiles, dest_rt_key.pitch_tiles_at_32bpp, dest_rt_key.msaa_samples, false,
+-          transfer_rectangles, resolve_clear_rectangle);
++          edram_tile_count(), dest_rt_key.base_tiles, dest_rt_key.pitch_tiles_at_32bpp,
++          dest_rt_key.msaa_samples, false, transfer_rectangles, resolve_clear_rectangle);
+       assert_not_zero(transfer_rectangle_count);
+       HostDepthStoreRectangleConstant host_depth_store_rectangle_constant;
+       for (uint32_t j = 0; j < transfer_rectangle_count; ++j) {
+@@ -4981,8 +4982,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+                                                ? TransferMode::kDepthToStencilBit
+                                                : TransferMode::kColorToStencilBit;
+             stencil_clear_rectangle_count += transfer.GetRectangles(
+-                dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-                nullptr, resolve_clear_rectangle);
++                edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++                dest_rt_key.msaa_samples, dest_is_64bpp, nullptr, resolve_clear_rectangle);
+           } else {
+             if (dest_rt_key.is_depth) {
+               if (host_depth_source_vulkan_rt) {
+@@ -5066,9 +5067,10 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+         stencil_clear_attachment->clearValue.depthStencil.stencil = 0;
+         for (const Transfer& transfer : current_transfers) {
+           Transfer::Rectangle transfer_stencil_clear_rectangles[Transfer::kMaxRectanglesWithCutout];
+-          uint32_t transfer_stencil_clear_rectangle_count = transfer.GetRectangles(
+-              dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              transfer_stencil_clear_rectangles, resolve_clear_rectangle);
++          uint32_t transfer_stencil_clear_rectangle_count =
++              transfer.GetRectangles(edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++                                     dest_rt_key.msaa_samples, dest_is_64bpp,
++                                     transfer_stencil_clear_rectangles, resolve_clear_rectangle);
+           for (uint32_t j = 0; j < transfer_stencil_clear_rectangle_count; ++j) {
+             const Transfer::Rectangle& stencil_clear_rectangle =
+                 transfer_stencil_clear_rectangles[j];
+@@ -5115,16 +5117,16 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+         // Will be merging transfers from the same source into one mesh.
+         auto it_merged_first = it, it_merged_last = it;
+         uint32_t transfer_rectangle_count = transfer_invocation_first.transfer.GetRectangles(
+-            dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-            nullptr, resolve_clear_rectangle);
++            edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples,
++            dest_is_64bpp, nullptr, resolve_clear_rectangle);
+         for (auto it_merge = std::next(it_merged_first);
+              it_merge != current_transfer_invocations_.cend(); ++it_merge) {
+           if (!transfer_invocation_first.CanBeMergedIntoOneDraw(*it_merge)) {
+             break;
+           }
+           transfer_rectangle_count += it_merge->transfer.GetRectangles(
+-              dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              nullptr, resolve_clear_rectangle);
++              edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++              dest_rt_key.msaa_samples, dest_is_64bpp, nullptr, resolve_clear_rectangle);
+           it_merged_last = it_merge;
+         }
+         assert_not_zero(transfer_rectangle_count);
+@@ -5162,8 +5164,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+         for (auto it_merged = it_merged_first; it_merged <= it_merged_last; ++it_merged) {
+           Transfer::Rectangle transfer_invocation_rectangles[Transfer::kMaxRectanglesWithCutout];
+           uint32_t transfer_invocation_rectangle_count = it_merged->transfer.GetRectangles(
+-              dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              transfer_invocation_rectangles, resolve_clear_rectangle);
++              edram_tile_count(), dest_rt_key.base_tiles, dest_pitch_tiles,
++              dest_rt_key.msaa_samples, dest_is_64bpp, transfer_invocation_rectangles,
++              resolve_clear_rectangle);
+           assert_not_zero(transfer_invocation_rectangle_count);
+           for (uint32_t j = 0; j < transfer_invocation_rectangle_count; ++j) {
+             const Transfer::Rectangle& transfer_rectangle = transfer_invocation_rectangles[j];
+@@ -5650,7 +5653,7 @@ VkPipeline VulkanRenderTargetCache::GetDumpPipeline(DumpPipelineKey key) {
+       builder.createAccessChain(spv::StorageClassPushConstant, push_constants, id_vector_temp),
+       spv::NoPrecision);
+   spv::Id const_edram_base_tiles_bits_plus_1 =
+-      builder.makeUintConstant(xenos::kEdramBaseTilesBits + 1);
++      builder.makeUintConstant(xenos::kEdramVirtualBaseTilesBits + 1);
+   spv::Id edram_tile_index_non_wrapped =
+       builder.createBinOp(spv::OpIAdd, type_uint,
+                           builder.createTriOp(spv::OpBitFieldUExtract, type_uint, offsets_constant,
+@@ -5691,7 +5694,7 @@ VkPipeline VulkanRenderTargetCache::GetDumpPipeline(DumpPipelineKey key) {
+       spv::OpISub, type_uint, edram_tile_index_non_wrapped,
+       builder.createTriOp(spv::OpBitFieldUExtract, type_uint, offsets_constant,
+                           const_edram_base_tiles_bits_plus_1,
+-                          builder.makeUintConstant(xenos::kEdramBaseTilesBits)));
++                          builder.makeUintConstant(xenos::kEdramVirtualBaseTilesBits)));
+   // Split the linear tile index in the source texture into X and Y in tiles.
+   spv::Id source_pitch_tiles =
+       builder.createTriOp(spv::OpBitFieldUExtract, type_uint, pitches_constant,
+@@ -6073,7 +6076,7 @@ bool VulkanRenderTargetCache::TryResolveCopyDirectly(const draw_util::ResolveInf
+   uint32_t dump_row_length_used;
+   uint32_t dump_rows;
+   uint32_t dump_pitch;
+-  resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used, dump_rows, dump_pitch);
++  GetResolveCopyEdramTileSpan(resolve_info, dump_base, dump_row_length_used, dump_rows, dump_pitch);
+   GetResolveCopyDispatchesToDump(dump_base, dump_row_length_used, dump_rows, dump_pitch,
+                                  dump_rectangles_, direct_resolve_dispatches_);
+   if (direct_resolve_dispatches_.empty()) {
