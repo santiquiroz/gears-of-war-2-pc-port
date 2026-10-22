@@ -252,10 +252,12 @@ class Gow2App : public rex::ReXApp {
       REXLOG_INFO("gow2 anisotropic_override -> {} ({}, set anisotropic_override in gow2.toml to change)",
                   gpu.integrated ? 2 : 4, gpu.integrated ? "integrated GPU" : "dedicated GPU");
     }
-    // Re-uploading every CPU-written page each frame costs ~180 MB/s of guest uploads; on an
-    // integrated GPU that bandwidth is shared with the CPU (measured: -98 % uploads, +4 % fps).
-    if (gpu.index >= 0 && gpu.integrated && SetIfUnset("clear_memory_page_state", "false")) {
-      REXLOG_INFO("gow2 clear_memory_page_state -> false (integrated GPU, set it in gow2.toml to change)");
+    // Re-uploading every CPU-written page at each frame end (the SDK's desktop default) is a copy and
+    // two buffer barriers per draw that needs one: ~400 a frame in the chapter 2 hospital, half the
+    // frame on an RX 7800 XT (122 -> 240 fps unlocked). The memory watches still catch CPU writes;
+    // Android and Xenia have it off.
+    if (gpu.index >= 0 && SetIfUnset("clear_memory_page_state", "false")) {
+      REXLOG_INFO("gow2 clear_memory_page_state -> false (set it in gow2.toml to change)");
     }
   }
 

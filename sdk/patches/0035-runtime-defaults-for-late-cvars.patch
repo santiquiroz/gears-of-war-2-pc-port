@@ -1,0 +1,120 @@
+diff --git a/src/core/cvar.cpp b/src/core/cvar.cpp
+index 228728d..4e2ec3d 100644
+--- a/src/core/cvar.cpp
++++ b/src/core/cvar.cpp
+@@ -56,10 +56,14 @@ std::unordered_map<std::string, size_t>& GetRegistryIndex() {
+ }
+ 
+ // Values that arrived before their cvar was registered; runtime-loaded
+-// modules register cvars long after Init/LoadConfig.
++// modules register cvars long after Init/LoadConfig. A runtime value set
++// before registration (an app choosing a default for a GPU plugin's cvar
++// before the plugin loads) becomes the default: the config, environment and
++// command line still override it.
+ struct PendingValues {
+   std::optional<std::string> cmdline;
+   std::optional<std::string> config;
++  std::optional<std::string> runtime;
+ };
+ 
+ std::unordered_map<std::string, PendingValues>& GetPendingValuesStorage() {
+@@ -241,6 +245,9 @@ std::optional<size_t> RegisterFlag(FlagEntry entry) {
+     FlagEntry& stored = storage[pos];
+     auto& pending = GetPendingValuesStorage();
+     auto pending_it = pending.find(stored.name);
++    if (pending_it != pending.end() && pending_it->second.runtime) {
++      ApplyFromSource(stored, *pending_it->second.runtime, Source::kDefault);
++    }
+     if (pending_it != pending.end() && pending_it->second.config) {
+       ApplyFromSource(stored, *pending_it->second.config, Source::kConfig);
+     }
+@@ -299,6 +306,11 @@ ApplyResult SetFlagFromSource(std::string_view name, std::string_view value, Sou
+   std::lock_guard lock(GetRegistryMutex());
+   auto it = GetRegistryIndex().find(std::string(name));
+   if (it == GetRegistryIndex().end()) {
++    if (source == Source::kRuntime && g_init_done) {
++      GetPendingValuesStorage()[std::string(name)].runtime = std::string(value);
++      REXLOG_DEBUG("cvar: '{}' deferred until its module registers it", name);
++      return ApplyResult::kApplied;
++    }
+     return ApplyResult::kRejected;
+   }
+ 
+@@ -384,6 +396,18 @@ Source GetFlagSource(std::string_view name) {
+   std::lock_guard lock(GetRegistryMutex());
+   auto it = GetRegistryIndex().find(std::string(name));
+   if (it == GetRegistryIndex().end()) {
++    // Not registered yet: report where the value it will get at registration comes from.
++    auto& pending = GetPendingValuesStorage();
++    auto pending_it = pending.find(std::string(name));
++    if (pending_it != pending.end() && pending_it->second.cmdline) {
++      return Source::kCommandLine;
++    }
++    if (rex::platform::env::get(FlagNameToEnvVar(name)).has_value()) {
++      return Source::kEnvironment;
++    }
++    if (pending_it != pending.end() && pending_it->second.config) {
++      return Source::kConfig;
++    }
+     return Source::kDefault;
+   }
+   return GetRegistryStorage()[it->second].source;
+diff --git a/tests/unit/core/cvar_test.cpp b/tests/unit/core/cvar_test.cpp
+index 03a12cb..c4e8c7b 100644
+--- a/tests/unit/core/cvar_test.cpp
++++ b/tests/unit/core/cvar_test.cpp
+@@ -369,6 +369,54 @@ TEST_CASE("cvar precedence holds for flags registered after startup", "[cvar]")
+   rex::cvar::testing::ResetAllForTesting();
+ }
+ 
++TEST_CASE("cvar runtime value set before registration becomes the default", "[cvar]") {
++  rex::cvar::testing::ResetAllForTesting();
++
++  auto config_path = std::filesystem::temp_directory_path() / "test_late_runtime.toml";
++  {
++    std::ofstream file(config_path);
++    file << "test_late_config_wins = \"from config\"\n";
++  }
++  rex::cvar::LoadConfig(config_path);
++  char argv0[] = "cvar_test";
++  char* argv[] = {argv0};
++  rex::cvar::Init(1, argv);
++
++  CHECK(rex::cvar::GetFlagSource("test_late_config_wins") == rex::cvar::Source::kConfig);
++  CHECK(rex::cvar::GetFlagSource("test_late_runtime") == rex::cvar::Source::kDefault);
++  CHECK(rex::cvar::SetFlagByName("test_late_runtime", "from app"));
++  CHECK(rex::cvar::SetFlagByName("test_late_config_wins", "from app"));
++
++  auto make_flag = [](const char* name, std::string& value) {
++    return rex::cvar::FlagEntry{
++        .name = name,
++        .type = rex::cvar::FlagType::String,
++        .category = "Test",
++        .description = "Late registered flag",
++        .setter =
++            [&value](std::string_view new_value) {
++              value = new_value;
++              return true;
++            },
++        .getter = [&value]() { return value; },
++        .default_value = "default",
++    };
++  };
++  std::string runtime_value = "default";
++  std::string config_value = "default";
++  {
++    rex::cvar::FlagRegistrar runtime_flag(make_flag("test_late_runtime", runtime_value));
++    rex::cvar::FlagRegistrar config_flag(make_flag("test_late_config_wins", config_value));
++
++    CHECK(runtime_value == "from app");
++    CHECK(rex::cvar::GetFlagSource("test_late_runtime") == rex::cvar::Source::kDefault);
++    CHECK(config_value == "from config");
++  }
++
++  std::filesystem::remove(config_path);
++  rex::cvar::testing::ResetAllForTesting();
++}
++
+ TEST_CASE("cvar range validation", "[cvar]") {
+   SECTION("Value within range succeeds") {
+     REQUIRE(rex::cvar::SetFlagByName("test_ranged_flag", "5"));
