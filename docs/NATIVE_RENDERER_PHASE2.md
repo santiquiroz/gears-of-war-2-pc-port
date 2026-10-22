@@ -57,3 +57,13 @@ dropped kinds found the one the light shafts read: `k_16_16` colour into depth a
   `resolve_resolution_scale_fill_half_pixel_offset` fills the edge; `k_16_16`; resolves from two render
   targets).
 - Vulkan (phase 4), then the parity runs of phase 3.
+
+## Phase 5 sketch: hooks for mods (decided, not built)
+
+Native resolves give the frame natural pass boundaries with host textures behind them: in the hospital,
+the HDR scene colour (`k_2_10_10_10_FLOAT` render target resolved with a -3 exponent bias into a
+`k_16_16_16_16_FLOAT` texture), the 16_16 float buffers of the post-processing chain, and the final
+8888 front buffer. The hook is a small SDK interface called after each native resolve with the
+destination address, format, size and the host texture; a registered effect may run its own pass on
+that texture before the game samples it. A first example effect runs on the HDR scene texture (so the
+HUD, drawn later, is untouched). Everything stays behind a switch and off by default.
