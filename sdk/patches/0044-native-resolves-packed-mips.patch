@@ -1,0 +1,42 @@
+diff --git a/include/rex/graphics/pipeline/texture/cache.h b/include/rex/graphics/pipeline/texture/cache.h
+index ba6f9c8..2700eb6 100644
+--- a/include/rex/graphics/pipeline/texture/cache.h
++++ b/include/rex/graphics/pipeline/texture/cache.h
+@@ -325,6 +325,11 @@ class TextureCache {
+   // Visits the textures with the base level at the 4 KB physical page. The visitor must not create
+   // or destroy textures.
+   void ForEachTextureAtBasePage(uint32_t base_page, const std::function<void(Texture&)>& visit);
++  // A single-level texture with packed mips keeps its base level outside the mip tail unless it is
++  // 16 texels or smaller on a side.
++  static bool IsBaseInPackedMipTail(const TextureKey& key) {
++    return key.packed_mips && texture_util::GetPackedMipLevel(key.GetWidth(), key.GetHeight()) == 0;
++  }
+ 
+   // gpu_native_resolves: for a texture whose base level the host has just written with the data
+   // the guest memory now contains, marks it up to date and watches its memory again.
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index 9f01f02..2000f46 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -1562,7 +1562,7 @@ void D3D12TextureCache::WriteNativeResolveToTextures(const NativeResolveWrite& w
+   ForEachTextureAtBasePage(write.base_page, [&](Texture& texture) {
+     const TextureKey& key = texture.key();
+     if (!key.tiled || key.dimension != xenos::DataDimension::k2DOrStacked ||
+-        key.depth_or_array_size_minus_1 != 0 || key.mip_max_level != 0 || key.packed_mips ||
++        key.depth_or_array_size_minus_1 != 0 || key.mip_max_level != 0 || IsBaseInPackedMipTail(key) ||
+         key.signed_separate || key.format != write.format || key.pitch != write.pitch ||
+         key.endianness != write.endianness || bool(key.scaled_resolve) != scaled ||
+         texture.GetGuestMipsSize() != 0) {
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index 60786f9..dc5c541 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -2484,7 +2484,7 @@ void VulkanTextureCache::WriteNativeResolveToTextures(const NativeResolveWrite&
+   ForEachTextureAtBasePage(write.base_page, [&](Texture& texture) {
+     const TextureKey& key = texture.key();
+     if (!key.tiled || key.dimension != xenos::DataDimension::k2DOrStacked ||
+-        key.depth_or_array_size_minus_1 != 0 || key.mip_max_level != 0 || key.packed_mips ||
++        key.depth_or_array_size_minus_1 != 0 || key.mip_max_level != 0 || IsBaseInPackedMipTail(key) ||
+         key.signed_separate || key.format != write.format || key.pitch != write.pitch ||
+         key.endianness != write.endianness || bool(key.scaled_resolve) != scaled ||
+         texture.GetGuestMipsSize() != 0) {

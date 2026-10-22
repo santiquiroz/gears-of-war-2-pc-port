@@ -60,6 +60,19 @@ the native write handed the game half the depth. 0043 doubles it (`write.scale =
 shader's depth mode now applies the scale) on D3D12 and Vulkan. Chapter 4 then matches ROV, with smooth
 motion blur. Chapters 1 and 8 matched before the fix.
 
+## On by default on AMD (game cvar `gow2_native_renderer`)
+
+`gow2_native_renderer` (`auto` by default, `on`, `off`) sets `gpu_native_surfaces` and
+`gpu_native_resolves` unless the player set them. `auto` turns the native renderer on for AMD GPUs on
+Windows when the player has not chosen `render_target_path_d3d12`; with it on, automatic widescreen
+keeps the host render targets instead of switching AMD to ROV. NVIDIA and Intel stay on their current
+paths until someone measures them. Checked 2026-10-22 on the RX 7800 XT at the shipped
+`resolution_scale` 2: the log says `gow2 native renderer on`, the hospital matches ROV, and native
+resolves are written.
+
+Soaks with the native renderer (10 minutes of scripted movement, aiming and firing, 1600x900,
+`resolution_scale` 1, unlocked): chapter 4 mean 186 fps, chapter 2 mean 211 fps, no faults or GPU errors.
+
 ## Next
 
 - More resolve pairs (the scaled resolves, which fall back while
