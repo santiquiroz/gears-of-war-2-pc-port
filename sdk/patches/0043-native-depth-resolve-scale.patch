@@ -1,0 +1,672 @@
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 765d2c3..bfe3837 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -6124,6 +6124,8 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+     } else if (source_format == xenos::DepthRenderTargetFormat::kD24FS8) {
+       pair = NativeResolvePair::kD24FS8;
+       texture_format = xenos::TextureFormat::k_24_8_FLOAT;
++      // The host keeps guest float24 depth [0, 2) as [0, 1).
++      write.scale = 2.0f;
+     } else {
+       fallback(NativeResolveFallback::kDepth);
+       return;
+diff --git a/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h b/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h
+index c5d93c1..ad9eda4 100644
+--- a/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h
++++ b/src/graphics/shaders/bytecode/d3d12_5_1/native_resolve_cs.h
+@@ -60,7 +60,7 @@ ieq r1.x, CB0[0][0].x, l(1)
+ if_z r1.x
+   ieq r1.x, CB0[0][0].x, l(2)
+   if_nz r1.x
+-    mov r0.x, r0.z
++    mul r0.x, r0.z, CB0[0][0].y
+     mov r0.yzw, l(0,0,0,0)
+   else 
+     mul r0.xyzw, r0.zyxw, CB0[0][0].yyyy
+@@ -74,15 +74,15 @@ ret
+ 
+ const BYTE native_resolve_cs[] =
+ {
+-     68,  88,  66,  67,  17, 121, 
+-     14, 146, 219,  73, 166,  27, 
+-     16, 174,  89, 249, 218, 139, 
+-      6, 232,   1,   0,   0,   0, 
+-    216,   6,   0,   0,   5,   0, 
++     68,  88,  66,  67, 225,  91, 
++    154,  14,  25,  67,  26, 142, 
++    119, 164, 243,  98, 178, 133, 
++     79, 100,   1,   0,   0,   0, 
++    232,   6,   0,   0,   5,   0, 
+       0,   0,  52,   0,   0,   0, 
+     184,   3,   0,   0, 200,   3, 
+       0,   0, 216,   3,   0,   0, 
+-     60,   6,   0,   0,  82,  68, 
++     76,   6,   0,   0,  82,  68, 
+      69,  70, 124,   3,   0,   0, 
+       1,   0,   0,   0,   0,   1, 
+       0,   0,   3,   0,   0,   0, 
+@@ -238,9 +238,9 @@ const BYTE native_resolve_cs[] =
+       0,   0,  79,  83,  71,  78, 
+       8,   0,   0,   0,   0,   0, 
+       0,   0,   8,   0,   0,   0, 
+-     83,  72,  69,  88,  92,   2, 
++     83,  72,  69,  88, 108,   2, 
+       0,   0,  81,   0,   5,   0, 
+-    151,   0,   0,   0, 106,   8, 
++    155,   0,   0,   0, 106,   8, 
+       0,   1,  89,   0,   0,   7, 
+      70, 142,  48,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+@@ -312,49 +312,52 @@ const BYTE native_resolve_cs[] =
+       0,   0,   2,   0,   0,   0, 
+      31,   0,   4,   3,  10,   0, 
+      16,   0,   1,   0,   0,   0, 
+-     54,   0,   0,   5,  18,   0, 
++     56,   0,   0,   9,  18,   0, 
+      16,   0,   0,   0,   0,   0, 
+      42,   0,  16,   0,   0,   0, 
+-      0,   0,  54,   0,   0,   8, 
+-    226,   0,  16,   0,   0,   0, 
+-      0,   0,   2,  64,   0,   0, 
++      0,   0,  26, 128,  48,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+-      0,   0,   0,   0,  18,   0, 
+-      0,   1,  56,   0,   0,   9, 
+-    242,   0,  16,   0,   0,   0, 
+-      0,   0, 102,  12,  16,   0, 
+-      0,   0,   0,   0,  86, 133, 
+-     48,   0,   0,   0,   0,   0, 
++     54,   0,   0,   8, 226,   0, 
++     16,   0,   0,   0,   0,   0, 
++      2,  64,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+-      0,   0,  21,   0,   0,   1, 
+-     21,   0,   0,   1,  30,   0, 
+-      0,   8, 242,   0,  16,   0, 
+-      1,   0,   0,   0,  70,   5, 
+-      2,   0,  70, 133,  48,   0, 
+       0,   0,   0,   0,   0,   0, 
+-      0,   0,   1,   0,   0,   0, 
+-    164,   0,   0,   8, 242, 224, 
+-     33,   0,   0,   0,   0,   0, 
+-      0,   0,   0,   0,  70,  14, 
+-     16,   0,   1,   0,   0,   0, 
+-     70,  14,  16,   0,   0,   0, 
+-      0,   0,  62,   0,   0,   1, 
+-     83,  84,  65,  84, 148,   0, 
+-      0,   0,  22,   0,   0,   0, 
+-      2,   0,   0,   0,   0,   0, 
+-      0,   0,   1,   0,   0,   0, 
+-      1,   0,   0,   0,   4,   0, 
+-      0,   0,   3,   0,   0,   0, 
++      0,   0,  18,   0,   0,   1, 
++     56,   0,   0,   9, 242,   0, 
++     16,   0,   0,   0,   0,   0, 
++    102,  12,  16,   0,   0,   0, 
++      0,   0,  86, 133,  48,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     21,   0,   0,   1,  21,   0, 
++      0,   1,  30,   0,   0,   8, 
++    242,   0,  16,   0,   1,   0, 
++      0,   0,  70,   5,   2,   0, 
++     70, 133,  48,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      1,   0,   0,   0, 164,   0, 
++      0,   8, 242, 224,  33,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,  70,  14,  16,   0, 
++      1,   0,   0,   0,  70,  14, 
++     16,   0,   0,   0,   0,   0, 
++     62,   0,   0,   1,  83,  84, 
++     65,  84, 148,   0,   0,   0, 
++     22,   0,   0,   0,   2,   0, 
++      0,   0,   0,   0,   0,   0, 
++      1,   0,   0,   0,   2,   0, 
++      0,   0,   4,   0,   0,   0, 
+       3,   0,   0,   0,   3,   0, 
++      0,   0,   3,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+-      0,   0,   1,   0,   0,   0, 
++      1,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   2,   0, 
+       0,   0,   0,   0,   0,   0, 
+-      3,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+@@ -365,5 +368,5 @@ const BYTE native_resolve_cs[] =
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+       0,   0,   0,   0,   0,   0, 
+-      0,   0,   1,   0,   0,   0
++      1,   0,   0,   0
+ };
+diff --git a/src/graphics/shaders/native_resolve.cs.glsl b/src/graphics/shaders/native_resolve.cs.glsl
+index 106c967..ef095b6 100644
+--- a/src/graphics/shaders/native_resolve.cs.glsl
++++ b/src/graphics/shaders/native_resolve.cs.glsl
+@@ -18,7 +18,7 @@
+ // Modes:
+ // 0 - out = in * xe_native_resolve_scale (exponent bias of float formats).
+ // 1 - out = in.bgra (red and blue swapped).
+-// 2 - out.r = depth (the source depth view returns the depth in the red
++// 2 - out.r = depth * xe_native_resolve_scale (the source depth view returns the depth in the red
+ //     component).
+ //
+ // xe_native_resolve_fill is the number of host pixel columns and rows at the
+@@ -64,7 +64,7 @@ void main() {
+   if (xe_native_resolve_mode == 1u) {
+     value = value.bgra;
+   } else if (xe_native_resolve_mode == 2u) {
+-    value = vec4(value.r, 0.0, 0.0, 0.0);
++    value = vec4(value.r * xe_native_resolve_scale, 0.0, 0.0, 0.0);
+   } else {
+     value *= xe_native_resolve_scale;
+   }
+diff --git a/src/graphics/shaders/native_resolve.cs.hlsl b/src/graphics/shaders/native_resolve.cs.hlsl
+index 707b1e5..297693e 100644
+--- a/src/graphics/shaders/native_resolve.cs.hlsl
++++ b/src/graphics/shaders/native_resolve.cs.hlsl
+@@ -15,7 +15,7 @@
+ // Modes:
+ // 0 - out = in * xe_native_resolve_scale (exponent bias of float formats).
+ // 1 - out = in.bgra (red and blue swapped).
+-// 2 - out.r = depth (the source SRV returns the depth in the red component).
++// 2 - out.r = depth * xe_native_resolve_scale (the source SRV returns the depth in the red component).
+ //
+ // xe_native_resolve_fill is the number of host pixel columns and rows at the
+ // left and the top of the rectangle that are taken from the first surely
+@@ -47,7 +47,7 @@ void main(uint3 xe_thread_id : SV_DispatchThreadID) {
+   [branch] if (xe_native_resolve_mode == 1u) {
+     value = value.bgra;
+   } else if (xe_native_resolve_mode == 2u) {
+-    value = float4(value.r, 0.0, 0.0, 0.0);
++    value = float4(value.r * xe_native_resolve_scale, 0.0, 0.0, 0.0);
+   } else {
+     value *= xe_native_resolve_scale;
+   }
+diff --git a/src/graphics/shaders/vulkan_spirv/native_resolve_r32f_cs.h b/src/graphics/shaders/vulkan_spirv/native_resolve_r32f_cs.h
+index 7aaffc6..da616b7 100644
+--- a/src/graphics/shaders/vulkan_spirv/native_resolve_r32f_cs.h
++++ b/src/graphics/shaders/vulkan_spirv/native_resolve_r32f_cs.h
+@@ -3,7 +3,7 @@
+ ; SPIR-V
+ ; Version: 1.0
+ ; Generator: Google Shaderc over Glslang; 10
+-; Bound: 99
++; Bound: 102
+ ; Schema: 0
+                OpCapability Shader
+           %1 = OpExtInstImport "GLSL.std.450"
+@@ -75,12 +75,12 @@
+      %uint_2 = OpConstant %uint 2
+      %uint_0 = OpConstant %uint 0
+ %_ptr_Function_float = OpTypePointer Function %float
+-    %float_0 = OpConstant %float 0
+       %int_1 = OpConstant %int 1
+ %_ptr_PushConstant_float = OpTypePointer PushConstant %float
+-         %87 = OpTypeImage %float 2D 0 0 0 2 R32f
+-%_ptr_UniformConstant_87 = OpTypePointer UniformConstant %87
+-%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_87 UniformConstant
++    %float_0 = OpConstant %float 0
++         %90 = OpTypeImage %float 2D 0 0 0 2 R32f
++%_ptr_UniformConstant_90 = OpTypePointer UniformConstant %90
++%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_90 UniformConstant
+       %int_3 = OpConstant %int 3
+      %uint_8 = OpConstant %uint 8
+ %gl_WorkGroupSize = OpConstantComposite %v3uint %uint_8 %uint_8 %uint_1
+@@ -133,36 +133,39 @@
+          %69 = OpLoad %uint %68
+          %71 = OpIEqual %bool %69 %uint_2
+                OpSelectionMerge %73 None
+-               OpBranchConditional %71 %72 %80
++               OpBranchConditional %71 %72 %85
+          %72 = OpLabel
+          %76 = OpAccessChain %_ptr_Function_float %value %uint_0
+          %77 = OpLoad %float %76
+-         %79 = OpCompositeConstruct %v4float %77 %float_0 %float_0 %float_0
+-               OpStore %value %79
++         %80 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %81 = OpLoad %float %80
++         %82 = OpFMul %float %77 %81
++         %84 = OpCompositeConstruct %v4float %82 %float_0 %float_0 %float_0
++               OpStore %value %84
+                OpBranch %73
+-         %80 = OpLabel
+-         %83 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
+-         %84 = OpLoad %float %83
+-         %85 = OpLoad %v4float %value
+-         %86 = OpVectorTimesScalar %v4float %85 %84
+-               OpStore %value %86
++         %85 = OpLabel
++         %86 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %87 = OpLoad %float %86
++         %88 = OpLoad %v4float %value
++         %89 = OpVectorTimesScalar %v4float %88 %87
++               OpStore %value %89
+                OpBranch %73
+          %73 = OpLabel
+                OpBranch %64
+          %64 = OpLabel
+-         %90 = OpLoad %87 %xe_native_resolve_dest
+-         %92 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
+-         %93 = OpLoad %v2int %92
+-         %94 = OpLoad %v2int %pixel
+-         %95 = OpIAdd %v2int %93 %94
+-         %96 = OpLoad %v4float %value
+-               OpImageWrite %90 %95 %96
++         %93 = OpLoad %90 %xe_native_resolve_dest
++         %95 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
++         %96 = OpLoad %v2int %95
++         %97 = OpLoad %v2int %pixel
++         %98 = OpIAdd %v2int %96 %97
++         %99 = OpLoad %v4float %value
++               OpImageWrite %93 %98 %99
+                OpReturn
+                OpFunctionEnd
+ #endif
+ 
+ const uint32_t native_resolve_r32f_cs[] = {
+-    0x07230203, 0x00010000, 0x000D000A, 0x00000063, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
++    0x07230203, 0x00010000, 0x000D000A, 0x00000066, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
+     0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+     0x0006000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00060010, 0x00000004,
+     0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00030003, 0x00000002, 0x000001CC, 0x000B0004,
+@@ -182,15 +185,15 @@ const uint32_t native_resolve_r32f_cs[] = {
+     0x766C6F73, 0x69665F65, 0x00006C6C, 0x00030005, 0x00000012, 0x00000000, 0x00040005, 0x0000001F,
+     0x65786970, 0x0000006C, 0x00060005, 0x00000023, 0x72756F73, 0x705F6563, 0x6C657869, 0x00000000,
+     0x00040005, 0x0000002D, 0x756C6176, 0x00000065, 0x00090005, 0x00000030, 0x6E5F6578, 0x76697461,
+-    0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005, 0x00000059, 0x6E5F6578,
++    0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005, 0x0000005C, 0x6E5F6578,
+     0x76697461, 0x65725F65, 0x766C6F73, 0x65645F65, 0x00007473, 0x00040047, 0x00000009, 0x0000000B,
+     0x0000001C, 0x00050048, 0x00000010, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000010,
+     0x00000001, 0x00000023, 0x00000004, 0x00050048, 0x00000010, 0x00000002, 0x00000023, 0x00000008,
+     0x00050048, 0x00000010, 0x00000003, 0x00000023, 0x00000010, 0x00050048, 0x00000010, 0x00000004,
+     0x00000023, 0x00000018, 0x00050048, 0x00000010, 0x00000005, 0x00000023, 0x00000020, 0x00030047,
+     0x00000010, 0x00000002, 0x00040047, 0x00000030, 0x00000022, 0x00000000, 0x00040047, 0x00000030,
+-    0x00000021, 0x00000000, 0x00040047, 0x00000059, 0x00000022, 0x00000000, 0x00040047, 0x00000059,
+-    0x00000021, 0x00000001, 0x00030047, 0x00000059, 0x00000019, 0x00040047, 0x00000062, 0x0000000B,
++    0x00000021, 0x00000000, 0x00040047, 0x0000005C, 0x00000022, 0x00000000, 0x00040047, 0x0000005C,
++    0x00000021, 0x00000001, 0x00030047, 0x0000005C, 0x00000019, 0x00040047, 0x00000065, 0x0000000B,
+     0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+     0x00000020, 0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00040020, 0x00000008,
+     0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000001, 0x00040017, 0x0000000A,
+@@ -207,12 +210,12 @@ const uint32_t native_resolve_r32f_cs[] = {
+     0x00040020, 0x00000033, 0x00000009, 0x0000000F, 0x0004002B, 0x0000000E, 0x00000038, 0x00000000,
+     0x00040020, 0x0000003A, 0x00000009, 0x00000006, 0x0004002B, 0x00000006, 0x0000003D, 0x00000001,
+     0x0004002B, 0x00000006, 0x00000046, 0x00000002, 0x0004002B, 0x00000006, 0x0000004A, 0x00000000,
+-    0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000D, 0x0000004E, 0x00000000,
+-    0x0004002B, 0x0000000E, 0x00000051, 0x00000001, 0x00040020, 0x00000052, 0x00000009, 0x0000000D,
+-    0x00090019, 0x00000057, 0x0000000D, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
+-    0x00000003, 0x00040020, 0x00000058, 0x00000000, 0x00000057, 0x0004003B, 0x00000058, 0x00000059,
+-    0x00000000, 0x0004002B, 0x0000000E, 0x0000005B, 0x00000003, 0x0004002B, 0x00000006, 0x00000061,
+-    0x00000008, 0x0006002C, 0x00000007, 0x00000062, 0x00000061, 0x00000061, 0x0000003D, 0x00050036,
++    0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000E, 0x0000004E, 0x00000001,
++    0x00040020, 0x0000004F, 0x00000009, 0x0000000D, 0x0004002B, 0x0000000D, 0x00000053, 0x00000000,
++    0x00090019, 0x0000005A, 0x0000000D, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
++    0x00000003, 0x00040020, 0x0000005B, 0x00000000, 0x0000005A, 0x0004003B, 0x0000005B, 0x0000005C,
++    0x00000000, 0x0004002B, 0x0000000E, 0x0000005E, 0x00000003, 0x0004002B, 0x00000006, 0x00000064,
++    0x00000008, 0x0006002C, 0x00000007, 0x00000065, 0x00000064, 0x00000064, 0x0000003D, 0x00050036,
+     0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003B, 0x0000001E,
+     0x0000001F, 0x00000007, 0x0004003B, 0x0000001E, 0x00000023, 0x00000007, 0x0004003B, 0x0000002C,
+     0x0000002D, 0x00000007, 0x0004003D, 0x00000007, 0x0000000B, 0x00000009, 0x0007004F, 0x0000000A,
+@@ -238,16 +241,18 @@ const uint32_t native_resolve_r32f_cs[] = {
+     0x00000001, 0x00000000, 0x00000003, 0x0003003E, 0x0000002D, 0x00000042, 0x000200F9, 0x00000040,
+     0x000200F8, 0x00000043, 0x00050041, 0x0000003A, 0x00000044, 0x00000012, 0x00000038, 0x0004003D,
+     0x00000006, 0x00000045, 0x00000044, 0x000500AA, 0x00000017, 0x00000047, 0x00000045, 0x00000046,
+-    0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048, 0x00000050, 0x000200F8,
++    0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048, 0x00000055, 0x000200F8,
+     0x00000048, 0x00050041, 0x0000004B, 0x0000004C, 0x0000002D, 0x0000004A, 0x0004003D, 0x0000000D,
+-    0x0000004D, 0x0000004C, 0x00070050, 0x0000002B, 0x0000004F, 0x0000004D, 0x0000004E, 0x0000004E,
+-    0x0000004E, 0x0003003E, 0x0000002D, 0x0000004F, 0x000200F9, 0x00000049, 0x000200F8, 0x00000050,
+-    0x00050041, 0x00000052, 0x00000053, 0x00000012, 0x00000051, 0x0004003D, 0x0000000D, 0x00000054,
+-    0x00000053, 0x0004003D, 0x0000002B, 0x00000055, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000056,
+-    0x00000055, 0x00000054, 0x0003003E, 0x0000002D, 0x00000056, 0x000200F9, 0x00000049, 0x000200F8,
+-    0x00000049, 0x000200F9, 0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x00000057, 0x0000005A,
+-    0x00000059, 0x00050041, 0x00000033, 0x0000005C, 0x00000012, 0x0000005B, 0x0004003D, 0x0000000F,
+-    0x0000005D, 0x0000005C, 0x0004003D, 0x0000000F, 0x0000005E, 0x0000001F, 0x00050080, 0x0000000F,
+-    0x0000005F, 0x0000005D, 0x0000005E, 0x0004003D, 0x0000002B, 0x00000060, 0x0000002D, 0x00040063,
+-    0x0000005A, 0x0000005F, 0x00000060, 0x000100FD, 0x00010038,
++    0x0000004D, 0x0000004C, 0x00050041, 0x0000004F, 0x00000050, 0x00000012, 0x0000004E, 0x0004003D,
++    0x0000000D, 0x00000051, 0x00000050, 0x00050085, 0x0000000D, 0x00000052, 0x0000004D, 0x00000051,
++    0x00070050, 0x0000002B, 0x00000054, 0x00000052, 0x00000053, 0x00000053, 0x00000053, 0x0003003E,
++    0x0000002D, 0x00000054, 0x000200F9, 0x00000049, 0x000200F8, 0x00000055, 0x00050041, 0x0000004F,
++    0x00000056, 0x00000012, 0x0000004E, 0x0004003D, 0x0000000D, 0x00000057, 0x00000056, 0x0004003D,
++    0x0000002B, 0x00000058, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000059, 0x00000058, 0x00000057,
++    0x0003003E, 0x0000002D, 0x00000059, 0x000200F9, 0x00000049, 0x000200F8, 0x00000049, 0x000200F9,
++    0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x0000005A, 0x0000005D, 0x0000005C, 0x00050041,
++    0x00000033, 0x0000005F, 0x00000012, 0x0000005E, 0x0004003D, 0x0000000F, 0x00000060, 0x0000005F,
++    0x0004003D, 0x0000000F, 0x00000061, 0x0000001F, 0x00050080, 0x0000000F, 0x00000062, 0x00000060,
++    0x00000061, 0x0004003D, 0x0000002B, 0x00000063, 0x0000002D, 0x00040063, 0x0000005D, 0x00000062,
++    0x00000063, 0x000100FD, 0x00010038,
+ };
+diff --git a/src/graphics/shaders/vulkan_spirv/native_resolve_rgba16f_cs.h b/src/graphics/shaders/vulkan_spirv/native_resolve_rgba16f_cs.h
+index 07eeaeb..5ab5279 100644
+--- a/src/graphics/shaders/vulkan_spirv/native_resolve_rgba16f_cs.h
++++ b/src/graphics/shaders/vulkan_spirv/native_resolve_rgba16f_cs.h
+@@ -3,7 +3,7 @@
+ ; SPIR-V
+ ; Version: 1.0
+ ; Generator: Google Shaderc over Glslang; 10
+-; Bound: 99
++; Bound: 102
+ ; Schema: 0
+                OpCapability Shader
+           %1 = OpExtInstImport "GLSL.std.450"
+@@ -75,12 +75,12 @@
+      %uint_2 = OpConstant %uint 2
+      %uint_0 = OpConstant %uint 0
+ %_ptr_Function_float = OpTypePointer Function %float
+-    %float_0 = OpConstant %float 0
+       %int_1 = OpConstant %int 1
+ %_ptr_PushConstant_float = OpTypePointer PushConstant %float
+-         %87 = OpTypeImage %float 2D 0 0 0 2 Rgba16f
+-%_ptr_UniformConstant_87 = OpTypePointer UniformConstant %87
+-%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_87 UniformConstant
++    %float_0 = OpConstant %float 0
++         %90 = OpTypeImage %float 2D 0 0 0 2 Rgba16f
++%_ptr_UniformConstant_90 = OpTypePointer UniformConstant %90
++%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_90 UniformConstant
+       %int_3 = OpConstant %int 3
+      %uint_8 = OpConstant %uint 8
+ %gl_WorkGroupSize = OpConstantComposite %v3uint %uint_8 %uint_8 %uint_1
+@@ -133,36 +133,39 @@
+          %69 = OpLoad %uint %68
+          %71 = OpIEqual %bool %69 %uint_2
+                OpSelectionMerge %73 None
+-               OpBranchConditional %71 %72 %80
++               OpBranchConditional %71 %72 %85
+          %72 = OpLabel
+          %76 = OpAccessChain %_ptr_Function_float %value %uint_0
+          %77 = OpLoad %float %76
+-         %79 = OpCompositeConstruct %v4float %77 %float_0 %float_0 %float_0
+-               OpStore %value %79
++         %80 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %81 = OpLoad %float %80
++         %82 = OpFMul %float %77 %81
++         %84 = OpCompositeConstruct %v4float %82 %float_0 %float_0 %float_0
++               OpStore %value %84
+                OpBranch %73
+-         %80 = OpLabel
+-         %83 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
+-         %84 = OpLoad %float %83
+-         %85 = OpLoad %v4float %value
+-         %86 = OpVectorTimesScalar %v4float %85 %84
+-               OpStore %value %86
++         %85 = OpLabel
++         %86 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %87 = OpLoad %float %86
++         %88 = OpLoad %v4float %value
++         %89 = OpVectorTimesScalar %v4float %88 %87
++               OpStore %value %89
+                OpBranch %73
+          %73 = OpLabel
+                OpBranch %64
+          %64 = OpLabel
+-         %90 = OpLoad %87 %xe_native_resolve_dest
+-         %92 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
+-         %93 = OpLoad %v2int %92
+-         %94 = OpLoad %v2int %pixel
+-         %95 = OpIAdd %v2int %93 %94
+-         %96 = OpLoad %v4float %value
+-               OpImageWrite %90 %95 %96
++         %93 = OpLoad %90 %xe_native_resolve_dest
++         %95 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
++         %96 = OpLoad %v2int %95
++         %97 = OpLoad %v2int %pixel
++         %98 = OpIAdd %v2int %96 %97
++         %99 = OpLoad %v4float %value
++               OpImageWrite %93 %98 %99
+                OpReturn
+                OpFunctionEnd
+ #endif
+ 
+ const uint32_t native_resolve_rgba16f_cs[] = {
+-    0x07230203, 0x00010000, 0x000D000A, 0x00000063, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
++    0x07230203, 0x00010000, 0x000D000A, 0x00000066, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
+     0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+     0x0006000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00060010, 0x00000004,
+     0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00030003, 0x00000002, 0x000001CC, 0x000B0004,
+@@ -182,15 +185,15 @@ const uint32_t native_resolve_rgba16f_cs[] = {
+     0x766C6F73, 0x69665F65, 0x00006C6C, 0x00030005, 0x00000012, 0x00000000, 0x00040005, 0x0000001F,
+     0x65786970, 0x0000006C, 0x00060005, 0x00000023, 0x72756F73, 0x705F6563, 0x6C657869, 0x00000000,
+     0x00040005, 0x0000002D, 0x756C6176, 0x00000065, 0x00090005, 0x00000030, 0x6E5F6578, 0x76697461,
+-    0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005, 0x00000059, 0x6E5F6578,
++    0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005, 0x0000005C, 0x6E5F6578,
+     0x76697461, 0x65725F65, 0x766C6F73, 0x65645F65, 0x00007473, 0x00040047, 0x00000009, 0x0000000B,
+     0x0000001C, 0x00050048, 0x00000010, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000010,
+     0x00000001, 0x00000023, 0x00000004, 0x00050048, 0x00000010, 0x00000002, 0x00000023, 0x00000008,
+     0x00050048, 0x00000010, 0x00000003, 0x00000023, 0x00000010, 0x00050048, 0x00000010, 0x00000004,
+     0x00000023, 0x00000018, 0x00050048, 0x00000010, 0x00000005, 0x00000023, 0x00000020, 0x00030047,
+     0x00000010, 0x00000002, 0x00040047, 0x00000030, 0x00000022, 0x00000000, 0x00040047, 0x00000030,
+-    0x00000021, 0x00000000, 0x00040047, 0x00000059, 0x00000022, 0x00000000, 0x00040047, 0x00000059,
+-    0x00000021, 0x00000001, 0x00030047, 0x00000059, 0x00000019, 0x00040047, 0x00000062, 0x0000000B,
++    0x00000021, 0x00000000, 0x00040047, 0x0000005C, 0x00000022, 0x00000000, 0x00040047, 0x0000005C,
++    0x00000021, 0x00000001, 0x00030047, 0x0000005C, 0x00000019, 0x00040047, 0x00000065, 0x0000000B,
+     0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+     0x00000020, 0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00040020, 0x00000008,
+     0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000001, 0x00040017, 0x0000000A,
+@@ -207,12 +210,12 @@ const uint32_t native_resolve_rgba16f_cs[] = {
+     0x00040020, 0x00000033, 0x00000009, 0x0000000F, 0x0004002B, 0x0000000E, 0x00000038, 0x00000000,
+     0x00040020, 0x0000003A, 0x00000009, 0x00000006, 0x0004002B, 0x00000006, 0x0000003D, 0x00000001,
+     0x0004002B, 0x00000006, 0x00000046, 0x00000002, 0x0004002B, 0x00000006, 0x0000004A, 0x00000000,
+-    0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000D, 0x0000004E, 0x00000000,
+-    0x0004002B, 0x0000000E, 0x00000051, 0x00000001, 0x00040020, 0x00000052, 0x00000009, 0x0000000D,
+-    0x00090019, 0x00000057, 0x0000000D, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
+-    0x00000002, 0x00040020, 0x00000058, 0x00000000, 0x00000057, 0x0004003B, 0x00000058, 0x00000059,
+-    0x00000000, 0x0004002B, 0x0000000E, 0x0000005B, 0x00000003, 0x0004002B, 0x00000006, 0x00000061,
+-    0x00000008, 0x0006002C, 0x00000007, 0x00000062, 0x00000061, 0x00000061, 0x0000003D, 0x00050036,
++    0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000E, 0x0000004E, 0x00000001,
++    0x00040020, 0x0000004F, 0x00000009, 0x0000000D, 0x0004002B, 0x0000000D, 0x00000053, 0x00000000,
++    0x00090019, 0x0000005A, 0x0000000D, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
++    0x00000002, 0x00040020, 0x0000005B, 0x00000000, 0x0000005A, 0x0004003B, 0x0000005B, 0x0000005C,
++    0x00000000, 0x0004002B, 0x0000000E, 0x0000005E, 0x00000003, 0x0004002B, 0x00000006, 0x00000064,
++    0x00000008, 0x0006002C, 0x00000007, 0x00000065, 0x00000064, 0x00000064, 0x0000003D, 0x00050036,
+     0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003B, 0x0000001E,
+     0x0000001F, 0x00000007, 0x0004003B, 0x0000001E, 0x00000023, 0x00000007, 0x0004003B, 0x0000002C,
+     0x0000002D, 0x00000007, 0x0004003D, 0x00000007, 0x0000000B, 0x00000009, 0x0007004F, 0x0000000A,
+@@ -238,16 +241,18 @@ const uint32_t native_resolve_rgba16f_cs[] = {
+     0x00000001, 0x00000000, 0x00000003, 0x0003003E, 0x0000002D, 0x00000042, 0x000200F9, 0x00000040,
+     0x000200F8, 0x00000043, 0x00050041, 0x0000003A, 0x00000044, 0x00000012, 0x00000038, 0x0004003D,
+     0x00000006, 0x00000045, 0x00000044, 0x000500AA, 0x00000017, 0x00000047, 0x00000045, 0x00000046,
+-    0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048, 0x00000050, 0x000200F8,
++    0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048, 0x00000055, 0x000200F8,
+     0x00000048, 0x00050041, 0x0000004B, 0x0000004C, 0x0000002D, 0x0000004A, 0x0004003D, 0x0000000D,
+-    0x0000004D, 0x0000004C, 0x00070050, 0x0000002B, 0x0000004F, 0x0000004D, 0x0000004E, 0x0000004E,
+-    0x0000004E, 0x0003003E, 0x0000002D, 0x0000004F, 0x000200F9, 0x00000049, 0x000200F8, 0x00000050,
+-    0x00050041, 0x00000052, 0x00000053, 0x00000012, 0x00000051, 0x0004003D, 0x0000000D, 0x00000054,
+-    0x00000053, 0x0004003D, 0x0000002B, 0x00000055, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000056,
+-    0x00000055, 0x00000054, 0x0003003E, 0x0000002D, 0x00000056, 0x000200F9, 0x00000049, 0x000200F8,
+-    0x00000049, 0x000200F9, 0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x00000057, 0x0000005A,
+-    0x00000059, 0x00050041, 0x00000033, 0x0000005C, 0x00000012, 0x0000005B, 0x0004003D, 0x0000000F,
+-    0x0000005D, 0x0000005C, 0x0004003D, 0x0000000F, 0x0000005E, 0x0000001F, 0x00050080, 0x0000000F,
+-    0x0000005F, 0x0000005D, 0x0000005E, 0x0004003D, 0x0000002B, 0x00000060, 0x0000002D, 0x00040063,
+-    0x0000005A, 0x0000005F, 0x00000060, 0x000100FD, 0x00010038,
++    0x0000004D, 0x0000004C, 0x00050041, 0x0000004F, 0x00000050, 0x00000012, 0x0000004E, 0x0004003D,
++    0x0000000D, 0x00000051, 0x00000050, 0x00050085, 0x0000000D, 0x00000052, 0x0000004D, 0x00000051,
++    0x00070050, 0x0000002B, 0x00000054, 0x00000052, 0x00000053, 0x00000053, 0x00000053, 0x0003003E,
++    0x0000002D, 0x00000054, 0x000200F9, 0x00000049, 0x000200F8, 0x00000055, 0x00050041, 0x0000004F,
++    0x00000056, 0x00000012, 0x0000004E, 0x0004003D, 0x0000000D, 0x00000057, 0x00000056, 0x0004003D,
++    0x0000002B, 0x00000058, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000059, 0x00000058, 0x00000057,
++    0x0003003E, 0x0000002D, 0x00000059, 0x000200F9, 0x00000049, 0x000200F8, 0x00000049, 0x000200F9,
++    0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x0000005A, 0x0000005D, 0x0000005C, 0x00050041,
++    0x00000033, 0x0000005F, 0x00000012, 0x0000005E, 0x0004003D, 0x0000000F, 0x00000060, 0x0000005F,
++    0x0004003D, 0x0000000F, 0x00000061, 0x0000001F, 0x00050080, 0x0000000F, 0x00000062, 0x00000060,
++    0x00000061, 0x0004003D, 0x0000002B, 0x00000063, 0x0000002D, 0x00040063, 0x0000005D, 0x00000062,
++    0x00000063, 0x000100FD, 0x00010038,
+ };
+diff --git a/src/graphics/shaders/vulkan_spirv/native_resolve_rgba8_cs.h b/src/graphics/shaders/vulkan_spirv/native_resolve_rgba8_cs.h
+index 428a0da..a750b25 100644
+--- a/src/graphics/shaders/vulkan_spirv/native_resolve_rgba8_cs.h
++++ b/src/graphics/shaders/vulkan_spirv/native_resolve_rgba8_cs.h
+@@ -3,7 +3,7 @@
+ ; SPIR-V
+ ; Version: 1.0
+ ; Generator: Google Shaderc over Glslang; 10
+-; Bound: 99
++; Bound: 102
+ ; Schema: 0
+                OpCapability Shader
+           %1 = OpExtInstImport "GLSL.std.450"
+@@ -75,12 +75,12 @@
+      %uint_2 = OpConstant %uint 2
+      %uint_0 = OpConstant %uint 0
+ %_ptr_Function_float = OpTypePointer Function %float
+-    %float_0 = OpConstant %float 0
+       %int_1 = OpConstant %int 1
+ %_ptr_PushConstant_float = OpTypePointer PushConstant %float
+-         %87 = OpTypeImage %float 2D 0 0 0 2 Rgba8
+-%_ptr_UniformConstant_87 = OpTypePointer UniformConstant %87
+-%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_87 UniformConstant
++    %float_0 = OpConstant %float 0
++         %90 = OpTypeImage %float 2D 0 0 0 2 Rgba8
++%_ptr_UniformConstant_90 = OpTypePointer UniformConstant %90
++%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_90 UniformConstant
+       %int_3 = OpConstant %int 3
+      %uint_8 = OpConstant %uint 8
+ %gl_WorkGroupSize = OpConstantComposite %v3uint %uint_8 %uint_8 %uint_1
+@@ -133,36 +133,39 @@
+          %69 = OpLoad %uint %68
+          %71 = OpIEqual %bool %69 %uint_2
+                OpSelectionMerge %73 None
+-               OpBranchConditional %71 %72 %80
++               OpBranchConditional %71 %72 %85
+          %72 = OpLabel
+          %76 = OpAccessChain %_ptr_Function_float %value %uint_0
+          %77 = OpLoad %float %76
+-         %79 = OpCompositeConstruct %v4float %77 %float_0 %float_0 %float_0
+-               OpStore %value %79
++         %80 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %81 = OpLoad %float %80
++         %82 = OpFMul %float %77 %81
++         %84 = OpCompositeConstruct %v4float %82 %float_0 %float_0 %float_0
++               OpStore %value %84
+                OpBranch %73
+-         %80 = OpLabel
+-         %83 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
+-         %84 = OpLoad %float %83
+-         %85 = OpLoad %v4float %value
+-         %86 = OpVectorTimesScalar %v4float %85 %84
+-               OpStore %value %86
++         %85 = OpLabel
++         %86 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %87 = OpLoad %float %86
++         %88 = OpLoad %v4float %value
++         %89 = OpVectorTimesScalar %v4float %88 %87
++               OpStore %value %89
+                OpBranch %73
+          %73 = OpLabel
+                OpBranch %64
+          %64 = OpLabel
+-         %90 = OpLoad %87 %xe_native_resolve_dest
+-         %92 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
+-         %93 = OpLoad %v2int %92
+-         %94 = OpLoad %v2int %pixel
+-         %95 = OpIAdd %v2int %93 %94
+-         %96 = OpLoad %v4float %value
+-               OpImageWrite %90 %95 %96
++         %93 = OpLoad %90 %xe_native_resolve_dest
++         %95 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
++         %96 = OpLoad %v2int %95
++         %97 = OpLoad %v2int %pixel
++         %98 = OpIAdd %v2int %96 %97
++         %99 = OpLoad %v4float %value
++               OpImageWrite %93 %98 %99
+                OpReturn
+                OpFunctionEnd
+ #endif
+ 
+ const uint32_t native_resolve_rgba8_cs[] = {
+-    0x07230203, 0x00010000, 0x000D000A, 0x00000063, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
++    0x07230203, 0x00010000, 0x000D000A, 0x00000066, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
+     0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+     0x0006000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00060010, 0x00000004,
+     0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00030003, 0x00000002, 0x000001CC, 0x000B0004,
+@@ -182,15 +185,15 @@ const uint32_t native_resolve_rgba8_cs[] = {
+     0x766C6F73, 0x69665F65, 0x00006C6C, 0x00030005, 0x00000012, 0x00000000, 0x00040005, 0x0000001F,
+     0x65786970, 0x0000006C, 0x00060005, 0x00000023, 0x72756F73, 0x705F6563, 0x6C657869, 0x00000000,
+     0x00040005, 0x0000002D, 0x756C6176, 0x00000065, 0x00090005, 0x00000030, 0x6E5F6578, 0x76697461,
+-    0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005, 0x00000059, 0x6E5F6578,
++    0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005, 0x0000005C, 0x6E5F6578,
+     0x76697461, 0x65725F65, 0x766C6F73, 0x65645F65, 0x00007473, 0x00040047, 0x00000009, 0x0000000B,
+     0x0000001C, 0x00050048, 0x00000010, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000010,
+     0x00000001, 0x00000023, 0x00000004, 0x00050048, 0x00000010, 0x00000002, 0x00000023, 0x00000008,
+     0x00050048, 0x00000010, 0x00000003, 0x00000023, 0x00000010, 0x00050048, 0x00000010, 0x00000004,
+     0x00000023, 0x00000018, 0x00050048, 0x00000010, 0x00000005, 0x00000023, 0x00000020, 0x00030047,
+     0x00000010, 0x00000002, 0x00040047, 0x00000030, 0x00000022, 0x00000000, 0x00040047, 0x00000030,
+-    0x00000021, 0x00000000, 0x00040047, 0x00000059, 0x00000022, 0x00000000, 0x00040047, 0x00000059,
+-    0x00000021, 0x00000001, 0x00030047, 0x00000059, 0x00000019, 0x00040047, 0x00000062, 0x0000000B,
++    0x00000021, 0x00000000, 0x00040047, 0x0000005C, 0x00000022, 0x00000000, 0x00040047, 0x0000005C,
++    0x00000021, 0x00000001, 0x00030047, 0x0000005C, 0x00000019, 0x00040047, 0x00000065, 0x0000000B,
+     0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+     0x00000020, 0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00040020, 0x00000008,
+     0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000001, 0x00040017, 0x0000000A,
+@@ -207,12 +210,12 @@ const uint32_t native_resolve_rgba8_cs[] = {
+     0x00040020, 0x00000033, 0x00000009, 0x0000000F, 0x0004002B, 0x0000000E, 0x00000038, 0x00000000,
+     0x00040020, 0x0000003A, 0x00000009, 0x00000006, 0x0004002B, 0x00000006, 0x0000003D, 0x00000001,
+     0x0004002B, 0x00000006, 0x00000046, 0x00000002, 0x0004002B, 0x00000006, 0x0000004A, 0x00000000,
+-    0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000D, 0x0000004E, 0x00000000,
+-    0x0004002B, 0x0000000E, 0x00000051, 0x00000001, 0x00040020, 0x00000052, 0x00000009, 0x0000000D,
+-    0x00090019, 0x00000057, 0x0000000D, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
+-    0x00000004, 0x00040020, 0x00000058, 0x00000000, 0x00000057, 0x0004003B, 0x00000058, 0x00000059,
+-    0x00000000, 0x0004002B, 0x0000000E, 0x0000005B, 0x00000003, 0x0004002B, 0x00000006, 0x00000061,
+-    0x00000008, 0x0006002C, 0x00000007, 0x00000062, 0x00000061, 0x00000061, 0x0000003D, 0x00050036,
++    0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000E, 0x0000004E, 0x00000001,
++    0x00040020, 0x0000004F, 0x00000009, 0x0000000D, 0x0004002B, 0x0000000D, 0x00000053, 0x00000000,
++    0x00090019, 0x0000005A, 0x0000000D, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
++    0x00000004, 0x00040020, 0x0000005B, 0x00000000, 0x0000005A, 0x0004003B, 0x0000005B, 0x0000005C,
++    0x00000000, 0x0004002B, 0x0000000E, 0x0000005E, 0x00000003, 0x0004002B, 0x00000006, 0x00000064,
++    0x00000008, 0x0006002C, 0x00000007, 0x00000065, 0x00000064, 0x00000064, 0x0000003D, 0x00050036,
+     0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003B, 0x0000001E,
+     0x0000001F, 0x00000007, 0x0004003B, 0x0000001E, 0x00000023, 0x00000007, 0x0004003B, 0x0000002C,
+     0x0000002D, 0x00000007, 0x0004003D, 0x00000007, 0x0000000B, 0x00000009, 0x0007004F, 0x0000000A,
+@@ -238,16 +241,18 @@ const uint32_t native_resolve_rgba8_cs[] = {
+     0x00000001, 0x00000000, 0x00000003, 0x0003003E, 0x0000002D, 0x00000042, 0x000200F9, 0x00000040,
+     0x000200F8, 0x00000043, 0x00050041, 0x0000003A, 0x00000044, 0x00000012, 0x00000038, 0x0004003D,
+     0x00000006, 0x00000045, 0x00000044, 0x000500AA, 0x00000017, 0x00000047, 0x00000045, 0x00000046,
+-    0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048, 0x00000050, 0x000200F8,
++    0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048, 0x00000055, 0x000200F8,
+     0x00000048, 0x00050041, 0x0000004B, 0x0000004C, 0x0000002D, 0x0000004A, 0x0004003D, 0x0000000D,
+-    0x0000004D, 0x0000004C, 0x00070050, 0x0000002B, 0x0000004F, 0x0000004D, 0x0000004E, 0x0000004E,
+-    0x0000004E, 0x0003003E, 0x0000002D, 0x0000004F, 0x000200F9, 0x00000049, 0x000200F8, 0x00000050,
+-    0x00050041, 0x00000052, 0x00000053, 0x00000012, 0x00000051, 0x0004003D, 0x0000000D, 0x00000054,
+-    0x00000053, 0x0004003D, 0x0000002B, 0x00000055, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000056,
+-    0x00000055, 0x00000054, 0x0003003E, 0x0000002D, 0x00000056, 0x000200F9, 0x00000049, 0x000200F8,
+-    0x00000049, 0x000200F9, 0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x00000057, 0x0000005A,
+-    0x00000059, 0x00050041, 0x00000033, 0x0000005C, 0x00000012, 0x0000005B, 0x0004003D, 0x0000000F,
+-    0x0000005D, 0x0000005C, 0x0004003D, 0x0000000F, 0x0000005E, 0x0000001F, 0x00050080, 0x0000000F,
+-    0x0000005F, 0x0000005D, 0x0000005E, 0x0004003D, 0x0000002B, 0x00000060, 0x0000002D, 0x00040063,
+-    0x0000005A, 0x0000005F, 0x00000060, 0x000100FD, 0x00010038,
++    0x0000004D, 0x0000004C, 0x00050041, 0x0000004F, 0x00000050, 0x00000012, 0x0000004E, 0x0004003D,
++    0x0000000D, 0x00000051, 0x00000050, 0x00050085, 0x0000000D, 0x00000052, 0x0000004D, 0x00000051,
++    0x00070050, 0x0000002B, 0x00000054, 0x00000052, 0x00000053, 0x00000053, 0x00000053, 0x0003003E,
++    0x0000002D, 0x00000054, 0x000200F9, 0x00000049, 0x000200F8, 0x00000055, 0x00050041, 0x0000004F,
++    0x00000056, 0x00000012, 0x0000004E, 0x0004003D, 0x0000000D, 0x00000057, 0x00000056, 0x0004003D,
++    0x0000002B, 0x00000058, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000059, 0x00000058, 0x00000057,
++    0x0003003E, 0x0000002D, 0x00000059, 0x000200F9, 0x00000049, 0x000200F8, 0x00000049, 0x000200F9,
++    0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x0000005A, 0x0000005D, 0x0000005C, 0x00050041,
++    0x00000033, 0x0000005F, 0x00000012, 0x0000005E, 0x0004003D, 0x0000000F, 0x00000060, 0x0000005F,
++    0x0004003D, 0x0000000F, 0x00000061, 0x0000001F, 0x00050080, 0x0000000F, 0x00000062, 0x00000060,
++    0x00000061, 0x0004003D, 0x0000002B, 0x00000063, 0x0000002D, 0x00040063, 0x0000005D, 0x00000062,
++    0x00000063, 0x000100FD, 0x00010038,
+ };
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 3596d69..9212193 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -6358,6 +6358,8 @@ void VulkanRenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInf
+     } else if (source_format == xenos::DepthRenderTargetFormat::kD24FS8) {
+       pair = NativeResolvePair::kD24FS8;
+       texture_format = xenos::TextureFormat::k_24_8_FLOAT;
++      // The host keeps guest float24 depth [0, 2) as [0, 1).
++      write.scale = 2.0f;
+     } else {
+       fallback(NativeResolveFallback::kDepth);
+       return;
