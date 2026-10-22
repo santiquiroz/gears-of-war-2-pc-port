@@ -1,0 +1,19 @@
+diff --git a/src/graphics/util/draw_extent_estimator.cpp b/src/graphics/util/draw_extent_estimator.cpp
+index 3027dc8..d51bd3d 100644
+--- a/src/graphics/util/draw_extent_estimator.cpp
++++ b/src/graphics/util/draw_extent_estimator.cpp
+@@ -24,8 +24,12 @@
+ #include <rex/memory.h>
+ #include <rex/ui/graphics_util.h>
+ 
+-REXCVAR_DEFINE_BOOL(execute_unclipped_draw_vs_on_cpu, false, "GPU",
+-                    "Execute unclipped draw vertex shader on CPU");
++// Xenia's default (true, see the original definition below). Without it, draws without clipping and
++// with the 8192 scissor (Direct3D's clears) claim the whole EDRAM, and host render targets copy
++// unrelated ranges into each other: a third of the frame and a teal cast on the host render target path.
++REXCVAR_DEFINE_BOOL(execute_unclipped_draw_vs_on_cpu, true, "GPU",
++                    "Execute the vertex shader of draws without clipping (screen-space draws such as "
++                    "clears) on the CPU to estimate the EDRAM range they use");
+ 
+ REXCVAR_DEFINE_BOOL(execute_unclipped_draw_vs_on_cpu_with_scissor, false, "GPU",
+                     "Execute unclipped draw VS on CPU with scissor");

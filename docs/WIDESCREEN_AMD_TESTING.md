@@ -157,3 +157,11 @@ Cost (D), same scene, 16:9, `resolution_scale = 2`, `gow2_unlock_fps = true`, th
 Answers: (A) ROV works on a current AMD driver; the 2021 shader compiler crash did not show. (B) Patch 0026 is right on AMD with ROV.
 (C) Host render targets show the artifact on AMD as on NVIDIA. Even at 16:9 the host render target path tints the hospital teal where ROV does not (the README screenshot of 2026-10-14 shows the same tint); which one matches the console needs a capture from real hardware. (D) ROV costs about 19 % at `resolution_scale = 2`, well above the
 game's 30 fps either way. Hence the change: on AMD, `auto` widescreen switches an unset render target path to ROV.
+
+### Update: the teal cast was a bug (2026-10-21)
+
+The teal cast of `rtv` was not colour precision. Draws without clipping and with the 8192 scissor (Direct3D's clears) claimed
+the whole EDRAM because `execute_unclipped_draw_vs_on_cpu` was `false` in the port (Xenia's default is `true`), so every clear
+copied unrelated render targets into its range and back. SDK patch 0033 restores the default. With it, on the RX 7800 XT in the
+hospital, unlocked: `rtv` at 16:9 matches ROV and runs at 114-116 fps (95 before, ROV 50-55). At 21:9 `rtv` loses the cast but
+keeps the hard-edged pale rectangles over the light shafts (its 2048-tile limit), so `auto` widescreen still switches AMD to ROV.
