@@ -87,6 +87,13 @@ if(WIN32)
     target_link_libraries(gow2 PRIVATE winhttp shell32)
 endif()
 
+# Native renderer phase 0 (docs/NATIVE_RENDERER_STUDY.md): counting hooks on the PM4-emitting functions.
+option(GOW2_NATIVE_PROBE "Build the native renderer identification probe (development only)" OFF)
+if(GOW2_NATIVE_PROBE)
+    target_sources(gow2 PRIVATE tools/native/native_probe.cpp)
+    target_include_directories(gow2 PRIVATE src)
+endif()
+
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
 set(GOW2_VERSION "0.2.9" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")

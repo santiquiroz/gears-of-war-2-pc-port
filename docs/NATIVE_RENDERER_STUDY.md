@@ -80,5 +80,6 @@ Effort: phase 0 is days; phases 1-3 are weeks each. Phase 0 is the decision poin
 
 ## Next step
 
-Phase 0 as a delegated spike when the delegation lanes reset (week of 2026-10-26), with the
-anchors above as its starting point.
+Phase 0 started on 2026-10-21; its measurements are in
+[NATIVE_RENDERER_PHASE0.md](NATIVE_RENDERER_PHASE0.md): the scene draws are accounted for by four
+hookable functions, and the replayed command buffers and the resolves are the open gaps.

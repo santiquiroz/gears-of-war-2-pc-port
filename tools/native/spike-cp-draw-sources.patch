@@ -1,0 +1,92 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index e466ae3..0650e97 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <unordered_map>
+ #include <cinttypes>
+ #include <cmath>
+ #include <cstring>
+@@ -686,8 +687,40 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+   return write_index;
+ }
+ 
++namespace {
++// SPIKE (native renderer phase 0, not for commit): where the draws come from.
++struct SpikeIb {
++  uint32_t runs = 0;
++  uint32_t draws = 0;     // draw packets executed inside, all runs
++  uint32_t first_run_draws = 0;
++};
++std::unordered_map<uint32_t, SpikeIb> g_spike_frame_ibs;    // this frame, by guest pointer
++std::unordered_map<uint32_t, uint32_t> g_spike_ib_frames;   // how many reported windows saw each pointer
++uint32_t g_spike_current_ib = 0;
++uint64_t g_spike_pred_draws = 0, g_spike_swaps = 0;
++uint64_t g_spike_nonpred_mode[8] = {}, g_spike_pred_mode[8] = {};
++uint64_t g_spike_acc_runs = 0, g_spike_acc_distinct = 0, g_spike_acc_draws = 0, g_spike_acc_first = 0,
++         g_spike_acc_reruns = 0;
++
++void SpikeEndFrame() {
++  for (auto& [ptr, ib] : g_spike_frame_ibs) {
++    g_spike_acc_runs += ib.runs;
++    ++g_spike_acc_distinct;
++    g_spike_acc_draws += ib.draws;
++    g_spike_acc_first += ib.first_run_draws;
++    if (ib.runs > 1) ++g_spike_acc_reruns;
++    ++g_spike_ib_frames[ptr];
++  }
++  g_spike_frame_ibs.clear();
++}
++}  // namespace
++
+ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
+   SCOPE_profile_cpu_f("gpu");
++  const uint32_t spike_outer = g_spike_current_ib;
++  g_spike_current_ib = ptr;
++  ++g_spike_frame_ibs[ptr].runs;
++  struct SpikeRestore { uint32_t outer; ~SpikeRestore() { g_spike_current_ib = outer; } } spike_restore{spike_outer};
+ 
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(ptr), count * sizeof(uint32_t));
+@@ -1012,6 +1045,21 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(memory::RingBuffer* reader, ui
+   reader->AdvanceRead((count - 4) * sizeof(uint32_t));
+ 
+   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
++  SpikeEndFrame();
++  if (++g_spike_swaps % 150 == 0) {
++    REXGPU_INFO("SPIKECP 150 frames: IB runs {} distinct-per-frame {} rerun-within-frame {}; draws {} first-run {} "
++                "predicated {}; pointers ever seen {}",
++                g_spike_acc_runs, g_spike_acc_distinct, g_spike_acc_reruns, g_spike_acc_draws, g_spike_acc_first,
++                g_spike_pred_draws, g_spike_ib_frames.size());
++    g_spike_acc_runs = g_spike_acc_distinct = g_spike_acc_draws = g_spike_acc_first = g_spike_acc_reruns = 0;
++    g_spike_pred_draws = 0;
++    REXGPU_INFO("SPIKECP edram_mode non-predicated: 0={} 4={} 5={} 6={} other={}; predicated: 0={} 4={} 5={} 6={}",
++                g_spike_nonpred_mode[0], g_spike_nonpred_mode[4], g_spike_nonpred_mode[5], g_spike_nonpred_mode[6],
++                g_spike_nonpred_mode[1] + g_spike_nonpred_mode[2] + g_spike_nonpred_mode[3] + g_spike_nonpred_mode[7],
++                g_spike_pred_mode[0], g_spike_pred_mode[4], g_spike_pred_mode[5], g_spike_pred_mode[6]);
++    for (auto& v : g_spike_nonpred_mode) v = 0;
++    for (auto& v : g_spike_pred_mode) v = 0;
++  }
+ 
+   ++counter_;
+   return true;
+@@ -1338,6 +1386,16 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
+ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32_t packet,
+                                               const char* opcode_name, uint32_t viz_query_condition,
+                                               uint32_t count_remaining) {
++  if (packet & 1) ++g_spike_pred_draws;
++  {
++    const uint32_t mode = uint32_t(register_file_->Get<reg::RB_MODECONTROL>().edram_mode) & 7;
++    ++((packet & 1) ? g_spike_pred_mode : g_spike_nonpred_mode)[mode];
++  }
++  if (g_spike_current_ib != 0) {
++    auto& ib = g_spike_frame_ibs[g_spike_current_ib];
++    ++ib.draws;
++    if (ib.runs == 1) ++ib.first_run_draws;
++  }
+   // if viz_query_condition != 0, this is a conditional draw based on viz query.
+   // This ID matches the one issued in PM4_VIZ_QUERY
+   // uint32_t viz_id = viz_query_condition & 0x3F;
