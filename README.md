@@ -80,6 +80,8 @@ gow2.exe --game_data_root="C:\Games\GoW2"
 
 The first time you play System Link co-op, Windows asks whether `gow2.exe` may use the network: allow it, or the other players will not find your game.
 
+The first start, and the first start after an update that changes the graphics, compiles the shaders again: the window can sit on the title screen for a few minutes and Windows may call it "Not responding", and the first level takes a little longer to load. Leave it running; later starts use the saved shaders.
+
 ### Android (experimental)
 
 Requirements: an arm64 phone with Android 10 or newer and Vulkan, and free space for a full copy of the game files.
