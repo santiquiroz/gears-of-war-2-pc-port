@@ -1,0 +1,123 @@
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 697e1ef..06db2f1 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -11,6 +11,8 @@
+ 
+ #include "thirdparty/dxbc/DXBCChecksum.h"
+ 
++#include <map>
++#include <chrono>
+ #include <algorithm>
+ #include <array>
+ #include <cstdint>
+@@ -4000,18 +4002,109 @@ ID3D12PipelineState* const* D3D12RenderTargetCache::GetOrCreateTransferPipelines
+   return pipelines;
+ }
+ 
++namespace {
++// SPIKE (native renderer phase 2, not for commit): which EDRAM ownership transfers happen, by kind.
++struct SpikeTransferStats {
++  uint64_t count = 0;
++  uint64_t tiles = 0;
++};
++using SpikeTransferKey = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>;
++std::map<SpikeTransferKey, SpikeTransferStats> g_spike_transfers;
++std::chrono::steady_clock::time_point g_spike_transfers_since = std::chrono::steady_clock::now();
++uint64_t g_spike_transfer_calls = 0;
++const auto g_spike_seq_start = std::chrono::steady_clock::now();
++uint64_t g_spike_seq_call = 0;
++
++// One frame's worth of ownership changes, 90 s after the first draw (the hospital in native-ceiling.ps1).
++bool SpikeSeqActive() {
++  const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_spike_seq_start).count();
++  return t >= 45.0 && uint64_t(t * 1000.0) % 15000 < 11;
++}
++
++std::string SpikeKeyText(uint32_t key_bits) {
++  const uint32_t base = key_bits & 0x7FF, pitch = (key_bits >> 11) & 0xFF, msaa = (key_bits >> 19) & 3,
++                 depth = (key_bits >> 21) & 1, fmt = (key_bits >> 22) & 0xF;
++  return fmt::format("{}{}x{}@{}/p{}", depth ? 'D' : 'C', fmt, 1u << msaa, base, pitch);
++}
++
++void SpikeReportTransfers() {
++  const auto now = std::chrono::steady_clock::now();
++  const double seconds = std::chrono::duration<double>(now - g_spike_transfers_since).count();
++  if (seconds < 5.0) return;
++  for (const auto& [key, stats] : g_spike_transfers) {
++    const auto [sd, sf, sm, dd, df, dm] = key;
++    REXGPU_INFO("SPIKEXFER {} fmt {} msaa {} -> {} fmt {} msaa {}: {:.1f}/s, {:.0f} tiles/s",
++                sd ? "depth" : "color", sf, sm, dd ? "depth" : "color", df, dm, stats.count / seconds,
++                stats.tiles / seconds);
++  }
++  REXGPU_INFO("SPIKEXFER --- {:.1f} calls/s over {:.1f} s", g_spike_transfer_calls / seconds, seconds);
++  g_spike_transfers.clear();
++  g_spike_transfer_calls = 0;
++  g_spike_transfers_since = now;
++}
++}  // namespace
++
+ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
+     uint32_t render_target_count, RenderTarget* const* render_targets,
+     const std::vector<Transfer>* render_target_transfers,
+     const uint64_t* render_target_resolve_clear_values,
+     const Transfer::Rectangle* resolve_clear_rectangle) {
+   assert_true(GetPath() == Path::kHostRenderTargets);
++  // SPIKE ceiling: SPIKE_SKIP_MSAA drops copies between targets that differ only in MSAA.
++  static const bool spike_skip_msaa = std::getenv("SPIKE_SKIP_MSAA") != nullptr;
++  static std::vector<Transfer> spike_filtered[1 + xenos::kMaxColorRenderTargets];
++  if (spike_skip_msaa) {
++    for (uint32_t spike_i = 0; spike_i < render_target_count; ++spike_i) {
++      spike_filtered[spike_i].clear();
++      if (!render_targets[spike_i]) continue;
++      auto spike_dest = render_targets[spike_i]->key();
++      for (const auto& spike_transfer : render_target_transfers[spike_i]) {
++        auto spike_source = spike_transfer.source->key();
++        spike_source.msaa_samples = spike_dest.msaa_samples;
++        if (spike_source != spike_dest) spike_filtered[spike_i].push_back(spike_transfer);
++      }
++    }
++    render_target_transfers = spike_filtered;
++  }
+ 
+   const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
+   ID3D12Device* device = provider.GetDevice();
+   uint64_t current_submission = command_processor_.GetCurrentSubmission();
+   DeferredCommandList& command_list = command_processor_.GetDeferredCommandList();
+ 
++  ++g_spike_transfer_calls;
++  ++g_spike_seq_call;
++  if (SpikeSeqActive()) {
++    std::string line;
++    for (uint32_t spike_i = 0; spike_i < render_target_count; ++spike_i) {
++      if (!render_targets[spike_i]) continue;
++      line += fmt::format(" [{}]{}", spike_i, SpikeKeyText(render_targets[spike_i]->key().key));
++      for (const auto& spike_transfer : render_target_transfers[spike_i]) {
++        line += fmt::format(" <-{}({}..{})", SpikeKeyText(spike_transfer.source->key().key),
++                            spike_transfer.start_tiles, spike_transfer.end_tiles);
++        if (spike_transfer.host_depth_source) line += "+hd";
++      }
++    }
++    const RegisterFile& spike_regs = register_file();
++    REXGPU_INFO("SPIKESEQ {} {} dc={:08X} cm={:04X} clip={:08X} sc={:08X} msaa={}{}", g_spike_seq_call,
++                render_target_resolve_clear_values ? "RC" : "DR", spike_regs[XE_GPU_REG_RB_DEPTHCONTROL],
++                spike_regs[XE_GPU_REG_RB_COLOR_MASK], spike_regs[XE_GPU_REG_PA_CL_CLIP_CNTL],
++                spike_regs[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR], (spike_regs[XE_GPU_REG_RB_SURFACE_INFO] >> 16) & 3, line);
++  }
++  for (uint32_t spike_i = 0; spike_i < render_target_count; ++spike_i) {
++    if (!render_targets[spike_i]) continue;
++    const auto spike_dest = render_targets[spike_i]->key();
++    for (const auto& spike_transfer : render_target_transfers[spike_i]) {
++      const auto spike_source = spike_transfer.source->key();
++      auto& stats = g_spike_transfers[SpikeTransferKey{
++          uint32_t(spike_source.is_depth), uint32_t(spike_source.resource_format),
++          uint32_t(spike_source.msaa_samples), uint32_t(spike_dest.is_depth),
++          uint32_t(spike_dest.resource_format), uint32_t(spike_dest.msaa_samples)}];
++      ++stats.count;
++      stats.tiles += spike_transfer.end_tiles - spike_transfer.start_tiles;
++    }
++  }
++  SpikeReportTransfers();
+   bool resolve_clear_needed = render_target_resolve_clear_values && resolve_clear_rectangle;
+   D3D12_RECT clear_rect;
+   if (resolve_clear_needed) {

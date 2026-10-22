@@ -64,6 +64,41 @@ an ALWAYS depth write with a full stencil REPLACE): about 90 fps against 90 with
 before clears are cheap; the third of the frame that transfers cost is in other ownership changes (the
 same EDRAM read with another format or pixel size). Counting the transfers by kind is the next step.
 
+## The transfers came from a wrong estimate: patch 0033
+
+`tools/native/spike-transfers.patch` (a temporary patch, not in the series) counts the transfers by
+kind (`SPIKEXFER`: source and destination depth or colour, format, MSAA, tiles a second) and logs every
+ownership change of a few frames in order (`SPIKESEQ`, with the depth control, colour mask, clip
+control, window scissor and MSAA of the draw). Before the fix, in the hospital: 78,000 tiles of copies a
+frame, 38 times the whole EDRAM (2,048 tiles).
+
+The sequence showed why. Direct3D clears at 4x MSAA (a quarter of the pixels for the same memory), in
+one draw without clipping and with the 8192 scissor. For such draws the EDRAM range comes from the
+vertices only if `execute_unclipped_draw_vs_on_cpu` is on; the port had it off (Xenia's default is on),
+so each clear claimed the whole EDRAM from its base, and the host render target path copied every other
+target in there into the clear's target and back.
+
+SDK patch `0033-unclipped-draw-extent-on-cpu.patch` (on master) restores Xenia's default:
+
+| Run (hospital, unlocked) | Copies a frame | fps |
+|---|---|---|
+| RX 7800 XT, `rtv`, before | 78,000 tiles | 95 |
+| RX 7800 XT, `rtv`, 0033 | 13,000 tiles | 114-116 |
+| RX 7800 XT, `rov` (reference picture) | none | 50-55 |
+| S25 Ultra, Vulkan, before | | 34-36 |
+| S25 Ultra, Vulkan, 0033 | | 39-42 |
+
+The copies were also what tinted the hospital teal on `rtv`: with 0033 the picture matches ROV at 16:9.
+At 21:9 `rtv` keeps the pale rectangles over the light shafts (it emulates 2,048 tiles, ROV 4,096 since
+patch 0026), so `auto` widescreen still picks ROV on AMD. The phone picture does not change.
+
+What is left is mostly the clear trick itself: per light, a depth clear at 4x then the shadow map at 1x
+in the same EDRAM, and a stencil clear at 4x on the scene depth then the light volume at 1x. Each is a
+copy in and a copy back of the target. Dropping every copy between targets that differ only in MSAA
+(a ceiling test, wrong picture allowed) gave 98-105 fps against 114-116: no gain, the remaining copies
+are not where the frame goes. With 0033 the emulation runs at about half the `gpu_native` ceiling
+(200-253 fps); the rest of the gap is the draws themselves.
+
 ## Phase 2, revised
 
 Skipping a copy is only safe when the draw that follows overwrites the whole range without reading it:
@@ -80,10 +115,8 @@ rectangles, and phase 0 named the restore and resolve functions. Next steps:
 
 Each step stays behind a switch that is off by default.
 
-## Also found: AMD's default path tints the hospital teal
+## Also found: AMD's default path tinted the hospital teal (fixed by 0033)
 
-With the default host render target path on AMD (`rtv`), the hospital has a strong teal cast at 16:9
-too (also in the README screenshot from 2026-10-14); the ROV path does not. Which one matches the
-console is not known here (it may be the colour precision of the host render target formats). The
-widescreen test notes said `rtv` at 16:9 looked right; that was not checked against the screenshot and
-is corrected in `docs/WIDESCREEN_AMD_TESTING.md`. A capture from a real Xbox 360 would settle it.
+With the host render target path (`rtv`, the default on AMD) the hospital had a strong teal cast that
+the ROV path did not. It was not colour precision: it was the copies described above bringing other
+targets' contents into the clears' ranges. With 0033 `rtv` matches ROV at 16:9.
