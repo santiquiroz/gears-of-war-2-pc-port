@@ -143,7 +143,7 @@ user folder (cold pipeline cache), travelled to chapter 2 (`servertravel geargam
 | Tag | `gow2_widescreen` | Path | Picture | Frames (30 fps cap) |
 |---|---|---|---|---|
 | a1 | `off` | `rov` | Right: soft light shafts, no artifacts. No crash, no driver error | 30 fps, p99 34-42 ms |
-| a2 | `off` | `rtv` | Right | 30 fps, p99 34-43 ms |
+| a2 | `off` | `rtv` | No geometry artifacts, but a strong teal cast over the scene that ROV (a1) does not have; first noted as right without checking the screenshot (corrected 2026-10-21) | 30 fps, p99 34-43 ms |
 | b5 | `2.39` (1680) | `rov` | Right at 1680 wide: soft light shafts | 30 fps, p99 34-46 ms |
 | c5 | `2.39` (1680) | `rtv` | The artifact: a teal cast over the whole scene and hard-edged pale rectangles over the light shafts | 30 fps |
 
@@ -155,5 +155,5 @@ Cost (D), same scene, 16:9, `resolution_scale = 2`, `gow2_unlock_fps = true`, th
 | `rtv` | 48-50 | 19.6-20.0 ms | 24-30 ms |
 
 Answers: (A) ROV works on a current AMD driver; the 2021 shader compiler crash did not show. (B) Patch 0026 is right on AMD with ROV.
-(C) Host render targets show the artifact on AMD as on NVIDIA. (D) ROV costs about 19 % at `resolution_scale = 2`, well above the
+(C) Host render targets show the artifact on AMD as on NVIDIA. Even at 16:9 the host render target path tints the hospital teal where ROV does not (the README screenshot of 2026-10-14 shows the same tint); which one matches the console needs a capture from real hardware. (D) ROV costs about 19 % at `resolution_scale = 2`, well above the
 game's 30 fps either way. Hence the change: on AMD, `auto` widescreen switches an unset render target path to ROV.
