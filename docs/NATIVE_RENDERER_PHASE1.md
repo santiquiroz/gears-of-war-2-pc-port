@@ -184,6 +184,8 @@ turning the re-upload off (240, and 213 with both).
 Chapters 1 (the opening cinematic), 4 and 8 look the same with the old and the new setting. On the
 branch, `gpu_msaa_fill_at_1x` adds to it: 213 to 240 fps at 720p, 123 to 144 at 1440p.
 
+Ten-minute soaks with the branch and `gpu_msaa_fill_at_1x = true` (scripted moving, aiming and firing, 720p, unlocked): chapter 2 averaged 254 fps, chapter 4 (the Derrick ride, outdoors) 171 fps; no errors after startup, no hangs, and the screenshots along the way look right.
+
 Phone measurements need the order alternated: two identical runs back to back on the S25 gave 41-48
 and then 35-40 fps, the second one warmer (37.1 against 39.5 °C), so a single A-then-B pair is noise.
 
