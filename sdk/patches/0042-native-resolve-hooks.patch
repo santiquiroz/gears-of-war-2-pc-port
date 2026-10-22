@@ -1,0 +1,541 @@
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index 29ef7ec..79c48c2 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -823,6 +823,8 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+   uint64_t native_resolve_written_ = 0;
+   std::array<uint64_t, size_t(NativeResolvePair::kCount)> native_resolve_written_pairs_ = {};
+   std::array<uint64_t, size_t(NativeResolveFallback::kCount)> native_resolve_fallbacks_ = {};
++  // gpu_native_hook_example: written textures desaturated since the last report.
++  uint64_t native_resolve_hook_example_ = 0;
+   std::chrono::steady_clock::time_point native_resolve_last_report_ =
+       std::chrono::steady_clock::now();
+ 
+diff --git a/include/rex/graphics/d3d12/texture_cache.h b/include/rex/graphics/d3d12/texture_cache.h
+index 69e4e1e..1728bfd 100644
+--- a/include/rex/graphics/d3d12/texture_cache.h
++++ b/include/rex/graphics/d3d12/texture_cache.h
+@@ -204,6 +204,8 @@ class D3D12TextureCache final : public TextureCache {
+     NativeResolveMode mode = NativeResolveMode::kCopy;
+     // kScale multiplier.
+     float scale = 1.0f;
++    // The resolve's exponent bias (scale is 2^exp_bias for color), for ApplyNativeResolveHooks.
++    int32_t exp_bias = 0;
+     // Shader modes: resolution-scaled host pixel columns / rows at the left / top of the rectangle
+     // taken from the first column / row after them - the half-pixel offset gap fill of the resolve
+     // shaders (ResolveEdramInfo::fill_half_pixel_offset).
+@@ -228,6 +230,8 @@ class D3D12TextureCache final : public TextureCache {
+     uint32_t no_pipeline = 0;
+     // Shader modes: failed to get the one-use descriptors.
+     uint32_t descriptors = 0;
++    // Written textures gpu_native_hook_example was applied to.
++    uint32_t hook_example = 0;
+   };
+   // Writes the rectangle into every texture at write.base_page that is a single-level unsigned 2D
+   // tiled texture with the format, pitch and endianness of the resolve, matching resolution
+@@ -620,6 +624,28 @@ class D3D12TextureCache final : public TextureCache {
+   Microsoft::WRL::ComPtr<ID3D12RootSignature> native_resolve_root_signature_;
+   Microsoft::WRL::ComPtr<ID3D12PipelineState> native_resolve_pipeline_;
+ 
++  // gpu_native_resolves: a texture just written by WriteNativeResolveToTextures, before it's
++  // marked up to date.
++  struct NativeResolveHookInfo {
++    // Guest physical address of the texture base.
++    uint32_t dest_address;
++    xenos::TextureFormat format;
++    // Of the whole texture, in host pixels (resolution-scaled).
++    uint32_t width;
++    uint32_t height;
++    int32_t exp_bias;
++  };
++  // Runs the enabled effects on the texture in place, leaving it in its current state.
++  void ApplyNativeResolveHooks(D3D12Texture& texture, const NativeResolveHookInfo& info,
++                               NativeResolveWriteCounts& counts);
++  // gpu_native_hook_example: native_hook_desaturate_cs, created only with the cvar enabled.
++  // Root parameter 0 - NativeHookDesaturateConstants, 1 - texture UAV table.
++  struct NativeHookDesaturateConstants {
++    uint32_t size[2];
++  };
++  Microsoft::WRL::ComPtr<ID3D12RootSignature> native_hook_desaturate_root_signature_;
++  Microsoft::WRL::ComPtr<ID3D12PipelineState> native_hook_desaturate_pipeline_;
++
+   std::vector<SRVDescriptorCachePage> srv_descriptor_cache_;
+   uint32_t srv_descriptor_cache_allocated_;
+   // Indices of cached descriptors used by deleted textures, for reuse.
+diff --git a/include/rex/graphics/flags.h b/include/rex/graphics/flags.h
+index 798fd3f..6108f04 100644
+--- a/include/rex/graphics/flags.h
++++ b/include/rex/graphics/flags.h
+@@ -45,6 +45,7 @@ REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
+ REXCVAR_DECLARE(bool, direct_host_resolve);
+ REXCVAR_DECLARE(bool, gpu_native_surfaces);
+ REXCVAR_DECLARE(bool, gpu_native_resolves);
++REXCVAR_DECLARE(bool, gpu_native_hook_example);
+ 
+ // GPU Textures
+ REXCVAR_DECLARE(bool, texture_dump);
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index 00f9946..765d2c3 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -6183,6 +6183,7 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+     }
+     // A negative bias is applied the same way.
+     write.scale = std::ldexp(1.0f, exp_bias);
++    write.exp_bias = exp_bias;
+   }
+   // For depth, ResolveInfo has replaced the destination format with k_24_8 or k_24_8_FLOAT.
+   if (uint32_t(resolve_info.copy_dest_info.copy_dest_format) != uint32_t(texture_format)) {
+@@ -6305,6 +6306,7 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+ 
+   native_resolve_written_ += counts.written;
+   native_resolve_written_pairs_[size_t(pair)] += counts.written;
++  native_resolve_hook_example_ += counts.hook_example;
+   CountNativeResolveFallback(NativeResolveFallback::kTextureIncompatible, counts.incompatible);
+   CountNativeResolveFallback(NativeResolveFallback::kTextureNotUpToDate, counts.not_up_to_date);
+   CountNativeResolveFallback(NativeResolveFallback::kTextureReplacement, counts.replacement);
+@@ -6339,10 +6341,12 @@ void D3D12RenderTargetCache::ReportNativeResolves() {
+     }
+   }
+   if (native_resolve_written_ || fallback_total) {
+-    REXGPU_INFO("NATIVERESOLVE written {}{} fallback {}{}", native_resolve_written_,
+-                written_pairs, fallback_total, fallbacks);
++    REXGPU_INFO("NATIVERESOLVE written {}{} fallback {}{} hook_example={}",
++                native_resolve_written_, written_pairs, fallback_total, fallbacks,
++                native_resolve_hook_example_);
+   }
+   native_resolve_written_ = 0;
++  native_resolve_hook_example_ = 0;
+   native_resolve_written_pairs_.fill(0);
+   native_resolve_fallbacks_.fill(0);
+ }
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index af58aa3..3e2faf7 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -40,6 +40,7 @@ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+ namespace shaders {
++#include "../shaders/bytecode/d3d12_5_1/native_hook_desaturate_cs.h"
+ #include "../shaders/bytecode/d3d12_5_1/native_resolve_cs.h"
+ #include "../shaders/bytecode/d3d12_5_1/texture_load_128bpb_cs.h"
+ #include "../shaders/bytecode/d3d12_5_1/texture_load_128bpb_scaled_cs.h"
+@@ -647,6 +648,55 @@ bool D3D12TextureCache::Initialize() {
+       REXGPU_WARN("D3D12TextureCache: Failed to create the native resolve pipeline");
+     }
+   }
++  // gpu_native_hook_example: the example effect of ApplyNativeResolveHooks, skipped if this fails.
++  // native_hook_desaturate_cs loads from a typed R16G16B16A16_FLOAT UAV.
++  if (REXCVAR_GET(gpu_native_resolves) && REXCVAR_GET(gpu_native_hook_example)) {
++    D3D12_FEATURE_DATA_FORMAT_SUPPORT hook_format_support = {DXGI_FORMAT_R16G16B16A16_FLOAT};
++    if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &hook_format_support,
++                                           sizeof(hook_format_support))) ||
++        !(hook_format_support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD)) {
++      REXGPU_WARN(
++          "D3D12TextureCache: R16G16B16A16_FLOAT typed UAV loads not supported, "
++          "gpu_native_hook_example disabled");
++    } else {
++      D3D12_ROOT_PARAMETER hook_root_parameters[2];
++      hook_root_parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
++      hook_root_parameters[0].Constants.ShaderRegister = 0;
++      hook_root_parameters[0].Constants.RegisterSpace = 0;
++      hook_root_parameters[0].Constants.Num32BitValues =
++          sizeof(NativeHookDesaturateConstants) / sizeof(uint32_t);
++      hook_root_parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++      D3D12_DESCRIPTOR_RANGE hook_texture_range;
++      hook_texture_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
++      hook_texture_range.NumDescriptors = 1;
++      hook_texture_range.BaseShaderRegister = 0;
++      hook_texture_range.RegisterSpace = 0;
++      hook_texture_range.OffsetInDescriptorsFromTableStart = 0;
++      hook_root_parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++      hook_root_parameters[1].DescriptorTable.NumDescriptorRanges = 1;
++      hook_root_parameters[1].DescriptorTable.pDescriptorRanges = &hook_texture_range;
++      hook_root_parameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
++      D3D12_ROOT_SIGNATURE_DESC hook_root_signature_desc;
++      hook_root_signature_desc.NumParameters = UINT(rex::countof(hook_root_parameters));
++      hook_root_signature_desc.pParameters = hook_root_parameters;
++      hook_root_signature_desc.NumStaticSamplers = 0;
++      hook_root_signature_desc.pStaticSamplers = nullptr;
++      hook_root_signature_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
++      *(native_hook_desaturate_root_signature_.ReleaseAndGetAddressOf()) =
++          ui::d3d12::util::CreateRootSignature(provider, hook_root_signature_desc);
++      if (native_hook_desaturate_root_signature_) {
++        *(native_hook_desaturate_pipeline_.ReleaseAndGetAddressOf()) =
++            ui::d3d12::util::CreateComputePipeline(device, shaders::native_hook_desaturate_cs,
++                                                   sizeof(shaders::native_hook_desaturate_cs),
++                                                   native_hook_desaturate_root_signature_.Get());
++      }
++      if (!native_hook_desaturate_root_signature_ || !native_hook_desaturate_pipeline_) {
++        native_hook_desaturate_pipeline_.Reset();
++        native_hook_desaturate_root_signature_.Reset();
++        REXGPU_WARN("D3D12TextureCache: Failed to create the native hook example pipeline");
++      }
++    }
++  }
+ 
+   srv_descriptor_cache_allocated_ = 0;
+ 
+@@ -1538,6 +1588,9 @@ void D3D12TextureCache::WriteNativeResolveToTextures(const NativeResolveWrite& w
+     uint32_t width = std::min(write.width, texture_width - write.dest_x);
+     uint32_t height = std::min(write.height, texture_height - write.dest_y);
+     ID3D12Resource* texture_resource = d3d12_texture.resource();
++    const NativeResolveHookInfo hook_info = {uint32_t(key.base_page) << 12, key.format,
++                                             texture_width * scale_x, texture_height * scale_y,
++                                             write.exp_bias};
+ 
+     if (write.mode != NativeResolveMode::kCopy) {
+       if (!native_resolve_pipeline_) {
+@@ -1616,6 +1669,7 @@ void D3D12TextureCache::WriteNativeResolveToTextures(const NativeResolveWrite& w
+           texture_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, texture_state);
+       d3d12_texture.SetResourceState(texture_state);
+ 
++      ApplyNativeResolveHooks(d3d12_texture, hook_info, counts);
+       MakeTextureUpToDateAndWatch(texture);
+       ++counts.written;
+       return;
+@@ -1659,11 +1713,69 @@ void D3D12TextureCache::WriteNativeResolveToTextures(const NativeResolveWrite& w
+                                              texture_state);
+     d3d12_texture.SetResourceState(texture_state);
+ 
++    ApplyNativeResolveHooks(d3d12_texture, hook_info, counts);
+     MakeTextureUpToDateAndWatch(texture);
+     ++counts.written;
+   });
+ }
+ 
++void D3D12TextureCache::ApplyNativeResolveHooks(D3D12Texture& texture,
++                                                const NativeResolveHookInfo& info,
++                                                NativeResolveWriteCounts& counts) {
++  // Hook point: the texture holds the resolved image, in its regular state, and the game samples
++  // it once WriteNativeResolveToTextures marks it up to date. To add an effect: a cvar (flags.h),
++  // a compute shader built into shaders/bytecode/d3d12_5_1, its root signature and pipeline
++  // created in Initialize only with the cvar on, a condition on info below, and a dispatch on the
++  // texture's UAV with the barriers of the example (UAV in, UAV barrier, previous state back), and
++  // a counter in NativeResolveWriteCounts logged by D3D12RenderTargetCache::ReportNativeResolves.
++  if (native_hook_desaturate_pipeline_ &&
++      info.format == xenos::TextureFormat::k_16_16_16_16_FLOAT && info.exp_bias < 0 &&
++      info.width && info.height) {
++    ID3D12Resource* texture_resource = texture.resource();
++    // Created before gpu_native_resolves was enabled, or not matching the CreateTexture conditions.
++    if (!(texture_resource->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) {
++      return;
++    }
++    ui::d3d12::util::DescriptorCpuGpuHandlePair descriptor;
++    if (!command_processor_.RequestOneUseSingleViewDescriptors(1, &descriptor)) {
++      return;
++    }
++    D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc;
++    uav_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++    uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++    uav_desc.Texture2D.MipSlice = 0;
++    uav_desc.Texture2D.PlaneSlice = 0;
++    command_processor_.GetD3D12Provider().GetDevice()->CreateUnorderedAccessView(
++        texture_resource, nullptr, &uav_desc, descriptor.first);
++
++    // Referenced by the command list now.
++    texture.MarkAsUsed();
++    D3D12_RESOURCE_STATES texture_state =
++        texture.SetResourceState(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    command_processor_.PushTransitionBarrier(texture_resource, texture_state,
++                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    command_processor_.SubmitBarriers();
++
++    DeferredCommandList& command_list = command_processor_.GetDeferredCommandList();
++    command_processor_.SetExternalPipeline(native_hook_desaturate_pipeline_.Get());
++    command_list.D3DSetComputeRootSignature(native_hook_desaturate_root_signature_.Get());
++    command_list.D3DSetComputeRootDescriptorTable(1, descriptor.second);
++    NativeHookDesaturateConstants constants;
++    constants.size[0] = info.width;
++    constants.size[1] = info.height;
++    command_list.D3DSetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
++                                                 &constants, 0);
++    command_list.D3DDispatch((info.width + 7) >> 3, (info.height + 7) >> 3, 1);
++
++    // Leave the texture in the state its users expect it to be in.
++    command_processor_.PushUAVBarrier(texture_resource);
++    command_processor_.PushTransitionBarrier(texture_resource,
++                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, texture_state);
++    texture.SetResourceState(texture_state);
++    ++counts.hook_example;
++  }
++}
++
+ void D3D12TextureCache::CreateCurrentScaledResolveRangeUintPow2SRV(
+     D3D12_CPU_DESCRIPTOR_HANDLE handle, uint32_t element_size_bytes_pow2) {
+   assert_true(IsDrawResolutionScaled());
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index 6ab1a87..00bc2d8 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -54,6 +54,13 @@ REXCVAR_DEFINE_BOOL(gpu_native_resolves, false, "GPU",
+                     "destination, keeping them up to date (needs gpu_native_surfaces)")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
++REXCVAR_DEFINE_BOOL(gpu_native_hook_example, false, "GPU",
++                    "Native renderer, phase 5 example hook: desaturates the HDR scene colour "
++                    "(k_16_16_16_16_FLOAT textures written by a native resolve with a negative "
++                    "exponent bias) before the game samples it, to show where effects can be "
++                    "inserted; needs gpu_native_resolves")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ namespace rex::graphics {
+ 
+ namespace {
+diff --git a/src/graphics/shaders/bytecode/d3d12_5_1/native_hook_desaturate_cs.h b/src/graphics/shaders/bytecode/d3d12_5_1/native_hook_desaturate_cs.h
+new file mode 100644
+index 0000000..0e082ab
+--- /dev/null
++++ b/src/graphics/shaders/bytecode/d3d12_5_1/native_hook_desaturate_cs.h
+@@ -0,0 +1,215 @@
++#if 0
++//
++// Generated by Microsoft (R) HLSL Shader Compiler 10.1
++//
++//
++// Note: shader requires additional functionality:
++//       Typed UAV Load Additional Formats
++//
++//
++// Buffer Definitions: 
++//
++// cbuffer XeNativeHookDesaturateConstants
++// {
++//
++//   uint2 xe_native_hook_size;         // Offset:    0 Size:     8
++//
++// }
++//
++//
++// Resource Bindings:
++//
++// Name                                 Type  Format         Dim      ID      HLSL Bind  Count
++// ------------------------------ ---------- ------- ----------- ------- -------------- ------
++// xe_native_hook_texture                UAV  float4          2d      U0             u0      1 
++// XeNativeHookDesaturateConstants    cbuffer      NA          NA     CB0            cb0      1 
++//
++//
++//
++// Input signature:
++//
++// Name                 Index   Mask Register SysValue  Format   Used
++// -------------------- ----- ------ -------- -------- ------- ------
++// no Input
++//
++// Output signature:
++//
++// Name                 Index   Mask Register SysValue  Format   Used
++// -------------------- ----- ------ -------- -------- ------- ------
++// no Output
++cs_5_1
++dcl_globalFlags refactoringAllowed
++dcl_constantbuffer CB0[0:0][1], immediateIndexed, space=0
++dcl_uav_typed_texture2d (float,float,float,float) U0[0:0], space=0
++dcl_input vThreadID.xy
++dcl_temps 1
++dcl_thread_group 8, 8, 1
++uge r0.xy, vThreadID.xyxx, CB0[0][0].xyxx
++or r0.x, r0.y, r0.x
++if_nz r0.x
++  ret 
++endif 
++ld_uav_typed r0.xyzw, vThreadID.xyyy, U0[0].xwyz
++dp3 r0.x, r0.xzwx, l(0.212600, 0.715200, 0.072200, 0.000000)
++store_uav_typed U0[0].xyzw, vThreadID.xyyy, r0.xxxy
++ret 
++// Approximately 9 instruction slots used
++#endif
++
++const BYTE native_hook_desaturate_cs[] =
++{
++     68,  88,  66,  67,  17,  78, 
++      2,  87, 246,  40,  96, 184, 
++    140,  14, 144,   0,  46,  49, 
++    227, 254,   1,   0,   0,   0, 
++    152,   3,   0,   0,   6,   0, 
++      0,   0,  56,   0,   0,   0, 
++    172,   1,   0,   0, 188,   1, 
++      0,   0, 204,   1,   0,   0, 
++    236,   2,   0,   0, 252,   2, 
++      0,   0,  82,  68,  69,  70, 
++    108,   1,   0,   0,   1,   0, 
++      0,   0, 196,   0,   0,   0, 
++      2,   0,   0,   0,  60,   0, 
++      0,   0,   1,   5,  83,  67, 
++      0, 133,   0,   0,  68,   1, 
++      0,   0,  19,  19,  68,  37, 
++     60,   0,   0,   0,  24,   0, 
++      0,   0,  40,   0,   0,   0, 
++     40,   0,   0,   0,  36,   0, 
++      0,   0,  12,   0,   0,   0, 
++      0,   0,   0,   0, 140,   0, 
++      0,   0,   4,   0,   0,   0, 
++      5,   0,   0,   0,   4,   0, 
++      0,   0, 255, 255, 255, 255, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,  12,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0, 163,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   1,   0,   0,   0, 
++      1,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++    120, 101,  95, 110,  97, 116, 
++    105, 118, 101,  95, 104, 111, 
++    111, 107,  95, 116, 101, 120, 
++    116, 117, 114, 101,   0,  88, 
++    101,  78,  97, 116, 105, 118, 
++    101,  72, 111, 111, 107,  68, 
++    101, 115,  97, 116, 117, 114, 
++     97, 116, 101,  67, 111, 110, 
++    115, 116,  97, 110, 116, 115, 
++      0, 171, 163,   0,   0,   0, 
++      1,   0,   0,   0, 220,   0, 
++      0,   0,  16,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   4,   1,   0,   0, 
++      0,   0,   0,   0,   8,   0, 
++      0,   0,   2,   0,   0,   0, 
++     32,   1,   0,   0,   0,   0, 
++      0,   0, 255, 255, 255, 255, 
++      0,   0,   0,   0, 255, 255, 
++    255, 255,   0,   0,   0,   0, 
++    120, 101,  95, 110,  97, 116, 
++    105, 118, 101,  95, 104, 111, 
++    111, 107,  95, 115, 105, 122, 
++    101,   0, 117, 105, 110, 116, 
++     50,   0, 171, 171,   1,   0, 
++     19,   0,   1,   0,   2,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     24,   1,   0,   0,  77, 105, 
++     99, 114, 111, 115, 111, 102, 
++    116,  32,  40,  82,  41,  32, 
++     72,  76,  83,  76,  32,  83, 
++    104,  97, 100, 101, 114,  32, 
++     67, 111, 109, 112, 105, 108, 
++    101, 114,  32,  49,  48,  46, 
++     49,   0,  73,  83,  71,  78, 
++      8,   0,   0,   0,   0,   0, 
++      0,   0,   8,   0,   0,   0, 
++     79,  83,  71,  78,   8,   0, 
++      0,   0,   0,   0,   0,   0, 
++      8,   0,   0,   0,  83,  72, 
++     69,  88,  24,   1,   0,   0, 
++     81,   0,   5,   0,  70,   0, 
++      0,   0, 106,   8,   0,   1, 
++     89,   0,   0,   7,  70, 142, 
++     48,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   1,   0,   0,   0, 
++      0,   0,   0,   0, 156,  24, 
++      0,   7,  70, 238,  49,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     85,  85,   0,   0,   0,   0, 
++      0,   0,  95,   0,   0,   2, 
++     50,   0,   2,   0, 104,   0, 
++      0,   2,   1,   0,   0,   0, 
++    155,   0,   0,   4,   8,   0, 
++      0,   0,   8,   0,   0,   0, 
++      1,   0,   0,   0,  80,   0, 
++      0,   8,  50,   0,  16,   0, 
++      0,   0,   0,   0,  70,   0, 
++      2,   0,  70, 128,  48,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     60,   0,   0,   7,  18,   0, 
++     16,   0,   0,   0,   0,   0, 
++     26,   0,  16,   0,   0,   0, 
++      0,   0,  10,   0,  16,   0, 
++      0,   0,   0,   0,  31,   0, 
++      4,   3,  10,   0,  16,   0, 
++      0,   0,   0,   0,  62,   0, 
++      0,   1,  21,   0,   0,   1, 
++    163,   0,   0,   7, 242,   0, 
++     16,   0,   0,   0,   0,   0, 
++     70,   5,   2,   0, 198, 233, 
++     33,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,  16,   0, 
++      0,  10,  18,   0,  16,   0, 
++      0,   0,   0,   0, 134,   3, 
++     16,   0,   0,   0,   0,   0, 
++      2,  64,   0,   0, 208, 179, 
++     89,  62,  89,  23,  55,  63, 
++    152, 221, 147,  61,   0,   0, 
++      0,   0, 164,   0,   0,   7, 
++    242, 224,  33,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++     70,   5,   2,   0,   6,   4, 
++     16,   0,   0,   0,   0,   0, 
++     62,   0,   0,   1,  83,  70, 
++     73,  48,   8,   0,   0,   0, 
++      0,   8,   0,   0,   0,   0, 
++      0,   0,  83,  84,  65,  84, 
++    148,   0,   0,   0,   9,   0, 
++      0,   0,   1,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,   1,   0,   0,   0, 
++      0,   0,   0,   0,   2,   0, 
++      0,   0,   2,   0,   0,   0, 
++      1,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   0,   0, 
++      0,   0,   0,   0,   1,   0, 
++      0,   0
++};
+diff --git a/src/graphics/shaders/native_hook_desaturate.cs.hlsl b/src/graphics/shaders/native_hook_desaturate.cs.hlsl
+new file mode 100644
+index 0000000..4392b94
+--- /dev/null
++++ b/src/graphics/shaders/native_hook_desaturate.cs.hlsl
+@@ -0,0 +1,29 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2025 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ */
++
++// gpu_native_hook_example: desaturates a texture written by a native resolve in
++// place (D3D12TextureCache::ApplyNativeResolveHooks), rgb = Rec. 709 luminance,
++// alpha unchanged.
++// Each thread handles one host pixel (already scaled with resolution scaling).
++
++cbuffer XeNativeHookDesaturateConstants : register(b0) {
++  uint2 xe_native_hook_size;
++};
++
++RWTexture2D<float4> xe_native_hook_texture : register(u0);
++
++[numthreads(8, 8, 1)]
++void main(uint3 xe_thread_id : SV_DispatchThreadID) {
++  [branch] if (any(xe_thread_id.xy >= xe_native_hook_size)) {
++    return;
++  }
++  float4 value = xe_native_hook_texture[xe_thread_id.xy];
++  value.rgb = dot(value.rgb, float3(0.2126, 0.7152, 0.0722));
++  xe_native_hook_texture[xe_thread_id.xy] = value;
++}
