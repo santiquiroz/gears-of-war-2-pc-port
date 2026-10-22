@@ -83,3 +83,19 @@ Effort: phase 0 is days; phases 1-3 are weeks each. Phase 0 is the decision poin
 Phase 0 started on 2026-10-21; its measurements are in
 [NATIVE_RENDERER_PHASE0.md](NATIVE_RENDERER_PHASE0.md): the scene draws are accounted for by four
 hookable functions, Clear and Resolve are named too, and phase 0 met its exit criterion: phase 1 is next.
+
+## Decision point after phase 1 (2026-10-22)
+
+Phase 1 measured where the emulated frame goes ([NATIVE_RENDERER_PHASE1.md](NATIVE_RENDERER_PHASE1.md))
+and most of it turned out to be fixable inside the emulation: the unclipped-draw estimate (SDK 0033), the
+per-frame re-upload of the working set (`clear_memory_page_state`, SDK 0035 and the game's per-GPU
+defaults) and Direct3D's 4x clears (0034, branch). In the chapter 2 hospital on an RX 7800 XT the
+emulation went from 95 to about 240 fps at 720p, which is the `gpu_native` ceiling (no draws at all,
+250-280 fps), and from 77 to 144 fps at 1440p.
+
+So on the PC a native renderer would now win little at 720p; at 1440p and above the remaining cost is
+pixels (about 2 ms) and resolves (about 2.4 ms: a dump of the render target to the EDRAM buffer, a copy
+to guest memory and a reload into the texture, three passes where a native renderer has one copy).
+The cheaper next step is a resolve that goes straight from the host render target to the texture,
+inside the emulation, before committing to phases 2-4. On the phone the frame was 38-40 fps against the
+60 fps cap without draws; it needs measuring again from a cool start with these changes.
