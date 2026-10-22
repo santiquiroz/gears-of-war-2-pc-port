@@ -1,0 +1,29 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index e466ae3..0a4f516 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -43,6 +43,12 @@
+ 
+ REXCVAR_DEFINE_BOOL(vsync, true, "GPU", "Enable vertical sync");
+ 
++REXCVAR_DEFINE_BOOL(gpu_native, false, "GPU",
++                   "Native renderer, phase 1 (docs/NATIVE_RENDERER_PHASE1.md in the game repository): the command "
++                   "processor still reads every packet (fences, interrupts, swaps) but draws and resolves do not "
++                   "run, so nothing of the frame is emulated")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ #if REX_PLATFORM_ANDROID
+ REXCVAR_DEFINE_INT32(gpu_worker_spin_us, -1, "GPU",
+                      "Microseconds the GPU command thread polls for new commands, pausing with an "
+@@ -1431,7 +1437,10 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+ 
+       bool major_mode_explicit =
+           xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type);
+-      draw_succeeded = IssueDraw(vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
++      // gpu_native: a native renderer draws from the game's Direct3D calls instead; IssueDraw also
++      // runs the resolves (EDRAM copy mode), so skipping it skips all EDRAM work.
++      draw_succeeded = REXCVAR_GET(gpu_native) ||
++                       IssueDraw(vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
+                                  is_indexed ? &index_buffer_info : nullptr, major_mode_explicit);
+       if (!draw_succeeded) {
+         auto vgt_output_path_cntl = register_file_->Get<reg::VGT_OUTPUT_PATH_CNTL>();

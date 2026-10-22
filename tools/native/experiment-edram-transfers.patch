@@ -1,0 +1,75 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 0a4f516..0ed2e17 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -112,6 +112,11 @@ REXCVAR_DEFINE_BOOL(async_shader_compilation, true, "GPU",
+ 
+ namespace rex::graphics {
+ 
++// EXPERIMENT (native renderer phase 2): whether the bound shaders came embedded in the packet stream
++// (IM_LOAD_IMMEDIATE, Direct3D's internal clears and copies) rather than from the game's memory.
++bool g_gpu_internal_vertex_shader = false;
++bool g_gpu_internal_pixel_shader = false;
++
+ using namespace rex::graphics::xenos;
+ 
+ namespace {
+@@ -1591,9 +1596,11 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD(memory::RingBuffer* reader, ui
+   switch (shader_type) {
+     case xenos::ShaderType::kVertex:
+       active_vertex_shader_ = shader;
++      g_gpu_internal_vertex_shader = false;
+       break;
+     case xenos::ShaderType::kPixel:
+       active_pixel_shader_ = shader;
++      g_gpu_internal_pixel_shader = false;
+       break;
+     default:
+       assert_unhandled_case(shader_type);
+@@ -1621,9 +1628,11 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD_IMMEDIATE(memory::RingBuffer*
+   switch (shader_type) {
+     case xenos::ShaderType::kVertex:
+       active_vertex_shader_ = shader;
++      g_gpu_internal_vertex_shader = true;
+       break;
+     case xenos::ShaderType::kPixel:
+       active_pixel_shader_ = shader;
++      g_gpu_internal_pixel_shader = true;
+       break;
+     default:
+       assert_unhandled_case(shader_type);
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index 953c5fd..0eafa4e 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -41,8 +41,14 @@ REXCVAR_DEFINE_BOOL(direct_host_resolve, true, "GPU",
+                     "Resolve from host render targets directly to shared memory when possible")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_BOOL(gpu_edram_transfers, true, "GPU", "EXPERIMENT: copy EDRAM contents between host render targets on ownership changes");
++REXCVAR_DEFINE_BOOL(gpu_edram_skip_internal, false, "GPU", "EXPERIMENT: no EDRAM transfers for draws with Direct3D's internal (embedded) shaders");
++
+ namespace rex::graphics {
+ 
++extern bool g_gpu_internal_vertex_shader;
++extern bool g_gpu_internal_pixel_shader;
++
+ void RenderTargetCache::GetPSIColorFormatInfo(xenos::ColorRenderTargetFormat format,
+                                               uint32_t write_mask, float& clamp_rgb_low,
+                                               float& clamp_alpha_low, float& clamp_rgb_high,
+@@ -686,8 +692,14 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
+   for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
+     const std::pair<uint32_t, uint32_t>& rt_base_index = edram_bases_sorted[i];
+     uint32_t rt_bit_index = rt_base_index.second;
++    // EXPERIMENT (native renderer phase 2): gpu_edram_transfers = false keeps the ownership bookkeeping
++    // but copies nothing between render targets that share EDRAM.
+     ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
+-                    interlock_barrier_only ? nullptr : &last_update_transfers_[rt_bit_index]);
++                    (interlock_barrier_only || !REXCVAR_GET(gpu_edram_transfers) ||
++                     (REXCVAR_GET(gpu_edram_skip_internal) && g_gpu_internal_vertex_shader &&
++                      g_gpu_internal_pixel_shader))
++                        ? nullptr
++                        : &last_update_transfers_[rt_bit_index]);
+   }
+ 
+   if (interlock_barrier_only) {
