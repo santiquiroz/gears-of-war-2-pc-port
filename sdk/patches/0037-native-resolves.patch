@@ -1,0 +1,615 @@
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index 874d0f9..bf7546e 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -13,6 +13,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ #include <deque>
+@@ -675,6 +676,43 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+   bool DumpRenderTargets(uint32_t dump_base, uint32_t dump_row_length_used, uint32_t dump_rows,
+                          uint32_t dump_pitch);
+ 
++  // gpu_native_resolves: why a resolve or a texture was not written natively.
++  enum class NativeResolveFallback : uint32_t {
++    kDepth,
++    kMsaa,
++    kExpBias,
++    kSwap,
++    kNoSource,
++    kMultipleSources,
++    kPartialSource,
++    kSourceFormat,
++    kDestFormat,
++    kDestArray,
++    kDestBaseAdjusted,
++    kEndian,
++    kHalfPixelFill,
++    kSourcePlacement,
++    kTextureIncompatible,
++    kTextureNotUpToDate,
++    kTextureReplacement,
++    kTextureOutside,
++    kCount,
++  };
++  static const char* const kNativeResolveFallbackNames[size_t(NativeResolveFallback::kCount)];
++  // Whether a host render target resolve copy may be written to the textures natively, counting
++  // the reason if not.
++  bool IsNativeResolveEligible(const draw_util::ResolveInfo& resolve_info);
++  // After DumpRenderTargets and MarkRangeAsResolved for the resolve, copies the resolved region
++  // from the source host render target into the texture cache textures viewing the destination
++  // that were up to date before the resolve, and marks them up to date.
++  void WriteResolveToTextures(const draw_util::ResolveInfo& resolve_info,
++                              D3D12TextureCache& texture_cache);
++  void CountNativeResolveFallback(NativeResolveFallback reason, uint64_t count = 1) {
++    native_resolve_fallbacks_[size_t(reason)] += count;
++  }
++  // Logs the native resolve counts every few seconds.
++  void ReportNativeResolves();
++
+   bool use_stencil_reference_output_ = false;
+ 
+   bool gamma_render_target_as_unorm16_ = false;
+@@ -754,6 +792,12 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+   uint64_t direct_resolve_success_count_ = 0;
+   uint64_t direct_resolve_fallback_count_ = 0;
+ 
++  // gpu_native_resolves: textures written and fallbacks since the last report.
++  uint64_t native_resolve_written_ = 0;
++  std::array<uint64_t, size_t(NativeResolveFallback::kCount)> native_resolve_fallbacks_ = {};
++  std::chrono::steady_clock::time_point native_resolve_last_report_ =
++      std::chrono::steady_clock::now();
++
+   // Parameter 0 - 2 root constants (red, green).
+   ID3D12RootSignature* uint32_rtv_clear_root_signature_ = nullptr;
+   // [32 or 32_32][MSAA samples].
+diff --git a/include/rex/graphics/d3d12/texture_cache.h b/include/rex/graphics/d3d12/texture_cache.h
+index d5a578e..c91098d 100644
+--- a/include/rex/graphics/d3d12/texture_cache.h
++++ b/include/rex/graphics/d3d12/texture_cache.h
+@@ -171,6 +171,39 @@ class D3D12TextureCache final : public TextureCache {
+     GetCurrentScaledResolveBuffer().SetUAVBarrierPending();
+   }
+ 
++  // gpu_native_resolves: a resolve rectangle to copy from a host render target straight into the
++  // textures viewing the resolve destination. Coordinates and sizes are in guest pixels, unscaled.
++  struct NativeResolveWrite {
++    // Physical 4 KB page of the texture base the destination coordinates are relative to.
++    uint32_t base_page;
++    xenos::TextureFormat format;
++    // In TextureKey::pitch units (32 texels).
++    uint32_t pitch;
++    xenos::Endian endianness;
++    // Subresource 0 is copied, the format must be in the same typeless family as the textures'.
++    ID3D12Resource* source;
++    uint32_t source_x;
++    uint32_t source_y;
++    uint32_t dest_x;
++    uint32_t dest_y;
++    uint32_t width;
++    uint32_t height;
++  };
++  struct NativeResolveWriteCounts {
++    uint32_t written = 0;
++    uint32_t incompatible = 0;
++    uint32_t not_up_to_date = 0;
++    uint32_t replacement = 0;
++    uint32_t outside = 0;
++  };
++  // Copies the rectangle into every texture at write.base_page that is a single-level unsigned 2D
++  // tiled texture with the format, pitch and endianness of the resolve, matching resolution
++  // scaling, and up to date before the resolve (CaptureUpToDateBeforeResolve), then marks those
++  // up to date. source_state is the current state of the source, updated if it's transitioned.
++  void WriteNativeResolveToTextures(const NativeResolveWrite& write,
++                                    D3D12_RESOURCE_STATES& source_state,
++                                    NativeResolveWriteCounts& counts);
++
+   // Returns the ID3D12Resource of the front buffer texture (in
+   // NON_PIXEL_SHADER_RESOURCE state), or nullptr in case of failure, and writes
+   // the description of its SRV. May call LoadTextureData, so the same
+diff --git a/include/rex/graphics/flags.h b/include/rex/graphics/flags.h
+index f4ac6a1..798fd3f 100644
+--- a/include/rex/graphics/flags.h
++++ b/include/rex/graphics/flags.h
+@@ -44,6 +44,7 @@ REXCVAR_DECLARE(bool, snorm16_render_target_full_range);
+ REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
+ REXCVAR_DECLARE(bool, direct_host_resolve);
+ REXCVAR_DECLARE(bool, gpu_native_surfaces);
++REXCVAR_DECLARE(bool, gpu_native_resolves);
+ 
+ // GPU Textures
+ REXCVAR_DECLARE(bool, texture_dump);
+diff --git a/include/rex/graphics/pipeline/texture/cache.h b/include/rex/graphics/pipeline/texture/cache.h
+index 91837b1..ba6f9c8 100644
+--- a/include/rex/graphics/pipeline/texture/cache.h
++++ b/include/rex/graphics/pipeline/texture/cache.h
+@@ -83,6 +83,9 @@ class TextureCache {
+   virtual void BeginFrame();
+ 
+   void MarkRangeAsResolved(uint32_t start_unscaled, uint32_t length_unscaled);
++  // gpu_native_resolves: for the textures with the base page in the range, records whether the
++  // base level is up to date, to be called right before MarkRangeAsResolved invalidates them.
++  void CaptureUpToDateBeforeResolve(uint32_t start, uint32_t length);
+   // Ensures the memory backing the range in the scaled resolve address space is
+   // allocated and returns whether it is.
+   virtual bool EnsureScaledResolveMemoryCommitted(uint32_t /*start_unscaled*/,
+@@ -249,6 +252,13 @@ class TextureCache {
+     }
+     void MakeUpToDateAndWatch(const std::unique_lock<std::recursive_mutex>& global_lock);
+ 
++    // gpu_native_resolves: whether the base level was up to date as of the last
++    // CaptureUpToDateBeforeResolve covering the base page.
++    bool base_up_to_date_before_resolve() const { return base_up_to_date_before_resolve_; }
++    void CaptureBaseUpToDateBeforeResolve(const std::unique_lock<std::recursive_mutex>& global_lock) {
++      base_up_to_date_before_resolve_ = !base_outdated(global_lock);
++    }
++
+     void WatchCallback(const std::unique_lock<std::recursive_mutex>& global_lock, bool is_mip);
+ 
+     // Makes the next use reload the guest data, as if the guest had written the memory: the
+@@ -299,6 +309,7 @@ class TextureCache {
+     bool base_outdated_ = false;
+     // Whether the recent mip data needs reloading from the memory.
+     bool mips_outdated_ = false;
++    bool base_up_to_date_before_resolve_ = false;
+     std::atomic<uint32_t> outdated_mask_{0};
+     // Watch handles for the memory ranges.
+     SharedMemory::WatchHandle base_watch_handle_ = nullptr;
+@@ -311,6 +322,14 @@ class TextureCache {
+   // Marks every texture the predicate accepts as outdated (see Texture::ForceOutdated).
+   void MarkTexturesOutdated(const std::function<bool(Texture&)>& predicate);
+ 
++  // Visits the textures with the base level at the 4 KB physical page. The visitor must not create
++  // or destroy textures.
++  void ForEachTextureAtBasePage(uint32_t base_page, const std::function<void(Texture&)>& visit);
++
++  // gpu_native_resolves: for a texture whose base level the host has just written with the data
++  // the guest memory now contains, marks it up to date and watches its memory again.
++  void MakeTextureUpToDateAndWatch(Texture& texture);
++
+   // Rules of data access in load shaders:
+   // - Source reading (from the shared memory or the scaled resolve buffer):
+   //   - Guest data may be stored in a sparsely-allocated buffer, or, in
+@@ -650,6 +669,8 @@ class TextureCache {
+   uint64_t current_submission_time_ = 0;
+ 
+   std::unordered_map<TextureKey, std::unique_ptr<Texture>, TextureKey::Hasher> textures_;
++  // The textures in textures_ by TextureKey::base_page.
++  std::unordered_multimap<uint32_t, Texture*> textures_by_base_page_;
+ 
+   uint64_t textures_total_host_memory_usage_ = 0;
+ 
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index be949b2..469a2bb 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -1521,9 +1521,26 @@ bool D3D12RenderTargetCache::ResolveImpl(const memory::Memory& memory,
+             shared_memory.MarkUAVWritesCommitNeeded();
+           }
+ 
++          // gpu_native_resolves: the textures viewing the destination that are up to date now
++          // stay up to date if the resolved region is also copied into them on the host.
++          const bool native_resolve = REXCVAR_GET(gpu_native_resolves) &&
++                                      REXCVAR_GET(gpu_native_surfaces) &&
++                                      GetPath() == Path::kHostRenderTargets &&
++                                      IsNativeResolveEligible(resolve_info);
++          if (native_resolve) {
++            // From the base, which may be before the extent start, for the textures at the base.
++            texture_cache.CaptureUpToDateBeforeResolve(
++                resolve_info.copy_dest_base, resolve_info.copy_dest_extent_start -
++                                                 resolve_info.copy_dest_base +
++                                                 resolve_info.copy_dest_extent_length);
++          }
++
+           // Invalidate textures and mark the range as scaled if needed.
+           texture_cache.MarkRangeAsResolved(resolve_info.copy_dest_extent_start,
+                                             resolve_info.copy_dest_extent_length);
++          if (native_resolve) {
++            WriteResolveToTextures(resolve_info, texture_cache);
++          }
+           written_address_out = resolve_info.copy_dest_extent_start;
+           written_length_out = resolve_info.copy_dest_extent_length;
+           copied = true;
+@@ -6008,4 +6025,205 @@ bool D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base, uint32_t dump
+   return all_pipelines_available;
+ }
+ 
++const char* const D3D12RenderTargetCache::kNativeResolveFallbackNames[size_t(
++    NativeResolveFallback::kCount)] = {
++    "depth",
++    "msaa",
++    "exp_bias",
++    "swap",
++    "no_source",
++    "multiple_sources",
++    "partial_source",
++    "source_format",
++    "dest_format",
++    "dest_array",
++    "dest_base_adjusted",
++    "endian",
++    "half_pixel_fill",
++    "source_placement",
++    "texture_incompatible",
++    "texture_not_up_to_date",
++    "texture_replacement",
++    "texture_outside",
++};
++
++bool D3D12RenderTargetCache::IsNativeResolveEligible(const draw_util::ResolveInfo& resolve_info) {
++  NativeResolveFallback reason;
++  if (resolve_info.IsCopyingDepth()) {
++    reason = NativeResolveFallback::kDepth;
++  } else if (resolve_info.color_edram_info.msaa_samples != xenos::MsaaSamples::k1X) {
++    reason = NativeResolveFallback::kMsaa;
++  } else if (resolve_info.copy_dest_info.copy_dest_exp_bias != 0) {
++    reason = NativeResolveFallback::kExpBias;
++  } else if (resolve_info.copy_dest_info.copy_dest_swap != 0) {
++    reason = NativeResolveFallback::kSwap;
++  } else {
++    return true;
++  }
++  CountNativeResolveFallback(reason);
++  ReportNativeResolves();
++  return false;
++}
++
++void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo& resolve_info,
++                                                    D3D12TextureCache& texture_cache) {
++  auto fallback = [this](NativeResolveFallback reason) {
++    CountNativeResolveFallback(reason);
++    ReportNativeResolves();
++  };
++
++  // Only resolves whose result is the render target data as is: the destination format is the
++  // same as the source's, with the same host representation in the texture cache.
++  const auto source_format = xenos::ColorRenderTargetFormat(resolve_info.color_edram_info.format);
++  xenos::ColorFormat dest_color_format;
++  xenos::TextureFormat texture_format;
++  if (source_format == xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT) {
++    dest_color_format = xenos::ColorFormat::k_16_16_16_16_FLOAT;
++    texture_format = xenos::TextureFormat::k_16_16_16_16_FLOAT;
++  } else if (source_format == xenos::ColorRenderTargetFormat::k_16_16_FLOAT) {
++    dest_color_format = xenos::ColorFormat::k_16_16_FLOAT;
++    texture_format = xenos::TextureFormat::k_16_16_FLOAT;
++  } else {
++    fallback(NativeResolveFallback::kSourceFormat);
++    return;
++  }
++  if (resolve_info.copy_dest_info.copy_dest_format != dest_color_format) {
++    fallback(NativeResolveFallback::kDestFormat);
++    return;
++  }
++  if (resolve_info.copy_dest_info.copy_dest_array) {
++    fallback(NativeResolveFallback::kDestArray);
++    return;
++  }
++  // The destination offsets are relative to the texture base only if the base hasn't been moved
++  // closer to a far resolve origin.
++  if (resolve_info.copy_dest_base != register_file()[XE_GPU_REG_RB_COPY_DEST_BASE] ||
++      (resolve_info.copy_dest_base & 0xFFF) != 0) {
++    fallback(NativeResolveFallback::kDestBaseAdjusted);
++    return;
++  }
++  // Endian128 and Endian share the values of the swaps both have.
++  const uint32_t dest_endian = uint32_t(resolve_info.copy_dest_info.copy_dest_endian);
++  if (dest_endian > uint32_t(xenos::Endian::k16in32)) {
++    fallback(NativeResolveFallback::kEndian);
++    return;
++  }
++  // The resolve shader replicates the edge into the half-pixel offset gap with scaling.
++  if (resolve_info.color_edram_info.fill_half_pixel_offset) {
++    fallback(NativeResolveFallback::kHalfPixelFill);
++    return;
++  }
++
++  // The single render target owning the whole resolve area, as dumped by DumpRenderTargets.
++  uint32_t dump_base;
++  uint32_t dump_row_length_used;
++  uint32_t dump_rows;
++  uint32_t dump_pitch;
++  resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used, dump_rows, dump_pitch);
++  GetResolveCopyRectanglesToDump(dump_base, dump_row_length_used, dump_rows, dump_pitch,
++                                 dump_rectangles_);
++  if (dump_rectangles_.empty()) {
++    fallback(NativeResolveFallback::kNoSource);
++    return;
++  }
++  if (dump_rectangles_.size() != 1) {
++    fallback(NativeResolveFallback::kMultipleSources);
++    return;
++  }
++  const ResolveCopyDumpRectangle& rectangle = dump_rectangles_.front();
++  if (!rectangle.render_target) {
++    fallback(NativeResolveFallback::kNoSource);
++    return;
++  }
++  if (rectangle.row_first != 0 || rectangle.rows != dump_rows || rectangle.row_first_start != 0 ||
++      rectangle.row_last_end != dump_row_length_used) {
++    fallback(NativeResolveFallback::kPartialSource);
++    return;
++  }
++  auto& render_target = *static_cast<D3D12RenderTarget*>(rectangle.render_target);
++  const RenderTargetKey rt_key = render_target.key();
++  if (rt_key.is_depth || rt_key.resource_format != uint32_t(source_format)) {
++    fallback(NativeResolveFallback::kSourceFormat);
++    return;
++  }
++  if (rt_key.msaa_samples != xenos::MsaaSamples::k1X) {
++    fallback(NativeResolveFallback::kMsaa);
++    return;
++  }
++
++  // The resolve origin in the render target: the resolve EDRAM base tile relative to the render
++  // target's, laid out with the same pitch, plus the offset within that tile.
++  const uint32_t rt_pitch_tiles = rt_key.GetPitchTiles();
++  const uint32_t resolve_base_tiles = resolve_info.color_edram_info.base_tiles;
++  if (!rt_pitch_tiles || rt_pitch_tiles != resolve_info.color_edram_info.pitch_tiles ||
++      resolve_base_tiles < rt_key.base_tiles) {
++    fallback(NativeResolveFallback::kSourcePlacement);
++    return;
++  }
++  const uint32_t rt_offset_tiles = resolve_base_tiles - rt_key.base_tiles;
++  const uint32_t tile_width_pixels = xenos::kEdramTileWidthSamples >> uint32_t(rt_key.Is64bpp());
++  const uint32_t width = resolve_info.coordinate_info.width_div_8 << 3;
++  const uint32_t height = resolve_info.height_div_8 << 3;
++  D3D12TextureCache::NativeResolveWrite write;
++  write.source_x = (rt_offset_tiles % rt_pitch_tiles) * tile_width_pixels +
++                   (resolve_info.coordinate_info.edram_offset_x_div_8 << 3);
++  write.source_y = (rt_offset_tiles / rt_pitch_tiles) * xenos::kEdramTileHeightSamples +
++                   (resolve_info.coordinate_info.edram_offset_y_div_8 << 3);
++  if (!width || !height || write.source_x + width > rt_key.GetWidth() ||
++      write.source_y + height >
++          GetRenderTargetHeight(rt_key.pitch_tiles_at_32bpp, rt_key.msaa_samples)) {
++    fallback(NativeResolveFallback::kSourcePlacement);
++    return;
++  }
++  write.base_page = (resolve_info.copy_dest_base & 0x1FFFFFFF) >> 12;
++  write.format = texture_format;
++  // TextureKey::pitch is the fetch constant pitch, in 32-texel units like the aligned resolve one.
++  write.pitch = resolve_info.copy_dest_coordinate_info.pitch_aligned_div_32;
++  write.endianness = xenos::Endian(dest_endian);
++  write.source = render_target.resource();
++  write.dest_x = resolve_info.copy_dest_coordinate_info.offset_x_div_8 << 3;
++  write.dest_y = resolve_info.copy_dest_coordinate_info.offset_y_div_8 << 3;
++  write.width = width;
++  write.height = height;
++
++  // DumpRenderTargets has left the render target in this state.
++  const D3D12_RESOURCE_STATES rt_state_before =
++      render_target.SetResourceState(D3D12_RESOURCE_STATE_COPY_SOURCE);
++  D3D12_RESOURCE_STATES rt_state = rt_state_before;
++  D3D12TextureCache::NativeResolveWriteCounts counts;
++  texture_cache.WriteNativeResolveToTextures(write, rt_state, counts);
++  command_processor_.PushTransitionBarrier(render_target.resource(), rt_state, rt_state_before);
++  render_target.SetResourceState(rt_state_before);
++
++  native_resolve_written_ += counts.written;
++  CountNativeResolveFallback(NativeResolveFallback::kTextureIncompatible, counts.incompatible);
++  CountNativeResolveFallback(NativeResolveFallback::kTextureNotUpToDate, counts.not_up_to_date);
++  CountNativeResolveFallback(NativeResolveFallback::kTextureReplacement, counts.replacement);
++  CountNativeResolveFallback(NativeResolveFallback::kTextureOutside, counts.outside);
++  ReportNativeResolves();
++}
++
++void D3D12RenderTargetCache::ReportNativeResolves() {
++  const auto now = std::chrono::steady_clock::now();
++  if (now - native_resolve_last_report_ < std::chrono::seconds(5)) {
++    return;
++  }
++  native_resolve_last_report_ = now;
++  uint64_t fallback_total = 0;
++  std::string fallbacks;
++  for (size_t i = 0; i < size_t(NativeResolveFallback::kCount); ++i) {
++    if (!native_resolve_fallbacks_[i]) {
++      continue;
++    }
++    fallback_total += native_resolve_fallbacks_[i];
++    fallbacks += fmt::format(" {}={}", kNativeResolveFallbackNames[i], native_resolve_fallbacks_[i]);
++  }
++  if (native_resolve_written_ || fallback_total) {
++    REXGPU_INFO("NATIVERESOLVE written {} fallback {}{}", native_resolve_written_, fallback_total,
++                fallbacks);
++  }
++  native_resolve_written_ = 0;
++  native_resolve_fallbacks_.fill(0);
++}
++
+ }  // namespace rex::graphics::d3d12
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index 5e3cd27..a26e186 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -1447,6 +1447,85 @@ void D3D12TextureCache::TransitionCurrentScaledResolveRange(D3D12_RESOURCE_STATE
+                                            new_state);
+ }
+ 
++void D3D12TextureCache::WriteNativeResolveToTextures(const NativeResolveWrite& write,
++                                                     D3D12_RESOURCE_STATES& source_state,
++                                                     NativeResolveWriteCounts& counts) {
++  if (!write.source || !write.width || !write.height) {
++    return;
++  }
++  const bool scaled = IsDrawResolutionScaled();
++  const uint32_t scale_x = draw_resolution_scale_x();
++  const uint32_t scale_y = draw_resolution_scale_y();
++  ForEachTextureAtBasePage(write.base_page, [&](Texture& texture) {
++    const TextureKey& key = texture.key();
++    if (!key.tiled || key.dimension != xenos::DataDimension::k2DOrStacked ||
++        key.depth_or_array_size_minus_1 != 0 || key.mip_max_level != 0 || key.packed_mips ||
++        key.signed_separate || key.format != write.format || key.pitch != write.pitch ||
++        key.endianness != write.endianness || bool(key.scaled_resolve) != scaled ||
++        texture.GetGuestMipsSize() != 0) {
++      ++counts.incompatible;
++      return;
++    }
++    if (!texture.base_up_to_date_before_resolve()) {
++      ++counts.not_up_to_date;
++      return;
++    }
++    auto& d3d12_texture = static_cast<D3D12Texture&>(texture);
++    // Sampling goes to the replacement resource, and the reload decides whether to keep it.
++    if (d3d12_texture.has_replacement() || !d3d12_texture.resource()) {
++      ++counts.replacement;
++      return;
++    }
++    uint32_t texture_width = key.GetWidth();
++    uint32_t texture_height = key.GetHeight();
++    if (write.dest_x >= texture_width || write.dest_y >= texture_height) {
++      ++counts.outside;
++      return;
++    }
++    uint32_t width = std::min(write.width, texture_width - write.dest_x);
++    uint32_t height = std::min(write.height, texture_height - write.dest_y);
++
++    // Referenced by the command list now.
++    texture.MarkAsUsed();
++    command_processor_.PushTransitionBarrier(write.source, source_state,
++                                             D3D12_RESOURCE_STATE_COPY_SOURCE);
++    source_state = D3D12_RESOURCE_STATE_COPY_SOURCE;
++    ID3D12Resource* texture_resource = d3d12_texture.resource();
++    D3D12_RESOURCE_STATES texture_state =
++        d3d12_texture.SetResourceState(D3D12_RESOURCE_STATE_COPY_DEST);
++    command_processor_.PushTransitionBarrier(texture_resource, texture_state,
++                                             D3D12_RESOURCE_STATE_COPY_DEST);
++    command_processor_.SubmitBarriers();
++
++    D3D12_TEXTURE_COPY_LOCATION location_dest;
++    location_dest.pResource = texture_resource;
++    location_dest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++    location_dest.SubresourceIndex = 0;
++    D3D12_TEXTURE_COPY_LOCATION location_source;
++    location_source.pResource = write.source;
++    location_source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++    location_source.SubresourceIndex = 0;
++    D3D12_BOX source_box;
++    source_box.left = write.source_x * scale_x;
++    source_box.top = write.source_y * scale_y;
++    source_box.front = 0;
++    source_box.right = (write.source_x + width) * scale_x;
++    source_box.bottom = (write.source_y + height) * scale_y;
++    source_box.back = 1;
++    command_processor_.GetDeferredCommandList().D3DCopyTextureRegion(
++        &location_dest, write.dest_x * scale_x, write.dest_y * scale_y, 0, &location_source,
++        &source_box);
++
++    // Leave the texture in the state its users expect it to be in.
++    command_processor_.PushTransitionBarrier(texture_resource, D3D12_RESOURCE_STATE_COPY_DEST,
++                                             texture_state);
++    d3d12_texture.SetResourceState(texture_state);
++
++    MakeTextureUpToDateAndWatch(texture);
++    ++counts.written;
++  });
++}
++
+ void D3D12TextureCache::CreateCurrentScaledResolveRangeUintPow2SRV(
+     D3D12_CPU_DESCRIPTOR_HANDLE handle, uint32_t element_size_bytes_pow2) {
+   assert_true(IsDrawResolutionScaled());
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index f550ae5..d083608 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -48,6 +48,12 @@ REXCVAR_DEFINE_BOOL(gpu_native_surfaces, false, "GPU",
+                     "host render targets and draws Direct3D's 4x clears at 1x")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
++REXCVAR_DEFINE_BOOL(gpu_native_resolves, false, "GPU",
++                    "Native renderer, phase 2b: a resolve also copies its result from the host "
++                    "render target straight into the texture cache textures that view the "
++                    "destination, keeping them up to date (needs gpu_native_surfaces)")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ namespace rex::graphics {
+ 
+ namespace {
+diff --git a/src/graphics/pipeline/texture/cache.cpp b/src/graphics/pipeline/texture/cache.cpp
+index 86572bf..7dce8e0 100644
+--- a/src/graphics/pipeline/texture/cache.cpp
++++ b/src/graphics/pipeline/texture/cache.cpp
+@@ -407,6 +407,13 @@ void TextureCache::CompletedSubmissionUpdated(uint64_t completed_submission_inde
+     assert_true(found_texture_it != textures_.end());
+     if (found_texture_it != textures_.end()) {
+       assert_true(found_texture_it->second.get() == texture);
++      auto by_base_page_range = textures_by_base_page_.equal_range(texture->key().base_page);
++      for (auto it = by_base_page_range.first; it != by_base_page_range.second; ++it) {
++        if (it->second == texture) {
++          textures_by_base_page_.erase(it);
++          break;
++        }
++      }
+       textures_.erase(found_texture_it);
+       // `texture` is invalid now.
+     }
+@@ -460,6 +467,32 @@ void TextureCache::MarkRangeAsResolved(uint32_t start_unscaled, uint32_t length_
+   shared_memory().RangeWrittenByGpu(start_unscaled, length_unscaled);
+ }
+ 
++void TextureCache::CaptureUpToDateBeforeResolve(uint32_t start, uint32_t length) {
++  if (length == 0) {
++    return;
++  }
++  start &= 0x1FFFFFFF;
++  length = std::min(length, 0x20000000 - start);
++  uint32_t page_first = start >> 12;
++  uint32_t page_last = (start + length - 1) >> 12;
++  auto global_lock = global_critical_region_.Acquire();
++  if (textures_by_base_page_.size() < size_t(page_last - page_first + 1)) {
++    // Fewer textures than pages - cheaper to check every texture.
++    for (auto& pair : textures_by_base_page_) {
++      if (pair.first >= page_first && pair.first <= page_last) {
++        pair.second->CaptureBaseUpToDateBeforeResolve(global_lock);
++      }
++    }
++    return;
++  }
++  for (uint32_t page = page_first; page <= page_last; ++page) {
++    auto range = textures_by_base_page_.equal_range(page);
++    for (auto it = range.first; it != range.second; ++it) {
++      it->second->CaptureBaseUpToDateBeforeResolve(global_lock);
++    }
++  }
++}
++
+ uint32_t TextureCache::GuestToHostSwizzle(uint32_t guest_swizzle, uint32_t host_format_swizzle) {
+   uint32_t host_swizzle = 0;
+   for (uint32_t i = 0; i < 4; ++i) {
+@@ -983,6 +1016,18 @@ void TextureCache::MarkTexturesOutdated(const std::function<bool(Texture&)>& pre
+   texture_became_outdated_.store(true, std::memory_order_release);
+ }
+ 
++void TextureCache::ForEachTextureAtBasePage(uint32_t base_page,
++                                            const std::function<void(Texture&)>& visit) {
++  auto range = textures_by_base_page_.equal_range(base_page);
++  for (auto it = range.first; it != range.second; ++it) {
++    visit(*it->second);
++  }
++}
++
++void TextureCache::MakeTextureUpToDateAndWatch(Texture& texture) {
++  texture.MakeUpToDateAndWatch(global_critical_region_.Acquire());
++}
++
+ void TextureCache::WatchCallback(const std::unique_lock<std::recursive_mutex>& global_lock,
+                                  void* context, void* data, uint64_t argument,
+                                  bool invalidated_by_gpu) {
+@@ -993,6 +1038,7 @@ void TextureCache::WatchCallback(const std::unique_lock<std::recursive_mutex>& g
+ 
+ void TextureCache::DestroyAllTextures(bool from_destructor) {
+   ResetTextureBindings(from_destructor);
++  textures_by_base_page_.clear();
+   textures_.clear();
+   COUNT_profile_set("gpu/texture_cache/textures", 0);
+ }
+@@ -1110,6 +1156,7 @@ TextureCache::Texture* TextureCache::FindOrCreateTexture(TextureKey key) {
+     }
+     assert_true(new_texture->key() == key);
+     texture = textures_.emplace(key, std::move(new_texture)).first->second.get();
++    textures_by_base_page_.emplace(uint32_t(key.base_page), texture);
+   }
+   COUNT_profile_set("gpu/texture_cache/textures", textures_.size());
+   texture->LogAction("Created");
