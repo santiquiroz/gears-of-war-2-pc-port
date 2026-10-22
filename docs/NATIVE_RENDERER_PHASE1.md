@@ -202,10 +202,12 @@ measured from a cool start with the order alternated (on, off, on, off):
 |---|---|---|
 | `gpu_copy_guest_indices` (0037): index buffers copied on the CPU into the per-frame host index buffer | index uploads 0 KB (from 100 KB), but the same ~33 uploads and 60 passes: the same draws also need vertex data | 44.4, 42.0 / 42.2, 41.9 |
 | `gpu_upload_whole_blocks` (0036): each upload takes the rest of its 256 KB block | uploads 35 to 2.5, passes 60 to 33, upload bytes 3.5x | 42.0, 41.5 / 43.6, 41.9 |
-| `vulkan_shared_memory_host_writes` (0038): the GPU copy of guest memory in host-visible memory, idle blocks written directly | see below | see below |
+| `vulkan_shared_memory_host_writes` (0038): the GPU copy of guest memory in host-visible memory, uploads of pages the GPU has finished with written directly | 0 direct writes: every uploaded page was used in the last two frames | 40-42, one run |
 
 Whole blocks start higher (49 against 46 fps in the first ten seconds) and fall to 36-39 within a minute:
 the phone is thermally limited, so halving the render passes raises the peak, not the sustained rate.
+
+0038 found no page to write: the host GPU runs two submissions (two frames) behind the command processor, and the game rewrites its dynamic buffers every frame in pages the GPU is still reading (on the console the GPU reads memory directly, so its fences only wait for the GPU itself). Direct writes would need the command processor to wait for the GPU, which costs the lag it hides. None of the three raised the sustained rate, so they are out of the series; they are in the branch history (62e4359, 4942b7c) with these numbers.
 
 ## Also found: AMD's default path tinted the hospital teal (fixed by 0033)
 
