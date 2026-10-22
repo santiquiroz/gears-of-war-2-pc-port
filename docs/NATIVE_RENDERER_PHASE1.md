@@ -188,6 +188,7 @@ Ten-minute soaks with the branch and `gpu_msaa_fill_at_1x = true` (scripted movi
 
 Phone measurements need the order alternated: two identical runs back to back on the S25 gave 41-48
 and then 35-40 fps, the second one warmer (37.1 against 39.5 °C), so a single A-then-B pair is noise.
+Waiting for the battery to cool to 34.5 °C before each run and alternating the order (on, off, on, off), `gpu_msaa_fill_at_1x` averaged 43.2 and 40.8 fps against 41.4 and 40.0 off: about 3 %, always in its favour but inside the run-to-run spread. The phone is not limited by these copies; its frame is still about 40 fps against the 60 fps cap.
 
 ## Also found: AMD's default path tinted the hospital teal (fixed by 0033)
 
