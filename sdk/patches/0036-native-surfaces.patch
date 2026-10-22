@@ -56,10 +56,10 @@ index 3bbd52e..112ce15 100644
  }  // namespace rex::graphics
 diff --git a/include/rex/graphics/pipeline/render_target/native_surfaces.h b/include/rex/graphics/pipeline/render_target/native_surfaces.h
 new file mode 100644
-index 0000000..e5eaab2
+index 0000000..20f068b
 --- /dev/null
 +++ b/include/rex/graphics/pipeline/render_target/native_surfaces.h
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,95 @@
 +#pragma once
 +
 +#include <algorithm>
@@ -79,10 +79,17 @@ index 0000000..e5eaab2
 +  uint32_t msaa_samples_log2;
 +};
 +
-+// Which EDRAM ownership copies survive in the native surfaces mode: only depth to depth
-+// (the game reads depth back across the two depth formats at the same EDRAM base).
++// k_16_16 as a colour render target resource format.
++constexpr uint32_t kColorFormat16_16 = 4;
++
++// Which EDRAM ownership copies survive in the native surfaces mode: depth to depth (the game reads
++// depth back across the two depth formats at the same EDRAM base), and k_16_16 colour to depth (at
++// 21:9 the light shafts read a depth surface the game first wrote as a k_16_16 colour target).
 +inline bool KeepTransfer(const SurfaceKind& source, const SurfaceKind& dest) {
-+  return source.is_depth && dest.is_depth;
++  if (!dest.is_depth) {
++    return false;
++  }
++  return source.is_depth || source.format == kColorFormat16_16;
 +}
 +
 +class DropCounters {
@@ -285,10 +292,10 @@ index 12abf77..aff9779 100644
      path_ = Path::kHostRenderTargets;
 diff --git a/tests/unit/graphics/native_surfaces_test.cpp b/tests/unit/graphics/native_surfaces_test.cpp
 new file mode 100644
-index 0000000..69d49e6
+index 0000000..e80f24e
 --- /dev/null
 +++ b/tests/unit/graphics/native_surfaces_test.cpp
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,41 @@
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <rex/graphics/pipeline/render_target/native_surfaces.h>
@@ -300,6 +307,13 @@ index 0000000..69d49e6
 +  CHECK(ns::KeepTransfer({true, 1, 0}, {true, 0, 0}));
 +  CHECK(ns::KeepTransfer({true, 0, 2}, {true, 1, 0}));
 +  CHECK(ns::KeepTransfer({true, 1, 0}, {true, 0, 2}));
++}
++
++TEST_CASE("k_16_16 colour to depth transfers are kept", "[native_surfaces]") {
++  CHECK(ns::KeepTransfer({false, 4, 0}, {true, 0, 0}));
++  CHECK(ns::KeepTransfer({false, 4, 0}, {true, 1, 0}));
++  CHECK_FALSE(ns::KeepTransfer({true, 0, 0}, {false, 4, 0}));
++  CHECK_FALSE(ns::KeepTransfer({false, 4, 0}, {false, 6, 0}));
 +}
 +
 +TEST_CASE("transfers involving colour are dropped", "[native_surfaces]") {
