@@ -75,10 +75,13 @@ Soaks with the native renderer (10 minutes of scripted movement, aiming and firi
 
 ## Next
 
-- More resolve pairs (the scaled resolves, which fall back while
-  `resolve_resolution_scale_fill_half_pixel_offset` fills the edge; `k_16_16`; resolves from two render
-  targets).
-- Vulkan (phase 4), then the parity runs of phase 3.
+- Resolves that still reload (counted, correct): `k_16_16` colour (once a frame), resolves that span
+  two render targets (`multiple_sources`, about once a frame), and the other views of a resolved address
+  (`texture_incompatible`, expected). Scaled resolves (0041), the HDR scene colour with packed mips
+  (0044) and `k_16_16_FLOAT` at `resolution_scale` 2 (0045) are written natively.
+- Vulkan (phase 4): 0040, 0041, 0043 and 0045 compile in the Android build but have not run on a phone
+  yet; the S25 run (cool-gated, alternated, `vulkan_android_stats_log`) decides whether Android turns it
+  on by default.
 
 ## Phase 5 sketch: hooks for mods (decided, not built)
 

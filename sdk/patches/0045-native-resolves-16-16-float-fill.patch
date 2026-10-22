@@ -1,0 +1,530 @@
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+index 16c166c..d61260b 100644
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -456,7 +456,8 @@ class VulkanTextureCache final : public TextureCache {
+   // gpu_native_resolves: whether a texture of the guest format written by native_resolve_*_cs can
+   // be created with VK_IMAGE_USAGE_STORAGE_BIT on the device.
+   static bool IsNativeResolveStorageFormat(xenos::TextureFormat format) {
+-    return format == xenos::TextureFormat::k_16_16_16_16_FLOAT ||
++    return format == xenos::TextureFormat::k_16_16_FLOAT ||
++           format == xenos::TextureFormat::k_16_16_16_16_FLOAT ||
+            format == xenos::TextureFormat::k_8_8_8_8 || format == xenos::TextureFormat::k_24_8 ||
+            format == xenos::TextureFormat::k_24_8_FLOAT;
+   }
+@@ -476,6 +477,7 @@ class VulkanTextureCache final : public TextureCache {
+     kNativeResolvePipelineIndexRGBA16F,
+     kNativeResolvePipelineIndexRGBA8,
+     kNativeResolvePipelineIndexR32F,
++    kNativeResolvePipelineIndexRG16F,
+     kNativeResolvePipelineCount,
+   };
+   VkDescriptorSetLayout native_resolve_descriptor_set_layout_ = VK_NULL_HANDLE;
+diff --git a/include/rex/ui/vulkan/device.h b/include/rex/ui/vulkan/device.h
+index 3d47850..f61e9d1 100644
+--- a/include/rex/ui/vulkan/device.h
++++ b/include/rex/ui/vulkan/device.h
+@@ -110,6 +110,7 @@ class VulkanDevice {
+     bool shaderCullDistance = false;
+     bool sparseBinding = false;
+     bool sparseResidencyBuffer = false;
++    bool shaderStorageImageExtendedFormats = false;
+ 
+     // VK_KHR_sampler_mirror_clamp_to_edge (#15, promoted to 1.2)
+ 
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index bfe3837..2c51ce4 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -6076,6 +6076,7 @@ bool D3D12RenderTargetCache::IsNativeResolveEligible(const draw_util::ResolveInf
+       xenos::MsaaSamples::k1X) {
+     reason = NativeResolveFallback::kMsaa;
+   } else if (!is_depth && resolve_info.copy_dest_info.copy_dest_exp_bias != 0 &&
++             source_color_format != xenos::ColorRenderTargetFormat::k_16_16_FLOAT &&
+              source_color_format != xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT &&
+              source_color_format != xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT) {
+     reason = NativeResolveFallback::kExpBias;
+@@ -6156,6 +6157,11 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+     } else if (source_format == xenos::ColorRenderTargetFormat::k_16_16_FLOAT) {
+       pair = NativeResolvePair::k1616Float;
+       texture_format = xenos::TextureFormat::k_16_16_FLOAT;
++      if (exp_bias || fill_half_pixel_offset) {
++        write.mode = D3D12TextureCache::NativeResolveMode::kScale;
++        write.source_srv_format = DXGI_FORMAT_R16G16_FLOAT;
++        write.dest_uav_format = DXGI_FORMAT_R16G16_FLOAT;
++      }
+     } else if (source_format == xenos::ColorRenderTargetFormat::k_8_8_8_8) {
+       // R8G8B8A8_UNORM render target, R8G8B8A8_TYPELESS texture - copyable without the swap.
+       pair = NativeResolvePair::k8888;
+@@ -6211,8 +6217,8 @@ void D3D12RenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInfo
+   }
+   // The resolve shaders replicate the first surely covered host column / row (scale / 2) into the
+   // half-pixel offset gap before it with resolution scaling, so does native_resolve_cs. Copied
+-  // pairs whose textures can't be written by it (k_16_16_FLOAT, created without unordered access)
+-  // are left to the resolve.
++  // pairs are left to the resolve, as the copy can't do the fill and the textures of some formats
++  // aren't created with unordered access.
+   if (fill_half_pixel_offset) {
+     if (write.mode == D3D12TextureCache::NativeResolveMode::kCopy) {
+       fallback(NativeResolveFallback::kHalfPixelFill);
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index 2000f46..877cd9e 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -2047,7 +2047,8 @@ std::unique_ptr<TextureCache::Texture> D3D12TextureCache::CreateTexture(TextureK
+   if (REXCVAR_GET(gpu_native_resolves) && key.tiled &&
+       key.dimension == xenos::DataDimension::k2DOrStacked && key.depth_or_array_size_minus_1 == 0 &&
+       key.mip_max_level == 0 &&
+-      (key.format == xenos::TextureFormat::k_16_16_16_16_FLOAT ||
++      (key.format == xenos::TextureFormat::k_16_16_FLOAT ||
++       key.format == xenos::TextureFormat::k_16_16_16_16_FLOAT ||
+        key.format == xenos::TextureFormat::k_8_8_8_8 ||
+        key.format == xenos::TextureFormat::k_24_8 ||
+        key.format == xenos::TextureFormat::k_24_8_FLOAT)) {
+diff --git a/src/graphics/shaders/native_resolve.cs.glsl b/src/graphics/shaders/native_resolve.cs.glsl
+index ef095b6..cc86cbf 100644
+--- a/src/graphics/shaders/native_resolve.cs.glsl
++++ b/src/graphics/shaders/native_resolve.cs.glsl
+@@ -30,8 +30,8 @@
+ // Storage image writes need the format qualifier without the
+ // shaderStorageImageWriteWithoutFormat feature, so this is compiled once per
+ // destination format with XE_NATIVE_RESOLVE_DEST_FORMAT defined to rgba16f
+-// (native_resolve_rgba16f_cs), rgba8 (native_resolve_rgba8_cs) or r32f
+-// (native_resolve_r32f_cs).
++// (native_resolve_rgba16f_cs), rgba8 (native_resolve_rgba8_cs), r32f
++// (native_resolve_r32f_cs) or rg16f (native_resolve_rg16f_cs).
+ 
+ #ifndef XE_NATIVE_RESOLVE_DEST_FORMAT
+ #define XE_NATIVE_RESOLVE_DEST_FORMAT rgba16f
+diff --git a/src/graphics/shaders/vulkan_spirv/native_resolve_rg16f_cs.h b/src/graphics/shaders/vulkan_spirv/native_resolve_rg16f_cs.h
+new file mode 100644
+index 0000000..61cc6dc
+--- /dev/null
++++ b/src/graphics/shaders/vulkan_spirv/native_resolve_rg16f_cs.h
+@@ -0,0 +1,259 @@
++// Generated with `xb buildshaders`.
++#if 0
++; SPIR-V
++; Version: 1.0
++; Generator: Google Shaderc over Glslang; 10
++; Bound: 102
++; Schema: 0
++               OpCapability Shader
++               OpCapability StorageImageExtendedFormats
++          %1 = OpExtInstImport "GLSL.std.450"
++               OpMemoryModel Logical GLSL450
++               OpEntryPoint GLCompute %main "main" %gl_GlobalInvocationID
++               OpExecutionMode %main LocalSize 8 8 1
++               OpSource GLSL 460
++               OpSourceExtension "GL_EXT_samplerless_texture_functions"
++               OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
++               OpSourceExtension "GL_GOOGLE_include_directive"
++               OpName %main "main"
++               OpName %gl_GlobalInvocationID "gl_GlobalInvocationID"
++               OpName %XeNativeResolveConstants "XeNativeResolveConstants"
++               OpMemberName %XeNativeResolveConstants 0 "xe_native_resolve_mode"
++               OpMemberName %XeNativeResolveConstants 1 "xe_native_resolve_scale"
++               OpMemberName %XeNativeResolveConstants 2 "xe_native_resolve_source_offset"
++               OpMemberName %XeNativeResolveConstants 3 "xe_native_resolve_dest_offset"
++               OpMemberName %XeNativeResolveConstants 4 "xe_native_resolve_size"
++               OpMemberName %XeNativeResolveConstants 5 "xe_native_resolve_fill"
++               OpName %_ ""
++               OpName %pixel "pixel"
++               OpName %source_pixel "source_pixel"
++               OpName %value "value"
++               OpName %xe_native_resolve_source "xe_native_resolve_source"
++               OpName %xe_native_resolve_dest "xe_native_resolve_dest"
++               OpDecorate %gl_GlobalInvocationID BuiltIn GlobalInvocationId
++               OpMemberDecorate %XeNativeResolveConstants 0 Offset 0
++               OpMemberDecorate %XeNativeResolveConstants 1 Offset 4
++               OpMemberDecorate %XeNativeResolveConstants 2 Offset 8
++               OpMemberDecorate %XeNativeResolveConstants 3 Offset 16
++               OpMemberDecorate %XeNativeResolveConstants 4 Offset 24
++               OpMemberDecorate %XeNativeResolveConstants 5 Offset 32
++               OpDecorate %XeNativeResolveConstants Block
++               OpDecorate %xe_native_resolve_source DescriptorSet 0
++               OpDecorate %xe_native_resolve_source Binding 0
++               OpDecorate %xe_native_resolve_dest DescriptorSet 0
++               OpDecorate %xe_native_resolve_dest Binding 1
++               OpDecorate %xe_native_resolve_dest NonReadable
++               OpDecorate %gl_WorkGroupSize BuiltIn WorkgroupSize
++       %void = OpTypeVoid
++          %3 = OpTypeFunction %void
++       %uint = OpTypeInt 32 0
++     %v3uint = OpTypeVector %uint 3
++%_ptr_Input_v3uint = OpTypePointer Input %v3uint
++%gl_GlobalInvocationID = OpVariable %_ptr_Input_v3uint Input
++     %v2uint = OpTypeVector %uint 2
++      %float = OpTypeFloat 32
++        %int = OpTypeInt 32 1
++      %v2int = OpTypeVector %int 2
++%XeNativeResolveConstants = OpTypeStruct %uint %float %v2int %v2int %v2uint %v2uint
++%_ptr_PushConstant_XeNativeResolveConstants = OpTypePointer PushConstant %XeNativeResolveConstants
++          %_ = OpVariable %_ptr_PushConstant_XeNativeResolveConstants PushConstant
++      %int_4 = OpConstant %int 4
++%_ptr_PushConstant_v2uint = OpTypePointer PushConstant %v2uint
++       %bool = OpTypeBool
++     %v2bool = OpTypeVector %bool 2
++%_ptr_Function_v2int = OpTypePointer Function %v2int
++      %int_5 = OpConstant %int 5
++    %v4float = OpTypeVector %float 4
++%_ptr_Function_v4float = OpTypePointer Function %v4float
++         %46 = OpTypeImage %float 2D 0 0 0 1 Unknown
++%_ptr_UniformConstant_46 = OpTypePointer UniformConstant %46
++%xe_native_resolve_source = OpVariable %_ptr_UniformConstant_46 UniformConstant
++      %int_2 = OpConstant %int 2
++%_ptr_PushConstant_v2int = OpTypePointer PushConstant %v2int
++      %int_0 = OpConstant %int 0
++%_ptr_PushConstant_uint = OpTypePointer PushConstant %uint
++     %uint_1 = OpConstant %uint 1
++     %uint_2 = OpConstant %uint 2
++     %uint_0 = OpConstant %uint 0
++%_ptr_Function_float = OpTypePointer Function %float
++      %int_1 = OpConstant %int 1
++%_ptr_PushConstant_float = OpTypePointer PushConstant %float
++    %float_0 = OpConstant %float 0
++         %90 = OpTypeImage %float 2D 0 0 0 2 Rg16f
++%_ptr_UniformConstant_90 = OpTypePointer UniformConstant %90
++%xe_native_resolve_dest = OpVariable %_ptr_UniformConstant_90 UniformConstant
++      %int_3 = OpConstant %int 3
++     %uint_8 = OpConstant %uint 8
++%gl_WorkGroupSize = OpConstantComposite %v3uint %uint_8 %uint_8 %uint_1
++       %main = OpFunction %void None %3
++          %5 = OpLabel
++      %pixel = OpVariable %_ptr_Function_v2int Function
++%source_pixel = OpVariable %_ptr_Function_v2int Function
++      %value = OpVariable %_ptr_Function_v4float Function
++         %11 = OpLoad %v3uint %gl_GlobalInvocationID
++         %12 = OpVectorShuffle %v2uint %11 %11 0 1
++         %21 = OpAccessChain %_ptr_PushConstant_v2uint %_ %int_4
++         %22 = OpLoad %v2uint %21
++         %25 = OpUGreaterThanEqual %v2bool %12 %22
++         %26 = OpAny %bool %25
++               OpSelectionMerge %28 None
++               OpBranchConditional %26 %27 %28
++         %27 = OpLabel
++               OpReturn
++         %28 = OpLabel
++         %32 = OpLoad %v3uint %gl_GlobalInvocationID
++         %33 = OpVectorShuffle %v2uint %32 %32 0 1
++         %34 = OpBitcast %v2int %33
++               OpStore %pixel %34
++         %36 = OpLoad %v3uint %gl_GlobalInvocationID
++         %37 = OpVectorShuffle %v2uint %36 %36 0 1
++         %39 = OpAccessChain %_ptr_PushConstant_v2uint %_ %int_5
++         %40 = OpLoad %v2uint %39
++         %41 = OpExtInst %v2uint %1 UMax %37 %40
++         %42 = OpBitcast %v2int %41
++               OpStore %source_pixel %42
++         %49 = OpLoad %46 %xe_native_resolve_source
++         %52 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_2
++         %53 = OpLoad %v2int %52
++         %54 = OpLoad %v2int %source_pixel
++         %55 = OpIAdd %v2int %53 %54
++         %57 = OpImageFetch %v4float %49 %55 Lod %int_0
++               OpStore %value %57
++         %59 = OpAccessChain %_ptr_PushConstant_uint %_ %int_0
++         %60 = OpLoad %uint %59
++         %62 = OpIEqual %bool %60 %uint_1
++               OpSelectionMerge %64 None
++               OpBranchConditional %62 %63 %67
++         %63 = OpLabel
++         %65 = OpLoad %v4float %value
++         %66 = OpVectorShuffle %v4float %65 %65 2 1 0 3
++               OpStore %value %66
++               OpBranch %64
++         %67 = OpLabel
++         %68 = OpAccessChain %_ptr_PushConstant_uint %_ %int_0
++         %69 = OpLoad %uint %68
++         %71 = OpIEqual %bool %69 %uint_2
++               OpSelectionMerge %73 None
++               OpBranchConditional %71 %72 %85
++         %72 = OpLabel
++         %76 = OpAccessChain %_ptr_Function_float %value %uint_0
++         %77 = OpLoad %float %76
++         %80 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %81 = OpLoad %float %80
++         %82 = OpFMul %float %77 %81
++         %84 = OpCompositeConstruct %v4float %82 %float_0 %float_0 %float_0
++               OpStore %value %84
++               OpBranch %73
++         %85 = OpLabel
++         %86 = OpAccessChain %_ptr_PushConstant_float %_ %int_1
++         %87 = OpLoad %float %86
++         %88 = OpLoad %v4float %value
++         %89 = OpVectorTimesScalar %v4float %88 %87
++               OpStore %value %89
++               OpBranch %73
++         %73 = OpLabel
++               OpBranch %64
++         %64 = OpLabel
++         %93 = OpLoad %90 %xe_native_resolve_dest
++         %95 = OpAccessChain %_ptr_PushConstant_v2int %_ %int_3
++         %96 = OpLoad %v2int %95
++         %97 = OpLoad %v2int %pixel
++         %98 = OpIAdd %v2int %96 %97
++         %99 = OpLoad %v4float %value
++               OpImageWrite %93 %98 %99
++               OpReturn
++               OpFunctionEnd
++#endif
++
++const uint32_t native_resolve_rg16f_cs[] = {
++    0x07230203, 0x00010000, 0x000D000A, 0x00000066, 0x00000000, 0x00020011, 0x00000001, 0x00020011,
++    0x00000031, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E, 0x00000000, 0x0003000E,
++    0x00000000, 0x00000001, 0x0006000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
++    0x00060010, 0x00000004, 0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00030003, 0x00000002,
++    0x000001CC, 0x000B0004, 0x455F4C47, 0x735F5458, 0x6C706D61, 0x656C7265, 0x745F7373, 0x75747865,
++    0x665F6572, 0x74636E75, 0x736E6F69, 0x00000000, 0x000A0004, 0x475F4C47, 0x4C474F4F, 0x70635F45,
++    0x74735F70, 0x5F656C79, 0x656E696C, 0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47,
++    0x4C474F4F, 0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005, 0x00000004,
++    0x6E69616D, 0x00000000, 0x00080005, 0x00000009, 0x475F6C67, 0x61626F6C, 0x766E496C, 0x7461636F,
++    0x496E6F69, 0x00000044, 0x00090005, 0x00000010, 0x614E6558, 0x65766974, 0x6F736552, 0x4365766C,
++    0x74736E6F, 0x73746E61, 0x00000000, 0x00090006, 0x00000010, 0x00000000, 0x6E5F6578, 0x76697461,
++    0x65725F65, 0x766C6F73, 0x6F6D5F65, 0x00006564, 0x00090006, 0x00000010, 0x00000001, 0x6E5F6578,
++    0x76697461, 0x65725F65, 0x766C6F73, 0x63735F65, 0x00656C61, 0x000B0006, 0x00000010, 0x00000002,
++    0x6E5F6578, 0x76697461, 0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x66666F5F, 0x00746573,
++    0x000B0006, 0x00000010, 0x00000003, 0x6E5F6578, 0x76697461, 0x65725F65, 0x766C6F73, 0x65645F65,
++    0x6F5F7473, 0x65736666, 0x00000074, 0x00090006, 0x00000010, 0x00000004, 0x6E5F6578, 0x76697461,
++    0x65725F65, 0x766C6F73, 0x69735F65, 0x0000657A, 0x00090006, 0x00000010, 0x00000005, 0x6E5F6578,
++    0x76697461, 0x65725F65, 0x766C6F73, 0x69665F65, 0x00006C6C, 0x00030005, 0x00000012, 0x00000000,
++    0x00040005, 0x0000001F, 0x65786970, 0x0000006C, 0x00060005, 0x00000023, 0x72756F73, 0x705F6563,
++    0x6C657869, 0x00000000, 0x00040005, 0x0000002D, 0x756C6176, 0x00000065, 0x00090005, 0x00000030,
++    0x6E5F6578, 0x76697461, 0x65725F65, 0x766C6F73, 0x6F735F65, 0x65637275, 0x00000000, 0x00080005,
++    0x0000005C, 0x6E5F6578, 0x76697461, 0x65725F65, 0x766C6F73, 0x65645F65, 0x00007473, 0x00040047,
++    0x00000009, 0x0000000B, 0x0000001C, 0x00050048, 0x00000010, 0x00000000, 0x00000023, 0x00000000,
++    0x00050048, 0x00000010, 0x00000001, 0x00000023, 0x00000004, 0x00050048, 0x00000010, 0x00000002,
++    0x00000023, 0x00000008, 0x00050048, 0x00000010, 0x00000003, 0x00000023, 0x00000010, 0x00050048,
++    0x00000010, 0x00000004, 0x00000023, 0x00000018, 0x00050048, 0x00000010, 0x00000005, 0x00000023,
++    0x00000020, 0x00030047, 0x00000010, 0x00000002, 0x00040047, 0x00000030, 0x00000022, 0x00000000,
++    0x00040047, 0x00000030, 0x00000021, 0x00000000, 0x00040047, 0x0000005C, 0x00000022, 0x00000000,
++    0x00040047, 0x0000005C, 0x00000021, 0x00000001, 0x00030047, 0x0000005C, 0x00000019, 0x00040047,
++    0x00000065, 0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
++    0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000003,
++    0x00040020, 0x00000008, 0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000001,
++    0x00040017, 0x0000000A, 0x00000006, 0x00000002, 0x00030016, 0x0000000D, 0x00000020, 0x00040015,
++    0x0000000E, 0x00000020, 0x00000001, 0x00040017, 0x0000000F, 0x0000000E, 0x00000002, 0x0008001E,
++    0x00000010, 0x00000006, 0x0000000D, 0x0000000F, 0x0000000F, 0x0000000A, 0x0000000A, 0x00040020,
++    0x00000011, 0x00000009, 0x00000010, 0x0004003B, 0x00000011, 0x00000012, 0x00000009, 0x0004002B,
++    0x0000000E, 0x00000013, 0x00000004, 0x00040020, 0x00000014, 0x00000009, 0x0000000A, 0x00020014,
++    0x00000017, 0x00040017, 0x00000018, 0x00000017, 0x00000002, 0x00040020, 0x0000001E, 0x00000007,
++    0x0000000F, 0x0004002B, 0x0000000E, 0x00000026, 0x00000005, 0x00040017, 0x0000002B, 0x0000000D,
++    0x00000004, 0x00040020, 0x0000002C, 0x00000007, 0x0000002B, 0x00090019, 0x0000002E, 0x0000000D,
++    0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x00040020, 0x0000002F,
++    0x00000000, 0x0000002E, 0x0004003B, 0x0000002F, 0x00000030, 0x00000000, 0x0004002B, 0x0000000E,
++    0x00000032, 0x00000002, 0x00040020, 0x00000033, 0x00000009, 0x0000000F, 0x0004002B, 0x0000000E,
++    0x00000038, 0x00000000, 0x00040020, 0x0000003A, 0x00000009, 0x00000006, 0x0004002B, 0x00000006,
++    0x0000003D, 0x00000001, 0x0004002B, 0x00000006, 0x00000046, 0x00000002, 0x0004002B, 0x00000006,
++    0x0000004A, 0x00000000, 0x00040020, 0x0000004B, 0x00000007, 0x0000000D, 0x0004002B, 0x0000000E,
++    0x0000004E, 0x00000001, 0x00040020, 0x0000004F, 0x00000009, 0x0000000D, 0x0004002B, 0x0000000D,
++    0x00000053, 0x00000000, 0x00090019, 0x0000005A, 0x0000000D, 0x00000001, 0x00000000, 0x00000000,
++    0x00000000, 0x00000002, 0x00000007, 0x00040020, 0x0000005B, 0x00000000, 0x0000005A, 0x0004003B,
++    0x0000005B, 0x0000005C, 0x00000000, 0x0004002B, 0x0000000E, 0x0000005E, 0x00000003, 0x0004002B,
++    0x00000006, 0x00000064, 0x00000008, 0x0006002C, 0x00000007, 0x00000065, 0x00000064, 0x00000064,
++    0x0000003D, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
++    0x0004003B, 0x0000001E, 0x0000001F, 0x00000007, 0x0004003B, 0x0000001E, 0x00000023, 0x00000007,
++    0x0004003B, 0x0000002C, 0x0000002D, 0x00000007, 0x0004003D, 0x00000007, 0x0000000B, 0x00000009,
++    0x0007004F, 0x0000000A, 0x0000000C, 0x0000000B, 0x0000000B, 0x00000000, 0x00000001, 0x00050041,
++    0x00000014, 0x00000015, 0x00000012, 0x00000013, 0x0004003D, 0x0000000A, 0x00000016, 0x00000015,
++    0x000500AE, 0x00000018, 0x00000019, 0x0000000C, 0x00000016, 0x0004009A, 0x00000017, 0x0000001A,
++    0x00000019, 0x000300F7, 0x0000001C, 0x00000000, 0x000400FA, 0x0000001A, 0x0000001B, 0x0000001C,
++    0x000200F8, 0x0000001B, 0x000100FD, 0x000200F8, 0x0000001C, 0x0004003D, 0x00000007, 0x00000020,
++    0x00000009, 0x0007004F, 0x0000000A, 0x00000021, 0x00000020, 0x00000020, 0x00000000, 0x00000001,
++    0x0004007C, 0x0000000F, 0x00000022, 0x00000021, 0x0003003E, 0x0000001F, 0x00000022, 0x0004003D,
++    0x00000007, 0x00000024, 0x00000009, 0x0007004F, 0x0000000A, 0x00000025, 0x00000024, 0x00000024,
++    0x00000000, 0x00000001, 0x00050041, 0x00000014, 0x00000027, 0x00000012, 0x00000026, 0x0004003D,
++    0x0000000A, 0x00000028, 0x00000027, 0x0007000C, 0x0000000A, 0x00000029, 0x00000001, 0x00000029,
++    0x00000025, 0x00000028, 0x0004007C, 0x0000000F, 0x0000002A, 0x00000029, 0x0003003E, 0x00000023,
++    0x0000002A, 0x0004003D, 0x0000002E, 0x00000031, 0x00000030, 0x00050041, 0x00000033, 0x00000034,
++    0x00000012, 0x00000032, 0x0004003D, 0x0000000F, 0x00000035, 0x00000034, 0x0004003D, 0x0000000F,
++    0x00000036, 0x00000023, 0x00050080, 0x0000000F, 0x00000037, 0x00000035, 0x00000036, 0x0007005F,
++    0x0000002B, 0x00000039, 0x00000031, 0x00000037, 0x00000002, 0x00000038, 0x0003003E, 0x0000002D,
++    0x00000039, 0x00050041, 0x0000003A, 0x0000003B, 0x00000012, 0x00000038, 0x0004003D, 0x00000006,
++    0x0000003C, 0x0000003B, 0x000500AA, 0x00000017, 0x0000003E, 0x0000003C, 0x0000003D, 0x000300F7,
++    0x00000040, 0x00000000, 0x000400FA, 0x0000003E, 0x0000003F, 0x00000043, 0x000200F8, 0x0000003F,
++    0x0004003D, 0x0000002B, 0x00000041, 0x0000002D, 0x0009004F, 0x0000002B, 0x00000042, 0x00000041,
++    0x00000041, 0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x0003003E, 0x0000002D, 0x00000042,
++    0x000200F9, 0x00000040, 0x000200F8, 0x00000043, 0x00050041, 0x0000003A, 0x00000044, 0x00000012,
++    0x00000038, 0x0004003D, 0x00000006, 0x00000045, 0x00000044, 0x000500AA, 0x00000017, 0x00000047,
++    0x00000045, 0x00000046, 0x000300F7, 0x00000049, 0x00000000, 0x000400FA, 0x00000047, 0x00000048,
++    0x00000055, 0x000200F8, 0x00000048, 0x00050041, 0x0000004B, 0x0000004C, 0x0000002D, 0x0000004A,
++    0x0004003D, 0x0000000D, 0x0000004D, 0x0000004C, 0x00050041, 0x0000004F, 0x00000050, 0x00000012,
++    0x0000004E, 0x0004003D, 0x0000000D, 0x00000051, 0x00000050, 0x00050085, 0x0000000D, 0x00000052,
++    0x0000004D, 0x00000051, 0x00070050, 0x0000002B, 0x00000054, 0x00000052, 0x00000053, 0x00000053,
++    0x00000053, 0x0003003E, 0x0000002D, 0x00000054, 0x000200F9, 0x00000049, 0x000200F8, 0x00000055,
++    0x00050041, 0x0000004F, 0x00000056, 0x00000012, 0x0000004E, 0x0004003D, 0x0000000D, 0x00000057,
++    0x00000056, 0x0004003D, 0x0000002B, 0x00000058, 0x0000002D, 0x0005008E, 0x0000002B, 0x00000059,
++    0x00000058, 0x00000057, 0x0003003E, 0x0000002D, 0x00000059, 0x000200F9, 0x00000049, 0x000200F8,
++    0x00000049, 0x000200F9, 0x00000040, 0x000200F8, 0x00000040, 0x0004003D, 0x0000005A, 0x0000005D,
++    0x0000005C, 0x00050041, 0x00000033, 0x0000005F, 0x00000012, 0x0000005E, 0x0004003D, 0x0000000F,
++    0x00000060, 0x0000005F, 0x0004003D, 0x0000000F, 0x00000061, 0x0000001F, 0x00050080, 0x0000000F,
++    0x00000062, 0x00000060, 0x00000061, 0x0004003D, 0x0000002B, 0x00000063, 0x0000002D, 0x00040063,
++    0x0000005D, 0x00000062, 0x00000063, 0x000100FD, 0x00010038,
++};
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 9212193..c331b8d 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -6310,6 +6310,7 @@ bool VulkanRenderTargetCache::IsNativeResolveEligible(const draw_util::ResolveIn
+       xenos::MsaaSamples::k1X) {
+     reason = NativeResolveFallback::kMsaa;
+   } else if (!is_depth && resolve_info.copy_dest_info.copy_dest_exp_bias != 0 &&
++             source_color_format != xenos::ColorRenderTargetFormat::k_16_16_FLOAT &&
+              source_color_format != xenos::ColorRenderTargetFormat::k_16_16_16_16_FLOAT &&
+              source_color_format != xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT) {
+     reason = NativeResolveFallback::kExpBias;
+@@ -6385,6 +6386,9 @@ void VulkanRenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInf
+     } else if (source_format == xenos::ColorRenderTargetFormat::k_16_16_FLOAT) {
+       pair = NativeResolvePair::k1616Float;
+       texture_format = xenos::TextureFormat::k_16_16_FLOAT;
++      if (exp_bias || fill_half_pixel_offset) {
++        write.mode = VulkanTextureCache::NativeResolveMode::kScale;
++      }
+     } else if (source_format == xenos::ColorRenderTargetFormat::k_8_8_8_8) {
+       // R8G8B8A8_UNORM render target and texture - copyable without the swap.
+       pair = NativeResolvePair::k8888;
+@@ -6435,8 +6439,8 @@ void VulkanRenderTargetCache::WriteResolveToTextures(const draw_util::ResolveInf
+   }
+   // The resolve shaders replicate the first surely covered host column / row (scale / 2) into the
+   // half-pixel offset gap before it with resolution scaling, so does native_resolve_*_cs. Copied
+-  // pairs whose textures can't be written by it (k_16_16_FLOAT, not a storage format there) are
+-  // left to the resolve.
++  // pairs are left to the resolve, as the copy can't do the fill and the textures of some formats
++  // aren't storage images there.
+   if (fill_half_pixel_offset) {
+     if (write.mode == VulkanTextureCache::NativeResolveMode::kCopy) {
+       fallback(NativeResolveFallback::kHalfPixelFill);
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index dc5c541..a961c1f 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -47,6 +47,7 @@ namespace rex::graphics::vulkan {
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "../shaders/vulkan_spirv/native_resolve_r32f_cs.h"
++#include "../shaders/vulkan_spirv/native_resolve_rg16f_cs.h"
+ #include "../shaders/vulkan_spirv/native_resolve_rgba16f_cs.h"
+ #include "../shaders/vulkan_spirv/native_resolve_rgba8_cs.h"
+ #include "../shaders/vulkan_spirv/texture_load_128bpb_cs.h"
+@@ -2517,6 +2518,9 @@ void VulkanTextureCache::WriteNativeResolveToTextures(const NativeResolveWrite&
+     if (write.mode != NativeResolveMode::kCopy) {
+       uint32_t pipeline_index;
+       switch (texture_format) {
++        case VK_FORMAT_R16G16_SFLOAT:
++          pipeline_index = kNativeResolvePipelineIndexRG16F;
++          break;
+         case VK_FORMAT_R16G16B16A16_SFLOAT:
+           pipeline_index = kNativeResolvePipelineIndexRGBA16F;
+           break;
+@@ -3310,39 +3314,6 @@ bool VulkanTextureCache::Initialize() {
+   // gpu_native_resolves: the resolve writes that are not plain copies. Native resolves of those
+   // fall back to the regular path (counted) if anything here is not available.
+   if (REXCVAR_GET(gpu_native_resolves)) {
+-    for (uint32_t i = 0; i < uint32_t(rex::countof(host_formats_)); ++i) {
+-      if (!IsNativeResolveStorageFormat(xenos::TextureFormat(i))) {
+-        continue;
+-      }
+-      // Every format the image may be viewed as (CreateTexture) must support storage images.
+-      const HostFormatPair& host_format = host_formats_[i];
+-      VkFormat image_formats[2] = {host_format.format_unsigned.format, VK_FORMAT_UNDEFINED};
+-      if (image_formats[0] == VK_FORMAT_UNDEFINED) {
+-        image_formats[0] = host_format.format_signed.format;
+-      } else if (host_format.format_signed.format != VK_FORMAT_UNDEFINED &&
+-                 host_format.format_signed.format != image_formats[0]) {
+-        image_formats[1] = host_format.format_signed.format;
+-      }
+-      bool storage_supported = image_formats[0] != VK_FORMAT_UNDEFINED;
+-      for (VkFormat image_format : image_formats) {
+-        if (image_format == VK_FORMAT_UNDEFINED) {
+-          continue;
+-        }
+-        ifn.vkGetPhysicalDeviceFormatProperties(physical_device, image_format, &format_properties);
+-        if (!(format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
+-          storage_supported = false;
+-        }
+-      }
+-      native_resolve_storage_supported_[i] = storage_supported;
+-      if (!storage_supported) {
+-        REXGPU_WARN(
+-            "VulkanTextureCache: Storage images of the Vulkan formats {} / {} of the texture "
+-            "format {} are not supported, native resolves into it with a shader will fall back",
+-            uint32_t(image_formats[0]), uint32_t(image_formats[1]),
+-            FormatInfo::Get(xenos::TextureFormat(i))->name);
+-      }
+-    }
+-
+     VkDescriptorSetLayoutBinding native_resolve_bindings[2];
+     native_resolve_bindings[0].binding = 0;
+     native_resolve_bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+@@ -3404,7 +3375,14 @@ bool VulkanTextureCache::Initialize() {
+           shaders::native_resolve_rgba8_cs, sizeof(shaders::native_resolve_rgba8_cs));
+       native_resolve_shader_code[kNativeResolvePipelineIndexR32F] =
+           std::make_pair(shaders::native_resolve_r32f_cs, sizeof(shaders::native_resolve_r32f_cs));
++      native_resolve_shader_code[kNativeResolvePipelineIndexRG16F] = std::make_pair(
++          shaders::native_resolve_rg16f_cs, sizeof(shaders::native_resolve_rg16f_cs));
+       for (uint32_t i = 0; i < kNativeResolvePipelineCount; ++i) {
++        // The RG16F storage format needs shaderStorageImageExtendedFormats.
++        if (i == kNativeResolvePipelineIndexRG16F &&
++            !device_properties.shaderStorageImageExtendedFormats) {
++          continue;
++        }
+         native_resolve_pipelines_[i] = ui::vulkan::util::CreateComputePipeline(
+             vulkan_device, native_resolve_pipeline_layout_, native_resolve_shader_code[i].first,
+             native_resolve_shader_code[i].second);
+@@ -3417,6 +3395,44 @@ bool VulkanTextureCache::Initialize() {
+           "VulkanTextureCache: Failed to create the native resolve pipeline layout, native "
+           "resolves with a shader will fall back");
+     }
++
++    // Storage images are needed only for the formats with a native resolve pipeline.
++    for (uint32_t i = 0; i < uint32_t(rex::countof(host_formats_)); ++i) {
++      if (!IsNativeResolveStorageFormat(xenos::TextureFormat(i))) {
++        continue;
++      }
++      // Every format the image may be viewed as (CreateTexture) must support storage images.
++      const HostFormatPair& host_format = host_formats_[i];
++      VkFormat image_formats[2] = {host_format.format_unsigned.format, VK_FORMAT_UNDEFINED};
++      if (image_formats[0] == VK_FORMAT_UNDEFINED) {
++        image_formats[0] = host_format.format_signed.format;
++      } else if (host_format.format_signed.format != VK_FORMAT_UNDEFINED &&
++                 host_format.format_signed.format != image_formats[0]) {
++        image_formats[1] = host_format.format_signed.format;
++      }
++      bool storage_supported = image_formats[0] != VK_FORMAT_UNDEFINED;
++      for (VkFormat image_format : image_formats) {
++        if (image_format == VK_FORMAT_UNDEFINED) {
++          continue;
++        }
++        ifn.vkGetPhysicalDeviceFormatProperties(physical_device, image_format, &format_properties);
++        if (!(format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
++          storage_supported = false;
++        }
++      }
++      if (xenos::TextureFormat(i) == xenos::TextureFormat::k_16_16_FLOAT &&
++          native_resolve_pipelines_[kNativeResolvePipelineIndexRG16F] == VK_NULL_HANDLE) {
++        storage_supported = false;
++      }
++      native_resolve_storage_supported_[i] = storage_supported;
++      if (!storage_supported) {
++        REXGPU_WARN(
++            "VulkanTextureCache: Storage images of the Vulkan formats {} / {} of the texture "
++            "format {} are not supported, native resolves into it with a shader will fall back",
++            uint32_t(image_formats[0]), uint32_t(image_formats[1]),
++            FormatInfo::Get(xenos::TextureFormat(i))->name);
++      }
++    }
+   }
+ 
+   // Use true null descriptors when supported; otherwise, keep compatibility
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 5bcc9ba..986b796 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -643,6 +643,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+     XE_UI_VULKAN_FEATURE(shaderCullDistance)
+     XE_UI_VULKAN_FEATURE(sparseBinding)
+     XE_UI_VULKAN_FEATURE(sparseResidencyBuffer)
++    XE_UI_VULKAN_FEATURE(shaderStorageImageExtendedFormats)
+   }
+ 
+   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
