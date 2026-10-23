@@ -206,3 +206,10 @@ addresses, with `net_broadcast_targets` listing every PC (`docs/COOP_N_PLAYERS.m
   3-8 (`GearPawn_COGGear`) spawned and walked; Dom was still waiting for the Right Trigger after the opening
   cinematic, as in the two-player run. Each copy used about 1 GB of RAM and 0.5 GB of VRAM. A first run with the
   default waits sent the host into the solo campaign: with eight copies starting, the menu needs the longer waits.
+- 2026-10-23, step 5 at 5 players (first count above Stage 2's four), five copies on one PC, one short run per
+  scenario (setup plus one scenario, under 10 minutes each, `resolution_scale` 1, 30 fps cap):
+  - travel: all five joined and spawned, `chapter 5` travel, census on all five, every player with a pawn after it.
+  - kill-extra: player 3 got a pawn again after dying and Marcus was not left dead.
+  - checkpoint: SaveCheckpoint and LoadCheckpoint, five player controllers, every player with a pawn after the load.
+  - The only failures were the setup check in two runs: Dom (player 2) was still waiting for the Right Trigger after
+    the opening cinematic when the check ran (the same timing as the two-player and eight-player runs).
