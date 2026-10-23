@@ -91,3 +91,32 @@ library's clears, resolves and embedded-shader draws.
 Open before S2: the vertex fetch of the non-indexed draws (written outside the fetch shadow), the ALU constants (they
 come through LOAD_ALU_CONSTANT descriptors, not the 1920/6016 shadows: 16-18 % match, as expected), and shader
 identity (A/B microcode addresses against the vertex and pixel shaders the command processor loads).
+
+S1c (same scene, `out/native/parity3`): the probe now also rebuilds the ALU constants (shadows overlaid with the
+LOAD_ALU_CONSTANT records of A at A+40 and B at B+872), the microcode address and length of A and B, and the fetch the
+non-indexed draws write straight into the ring (header `0x000548BA`, fetch slot 31).
+
+| `sub_82980B20` (gameplay frames) | match |
+|---|---|
+| vertex constants (rebuilt) | 98.5 % (was 20.7 %) |
+| pixel constants (rebuilt) | 38 % (was 23 %) |
+| shader identity, when A != 0 | 100 %: B is the vertex shader (IM_LOAD at `Baddr`, `Blen` dwords), A the pixel shader |
+| shader identity, when A == 0 (~25 % of draws) | the CP pixel shader is an IM_LOAD_IMMEDIATE of 9 dwords the probe does not locate yet |
+
+`sub_82980210` keeps 0 % on rebuilt constants and fetch, and `sub_829813F0` differs in every group. S1d dumps the
+full register blocks of one frame on both sides to name the differing registers.
+
+S1d (`GOW2_PARITY_DUMP_FRAME`/`GOW2_PARITY_DUMP_FIRST` and `gpu_parity_dump_frame`/`gpu_parity_dump_first`, diffed by
+`tools/native/parity_dump_diff.py`; details in `tools/native/S1D_FINDINGS.md`). Frame 1500, 2,240 dwords per draw
+(1,024 vertex constants, 1,024 pixel constants, 192 fetch):
+
+- Draws 0-63 (`sub_82980B20`): all 63 identical, every dword.
+- From draw ~229 on, every block that differs does so only in **pixel constants c249-c255 and vertex c255**. The
+  command processor holds values such as 5.0, 1/3, 0.99, −π and 1e-4 there, the game's tables hold 0. Something
+  outside the device shadows and the A/B constant records writes them (shader literals is the guess), and the values
+  stay in the register file for later draws. Being traced (`PARITY CPSRC`).
+- `sub_82980210` fetch: only fetch slot 31 (dwords 186-191), which it writes straight into the ring.
+- `sub_829813F0`: writes its fetch, surface and depth state straight into the ring and emits its own DRAW_INDX_2
+  (one per call, prim 8, 3 vertices per rectangle). It never flushes the shadows.
+- Draws with A == 0 are depth-only (`sub_8298F600` sets RB_MODECONTROL to 5 and loads no pixel shader); the command
+  processor keeps a stale pixel shader there that does not run.

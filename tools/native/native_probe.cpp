@@ -113,6 +113,18 @@ uint32_t g_parity_frame = 0;  // Swap calls so far
 uint32_t g_parity_draw = 0;   // draws so far in g_parity_frame
 bool g_parity_checked = false;
 
+// GOW2_PARITY_DUMP_FRAME=<n>: for parity frame n and draws below kParityDumpDraws, also log the arrays behind
+// vsc2, psc2 and fetch2 as PARITY GAMEDUMP lines (tools/native/parity_dump_diff.py). -1 when unset.
+constexpr uint32_t kParityDumpDraws = 64;
+const uint32_t kParityDumpFirst = [] {  // GOW2_PARITY_DUMP_FIRST: first draw of the window
+  const char* value = std::getenv("GOW2_PARITY_DUMP_FIRST");
+  return value != nullptr ? uint32_t(std::strtoul(value, nullptr, 10)) : 0u;
+}();
+const int64_t kParityDumpFrame = [] {
+  const char* value = std::getenv("GOW2_PARITY_DUMP_FRAME");
+  return value != nullptr && *value != 0 ? std::strtoll(value, nullptr, 10) : int64_t{-1};
+}();
+
 // FNV-1a over the dwords as the guest stores them, read big-endian (LoadU32) and fed to the hash least-significant
 // byte first, so the value is the host-endian one. Both sides must hash the same way for the hashes to compare.
 uint32_t HashValues(const uint32_t* values, uint32_t dwords) {
@@ -141,6 +153,16 @@ struct ShaderMicrocode {
   uint32_t address = 0;
   uint32_t dwords = 0;
 };
+
+// The pixel shader the command processor last received inline (IM_LOAD_IMMEDIATE type 1, 9 dwords). sub_8298F600
+// loads no pixel shader when A (dev+12692) is 0 (120.cpp: cmplwi cr6,r29,0; bne 0x8298f760 falls through to
+// 8298F6C0 and sets the low 3 bits of RB_MODECONTROL 10580 to 5, depth only), so the command processor keeps the
+// last one: Clear's at 0x8208D690 (sub_82981ED8, 48.cpp:20615-20700: lis r10,-32247; addi r29,r10,-10608; li r8,9;
+// li r5,36) or sub_82982718's at 0x8208CF44 (130.cpp:20070-20110: lis r6,-32247; addi r30,r6,-12476; mr r4,r30;
+// li r8,9). A draw with A != 0 replaces it with A's IM_LOAD. Under g_parity_lock.
+constexpr ShaderMicrocode kClearPixelShader{0x8208D690u, 9};
+constexpr ShaderMicrocode kHelperPixelShader{0x8208CF44u, 9};
+ShaderMicrocode g_last_pixel_shader;
 
 // A (dev+12692), IM_LOAD in sub_8298F600 (120.cpp:20489-20530): payload [(Phys(*(S_A+40) + *(A+24)) & 0x1FFFFFFE)
 // | 1, *(S_A+44) >> 2] with S_A = A + *(A+64).
@@ -187,12 +209,12 @@ void OverlayAluConstants(const uint8_t* base, uint32_t desc, uint32_t data, std:
 // sub_8297FD30 (78.cpp:20305-20330) and sub_82980210 (1.cpp:19272-19300) copy their vertices into a ring allocation
 // and write fetch slot 31 (fetch constants 93-95, stream 0 = 95) straight into the ring with the type-0 header
 // 0x000548BA (6 dwords at 0x48BA), leaving the fetch shadow alone. The address comes from sub_8298B5B0, not from
-// 12460, so it is read back from the ring: the last such header in the 64 dwords before the write pointer dev+48.
+// 12460, so it is read back from the ring: the last such header in the 1024 dwords before the write pointer dev+48.
 // Overlays those 6 dwords at fetch dword 186 and returns false when no header is found.
 bool OverlayRingFetch(const uint8_t* base, uint32_t device, std::vector<uint32_t>& fetch) {
   using rex::glue::guest::LoadU32;
   const uint32_t write = LoadU32(base, device + 48);
-  for (uint32_t back = 0; back < 64; ++back) {
+  for (uint32_t back = 0; back < 1024; ++back) {
     const uint32_t at = write - 4 * back;
     if (LoadU32(base, at) != 0x000548BAu) continue;
     if (back < 6) return false;
@@ -200,6 +222,43 @@ bool OverlayRingFetch(const uint8_t* base, uint32_t device, std::vector<uint32_t
     return true;
   }
   return false;
+}
+
+// sub_829813F0 (57.cpp:20227-20470, rectangle list for Clear) flushes nothing and writes its state straight into
+// the ring, then marks the shadows dirty (dev+16/24/32) without touching them. Its 22 dwords end at the write
+// pointer dev+48: H = write - 84 holds 0x00054800 (fetch dwords 0-5), H+28 0x00025000 + 3 zeros, H+44 0x00012000
+// + {r8, r9} (0x2000 RB_SURFACE_INFO, 0x2001 RB_COLOR_INFO), H+56 0x00002301 + value, H+64 0x00002200 + r10
+// (RB_DEPTHCONTROL), H+72 0x00002208 + stack arg (RB_MODECONTROL), H+80 0xC0003601 DRAW_INDX_2 + initiator
+// (prim 8 rectangle list, auto index, 3 vertices per rectangle). Overlays those on the shadows the hashes read;
+// false when the layout is not there.
+bool OverlayRectRing(const uint8_t* base, uint32_t device, std::vector<uint32_t>& surf, std::vector<uint32_t>& rs,
+                     std::vector<uint32_t>& fetch) {
+  using rex::glue::guest::LoadU32;
+  const uint32_t h = LoadU32(base, device + 48) - 84;
+  if (LoadU32(base, h) != 0x00054800u || LoadU32(base, h + 44) != 0x00012000u ||
+      LoadU32(base, h + 64) != 0x00002200u || LoadU32(base, h + 72) != 0x00002208u ||
+      LoadU32(base, h + 80) != 0xC0003601u) {
+    return false;
+  }
+  for (uint32_t i = 0; i < 6; ++i) fetch[i] = LoadU32(base, h + 4 + 4 * i);
+  surf[0] = LoadU32(base, h + 48);
+  surf[1] = LoadU32(base, h + 52);
+  rs[0] = LoadU32(base, h + 68);
+  rs[8] = LoadU32(base, h + 76);
+  return true;
+}
+
+std::vector<uint32_t> LoadDwords(const uint8_t* base, uint32_t address, uint32_t dwords) {
+  std::vector<uint32_t> values(dwords);
+  for (uint32_t i = 0; i < dwords; ++i) values[i] = rex::glue::guest::LoadU32(base, address + 4 * i);
+  return values;
+}
+
+void LogParityDump(uint32_t frame, uint32_t draw, const char* block, const uint32_t* values, uint32_t dwords) {
+  std::string hex;
+  hex.reserve(8 * dwords);
+  for (uint32_t i = 0; i < dwords; ++i) hex += fmt::format("{:08X}", values[i]);
+  REXLOG_INFO("PARITY GAMEDUMP f={} d={} blk={} hex={}", frame, draw, block, hex);
 }
 
 // The four draws of tools/native/gen_probe.py's table whose device shadows are logged (device layout doc, sections 2-4).
@@ -221,7 +280,9 @@ void LogParityDraw(std::string_view name, const PPCContext& ctx, const uint8_t* 
   }
 
   const uint32_t draw = g_parity_draw++;
-  if (g_parity_frame % kParityFrameInterval != 0 || draw >= kParityMaxDraws) return;
+  const bool dump = kParityDumpFrame >= 0 && g_parity_frame == uint64_t(kParityDumpFrame) &&
+                    draw >= kParityDumpFirst && draw < kParityDumpFirst + kParityDumpDraws;
+  if ((g_parity_frame % kParityFrameInterval != 0 && !dump) || draw >= kParityMaxDraws) return;
 
   // sub_82980B20 documented in section 4: prim = r4 & 0x3F, count = r7. The other three are logged raw.
   std::string prim = "-";
@@ -229,12 +290,18 @@ void LogParityDraw(std::string_view name, const PPCContext& ctx, const uint8_t* 
   if (name == "sub_82980B20") {
     prim = std::to_string(ctx.r4.u32 & 0x3F);
     count = std::to_string(ctx.r7.u32);
+  } else if (name == "sub_829813F0") {
+    // r4 rectangles, 3 vertices each (mulli r27,r28,21 / mullw r10,r28,r6 with r6 = 3<<16, initiator prim 8).
+    prim = "8";
+    count = std::to_string(3 * ctx.r4.u32);
   }
   const auto hash = [&](uint32_t offset, uint32_t dwords) { return HashDwords(base, device + offset, dwords); };
   const uint32_t a = rex::glue::guest::LoadU32(base, device + 12692);
   const uint32_t b = rex::glue::guest::LoadU32(base, device + 12696);
   const ShaderMicrocode code_a = a != 0 ? MicrocodeOfA(base, a) : ShaderMicrocode{};
   const ShaderMicrocode code_b = b != 0 ? MicrocodeOfB(base, b) : ShaderMicrocode{};
+  if (a != 0) g_last_pixel_shader = code_a;
+  const ShaderMicrocode code_p = g_last_pixel_shader;
 
   // Constants as the command processor holds them: shadows 1920/6016 (flushed through masks 0/8 by sub_8298E5B8)
   // under the LOAD_ALU_CONSTANT records of A (A+40, data *(A+24)) and B (B+872, data *(B+32)) (120.cpp:20468-20472,
@@ -248,19 +315,30 @@ void LogParityDraw(std::string_view name, const PPCContext& ctx, const uint8_t* 
   if (b != 0) OverlayAluConstants(base, b + 872, rex::glue::guest::LoadU32(base, b + 32), constants);
 
   std::string fetch2 = "-";
+  std::vector<uint32_t> fetch = LoadDwords(base, device + 1152, 192);
+  std::vector<uint32_t> surf = LoadDwords(base, device + 10368, 6);
+  std::vector<uint32_t> rs = LoadDwords(base, device + 10548, 12);
   if (name == "sub_82980210" || name == "sub_8297FD30") {
-    std::vector<uint32_t> fetch(192);
-    for (uint32_t i = 0; i < 192; ++i) fetch[i] = rex::glue::guest::LoadU32(base, device + 1152 + 4 * i);
     if (OverlayRingFetch(base, device, fetch)) fetch2 = fmt::format("{:08X}", HashValues(fetch.data(), 192));
+  } else if (name == "sub_829813F0") {
+    // surf and rs below then carry the registers it wrote into the ring; fetch2 the fetch dwords 0-5.
+    if (OverlayRectRing(base, device, surf, rs, fetch)) fetch2 = fmt::format("{:08X}", HashValues(fetch.data(), 192));
   }
   REXLOG_INFO(
       "PARITY GAME f={} d={} fn={} prim={} n={} surf={:08X} prog={:08X} rs={:08X} vp={:08X} scis={:08X} "
       "fetch={:08X} vsc={:08X} psc={:08X} A={:08X} B={:08X} raw={:08X},{:08X},{:08X},{:08X},{:08X} "
-      "Aaddr={:08X} Alen={:X} Baddr={:08X} Blen={:X} vsc2={:08X} psc2={:08X} fetch2={}",
-      g_parity_frame, draw, name, prim, count, hash(10368, 6), hash(10528, 2), hash(10548, 12), hash(10444, 21),
+      "Aaddr={:08X} Alen={:X} Baddr={:08X} Blen={:X} vsc2={:08X} psc2={:08X} fetch2={} Paddr={:08X} Plen={:X}",
+      g_parity_frame, draw, name, prim, count, HashValues(surf.data(), 6), hash(10528, 2), HashValues(rs.data(), 12),
+      hash(10444, 21),
       hash(10436, 2), hash(1152, 192), hash(1920, 1024), hash(6016, 1024), a, b,
       ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.r8.u32, code_a.address, code_a.dwords, code_b.address,
-      code_b.dwords, HashValues(constants.data(), 1024), HashValues(constants.data() + 1024, 1024), fetch2);
+      code_b.dwords, HashValues(constants.data(), 1024), HashValues(constants.data() + 1024, 1024), fetch2,
+      code_p.address, code_p.dwords);
+  if (dump) {
+    LogParityDump(g_parity_frame, draw, "vsc", constants.data(), 1024);
+    LogParityDump(g_parity_frame, draw, "psc", constants.data() + 1024, 1024);
+    LogParityDump(g_parity_frame, draw, "fetch", fetch.data(), 192);
+  }
 }
 
 // Called before every counted probe. Swap ends a frame; the four draws are logged in parity mode.
@@ -269,6 +347,11 @@ void OnParityProbe(std::string_view name, const PPCContext& ctx, const uint8_t* 
     std::lock_guard<std::mutex> hold(g_parity_lock);
     ++g_parity_frame;
     g_parity_draw = 0;
+    return;
+  }
+  if (name == "sub_82982718") {
+    std::lock_guard<std::mutex> hold(g_parity_lock);
+    g_last_pixel_shader = kHelperPixelShader;
     return;
   }
   if (IsParityDraw(name)) LogParityDraw(name, ctx, base);
@@ -302,6 +385,10 @@ REX_HOOK_RAW(sub_82981ED8) {
     ++g_clears[key];
   }
   __imp__sub_82981ED8(ctx, base);
+  if (kParityEnabled) {
+    std::lock_guard<std::mutex> hold(g_parity_lock);
+    g_last_pixel_shader = kClearPixelShader;
+  }
 }
 
 #define PROBE(name, index, opcodes)                              \
