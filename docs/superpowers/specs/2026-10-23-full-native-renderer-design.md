@@ -120,3 +120,23 @@ S1d (`GOW2_PARITY_DUMP_FRAME`/`GOW2_PARITY_DUMP_FIRST` and `gpu_parity_dump_fram
   (one per call, prim 8, 3 vertices per rectangle). It never flushes the shadows.
 - Draws with A == 0 are depth-only (`sub_8298F600` sets RB_MODECONTROL to 5 and loads no pixel shader); the command
   processor keeps a stale pixel shader there that does not run.
+
+The c249-c255 values came from LOAD_ALU_CONSTANT packets with other descriptors (the spike's `PARITY CPSRC` names the
+packet kind and source): `sub_8298F378` loads constants from many descriptors, not only A and B, and they persist in
+the register file. The probe now keeps a **constant mirror** fed, in call order, by `sub_8298F378` (descriptor r4,
+data r5) and the shadow flush `sub_8298E5B8` (64-bit dirty mask r4, register base r5, shadow r6).
+
+### Gate G1: passed (`out/native/parity10`, gameplay frames)
+
+| Function | surf | prog | rs | vp | scis | fetch | vertex constants | pixel constants | shaders |
+|---|---|---|---|---|---|---|---|---|---|
+| `sub_82980B20` (5,774 draws) | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % (A != 0); A == 0 is depth-only |
+| `sub_82980210` (84) | 100 % | 100 % | 100 % | 100 % | 100 % | slot 31 only, its own vertex copy | 100 % | 100 % | 100 % |
+| `sub_829813F0` (154) | writes its own state into the ring; native version is built from its arguments | | | | | | 100 % | 100 % | embedded |
+
+Every mismatch is named: fetch slot 31 of the non-indexed draws (`{0, 0, 0, 0, Phys(ring copy) | 3, 0x10000002 |
+size}`, built from the draw's own vertices) and the rectangle path of `sub_829813F0`. The device plus the constant
+mirror is a sufficient state source.
+
+Known issue of the probe build: 2 of 11 runs hung at startup with one guest thread spinning; not seen in release
+builds, not investigated (diagnostic build only).

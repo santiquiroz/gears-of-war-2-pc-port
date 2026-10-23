@@ -113,6 +113,10 @@ uint32_t g_parity_frame = 0;  // Swap calls so far
 uint32_t g_parity_draw = 0;   // draws so far in g_parity_frame
 bool g_parity_checked = false;
 
+// Mirror of the command processor's ALU constant registers 0x4000-0x47FF (vertex 0-1023, pixel 1024-2047), under
+// g_parity_lock. Fed by the LOAD_ALU_CONSTANT emitter sub_8298F378 and the shadow flush sub_8298E5B8, in call order.
+std::vector<uint32_t> g_alu_mirror(2048);
+
 // GOW2_PARITY_DUMP_FRAME=<n>: for parity frame n and draws below kParityDumpDraws, also log the arrays behind
 // vsc2, psc2 and fetch2 as PARITY GAMEDUMP lines (tools/native/parity_dump_diff.py). -1 when unset.
 constexpr uint32_t kParityDumpDraws = 64;
@@ -183,11 +187,12 @@ ShaderMicrocode MicrocodeOfB(const uint8_t* base, uint32_t b) {
   return {PhysicalAddress(LoadU32(base, s + 872) + LoadU32(base, b + 32)) & ~3u, LoadU32(base, s + 876) >> 2};
 }
 
-// LOAD_ALU_CONSTANT records of sub_8298F378 (22.cpp:20511-20693): header at desc + *(desc+20); records
-// {u16 start, u16 count, u32 offset} from header+20 to header+20+*(header+16), stopping at count 0. The packet is
-// [Phys(offset + data), start·4, count]: count is in dwords (the ring copy moves count·4 bytes), the destination is
-// register 0x4000 + start·4. Overlaid on the 2048 dwords of 0x4000-0x47FF.
-void OverlayAluConstants(const uint8_t* base, uint32_t desc, uint32_t data, std::vector<uint32_t>& registers) {
+// sub_8298F378(r3 dev, r4 desc, r5 data) (22.cpp:20511-20693): header at desc + *(desc+20) (0 = nothing emitted);
+// records {u16 start, u16 count, u32 offset} from header+20 to header+20+*(header+16), stopping at count 0. The
+// packet is [Phys(offset + data), start·4, count]: count is in dwords (the ring copy moves count·4 bytes), the
+// destination is register 0x4000 + start·4. Both paths (ring copy and direct packet) read the guest address
+// offset + data. Copies into g_alu_mirror; the caller holds g_parity_lock.
+void MirrorLoadAluConstants(const uint8_t* base, uint32_t desc, uint32_t data) {
   using rex::glue::guest::LoadU32;
   const uint32_t header_offset = LoadU32(base, desc + 20);
   if (header_offset == 0) return;
@@ -200,9 +205,34 @@ void OverlayAluConstants(const uint8_t* base, uint32_t desc, uint32_t data, std:
     const uint32_t count = start_count & 0xFFFFu;
     if (count == 0) break;
     const uint32_t source = LoadU32(base, record + 4) + data;
-    for (uint32_t i = 0; i < count && start * 4 + i < registers.size(); ++i) {
-      registers[start * 4 + i] = LoadU32(base, source + 4 * i);
+    for (uint32_t i = 0; i < count && start * 4 + i < g_alu_mirror.size(); ++i) {
+      g_alu_mirror[start * 4 + i] = LoadU32(base, source + 4 * i);
     }
+  }
+}
+
+// sub_8298E5B8(r3 dev, r4 mask, r5 register base 0x4000/0x4400, r6 shadow) (72.cpp:19964-20173). The 64-bit mask is
+// read from bit 63 down: each run of n set bits after a gap of z clear bits copies n·16 dwords from shadow +
+// 64·group bytes to register r5 + 16·group, with group counting from the top bit (cntlzd). r5 - 0x4000 is the
+// mirror offset (0 vertex, 1024 pixel). Callers never pass mask 0. The caller holds g_parity_lock.
+void MirrorFlushAluShadow(const uint8_t* base, uint64_t mask, uint32_t register_base, uint32_t shadow) {
+  using rex::glue::guest::LoadU32;
+  if (register_base < 0x4000u) return;
+  const uint32_t offset = register_base - 0x4000u;
+  uint32_t group = 0;
+  while (mask != 0) {
+    const uint32_t gap = uint32_t(__builtin_clzll(mask));
+    mask <<= gap;  // gap < 64 since mask != 0
+    group += gap;
+    const uint32_t groups = ~mask == 0 ? 64u : uint32_t(__builtin_clzll(~mask));
+    for (uint32_t g = 0; g < groups; ++g) {
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint32_t index = offset + 16 * (group + g) + i;
+        if (index < g_alu_mirror.size()) g_alu_mirror[index] = LoadU32(base, shadow + 64 * (group + g) + 4 * i);
+      }
+    }
+    group += groups;
+    mask = groups >= 64 ? 0 : (mask << groups);
   }
 }
 
@@ -303,16 +333,8 @@ void LogParityDraw(std::string_view name, const PPCContext& ctx, const uint8_t* 
   if (a != 0) g_last_pixel_shader = code_a;
   const ShaderMicrocode code_p = g_last_pixel_shader;
 
-  // Constants as the command processor holds them: shadows 1920/6016 (flushed through masks 0/8 by sub_8298E5B8)
-  // under the LOAD_ALU_CONSTANT records of A (A+40, data *(A+24)) and B (B+872, data *(B+32)) (120.cpp:20468-20472,
-  // 20716-20726, 20870-20876).
-  std::vector<uint32_t> constants(2048);
-  for (uint32_t i = 0; i < 1024; ++i) {
-    constants[i] = rex::glue::guest::LoadU32(base, device + 1920 + 4 * i);
-    constants[1024 + i] = rex::glue::guest::LoadU32(base, device + 6016 + 4 * i);
-  }
-  if (a != 0) OverlayAluConstants(base, a + 40, rex::glue::guest::LoadU32(base, a + 24), constants);
-  if (b != 0) OverlayAluConstants(base, b + 872, rex::glue::guest::LoadU32(base, b + 32), constants);
+  // Constants as the command processor holds them: the persistent mirror fed by sub_8298F378 and sub_8298E5B8.
+  const std::vector<uint32_t>& constants = g_alu_mirror;
 
   std::string fetch2 = "-";
   std::vector<uint32_t> fetch = LoadDwords(base, device + 1152, 192);
@@ -354,6 +376,16 @@ void OnParityProbe(std::string_view name, const PPCContext& ctx, const uint8_t* 
     g_last_pixel_shader = kHelperPixelShader;
     return;
   }
+  if (name == "sub_8298F378") {
+    std::lock_guard<std::mutex> hold(g_parity_lock);
+    MirrorLoadAluConstants(base, ctx.r4.u32, ctx.r5.u32);
+    return;
+  }
+  if (name == "sub_8298E5B8") {
+    std::lock_guard<std::mutex> hold(g_parity_lock);
+    MirrorFlushAluShadow(base, ctx.r4.u64, ctx.r5.u32, ctx.r6.u32);
+    return;
+  }
   if (IsParityDraw(name)) LogParityDraw(name, ctx, base);
 }
 
@@ -389,6 +421,18 @@ REX_HOOK_RAW(sub_82981ED8) {
     std::lock_guard<std::mutex> hold(g_parity_lock);
     g_last_pixel_shader = kClearPixelShader;
   }
+}
+
+// The shadow flush is not in probe_hooks.inc; the mirror needs it (counted nowhere).
+REX_EXTERN(__imp__sub_8298E5B8);
+REX_HOOK_RAW(sub_8298E5B8) {
+  if (!kParityEnabled) {
+    __imp__sub_8298E5B8(ctx, base);
+    return;
+  }
+  const PPCContext args = ctx;
+  __imp__sub_8298E5B8(ctx, base);
+  OnParityProbe("sub_8298E5B8", args, base);
 }
 
 #define PROBE(name, index, opcodes)                              \

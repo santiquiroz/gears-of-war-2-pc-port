@@ -63,3 +63,34 @@ read `parity_dump_diff.py` on a dump frame. fetch2 misses at dwords other than 1
 
 ## Not run
 Not built or run in game (budget). Both Python selftests pass.
+
+## Constant mirror
+The per-draw rebuild (shadows + overlay of A/B only) is replaced by `g_alu_mirror` (2048 dwords = registers
+0x4000-0x47FF, vertex 0-1023, pixel 1024-2047, under `g_parity_lock`) that follows every write to those registers. vsc2/psc2 and the
+vsc/psc GAMEDUMP blocks now read the mirror (the vsc/psc hashes in the GAME line stay raw shadow hashes).
+`OverlayAluConstants` is gone. The hook runs after the original call, with the call's arguments.
+
+**sub_8298F378(r3 dev, r4 desc, r5 data)** (22.cpp): `mr r27,r3; mr r24,r5` (20525-20528), `lwz r11,20(r4); cmplwi; beq`
+(20523-20532) = no header, nothing emitted; header = desc + *(desc+20), records start at header+20 (`addi r26,r11,20`, 20536),
+end = header+20 + *(header+16) (20538-20540). Record loop (20544-20557, 20690-20693): `lhz r30,0` = start, `lhz r28,2` =
+count (count 0 ends the whole descriptor, `beq 0x8298f4b4`), `lwz r10,4` = offset, source `r31 = offset + r5` (20560), a guest
+virtual address in both paths (the fast path copies it into the ring, 20586-20624 via sub_82A92B70; the slow path takes
+`clrlwi 3` + 0x1000 for the packet, 20657-20672). Destination register = 0x4000 + start·4 (`rlwinm r10,r30,2` is the
+slot in the packet, 20673; the fast path `(start+4096)<<2`, 20588-20594), count dwords (`rlwinm r31,r28,2` = bytes, 20610).
+Mirror: `mirror[start*4 + i] = u32(source + 4i)` for i < count.
+
+**sub_8298E5B8(r3 dev, r4 mask, r5 0x4000|0x4400, r6 shadow)** (72.cpp:19964-20173): `addi r31,r6,-4` (19980),
+`cntlzd r10,r30` (19995) = gap of clear bits from bit 63, `sld r30,r30,r10` (20003), run `r28 = cntlzd(~r30)` (20009), `r27 = (gap<<4)
++ r5` (20011-20016) = first register, `r29 = run<<4` dwords (20013), `r31 += gap<<6` (20002, 20007) and each group copies 64 bytes
+from `r31+4 .. +52` (lvx128 at r31+4/20/36/52, 20125-20146) so the source is `r6 + 64·group`; the run advances `r31`
+and shifts the mask (20040-20051, 20135, 20143), loop until `r30 == 0` (20162-20165). Callers (1.cpp:18921-18961, 78/88/150/183)
+pass r6 = dev+1920 with r5 = 16384 and r6 = dev+6016 with r5 = 17408 and never mask 0. Mirror: for each group
+`mirror[(r5-0x4000) + 16·group + i] = u32(r6 + 64·group + 4i)`. sub_8298E5B8 is not in probe_hooks.inc, so it has its own
+`REX_HOOK_RAW` in native_probe.cpp.
+
+### Not covered
+- sub_8298F378 fast path (byte 10940 bit 7 + process type 2) skips a record when `sub_8298AFC0` returns 0 (20581-20584); not detectable,
+  so the mirror copies it anyway.
+- Other LOAD_ALU_CONSTANT emitters sub_82A7EFA8 and sub_82A7FDF8 (probe_hooks.inc) are not mirrored; neither is anything
+  that writes constants through SET_CONSTANT/type-0 packets to 0x4000-0x47FF. The first frames start from zero.
+- The flush source is read after the call; if the shadow changes inside the call it differs. Not built or run.
