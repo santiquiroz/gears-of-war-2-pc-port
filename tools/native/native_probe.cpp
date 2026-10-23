@@ -9,9 +9,11 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <tuple>
 
 #include <rex/hook.h>
@@ -93,6 +95,83 @@ void OnEngineTick(const PPCContext&, uint8_t*) {
 
 [[maybe_unused]] const bool kTickRegistered = (rex::glue::AddEngineTickListener(&OnEngineTick), true);
 
+// Parity mode (GOW2_PARITY=1): for each draw, hash the device shadows the draw is about to flush and log them,
+// so tools/native/parity_compare.py can pair them with the PARITY CP lines of the command processor by
+// (frame, draw). Counting above stays on either way.
+const bool kParityEnabled = [] {
+  const char* value = std::getenv("GOW2_PARITY");
+  return value != nullptr && std::string_view(value) == "1";
+}();
+
+constexpr uint32_t kParityFrameInterval = 300;  // log the draws of frames whose index is a multiple of this
+constexpr uint32_t kParityMaxDraws = 2000;      // per logged frame
+constexpr uint32_t kParityDeviceGlobal = 0x83105D40;  // guest global holding the D3DDevice (device layout doc, section 1)
+
+std::mutex g_parity_lock;  // under it: g_parity_frame, g_parity_draw, g_parity_checked
+uint32_t g_parity_frame = 0;  // Swap calls so far
+uint32_t g_parity_draw = 0;   // draws so far in g_parity_frame
+bool g_parity_checked = false;
+
+// FNV-1a over the dwords as the guest stores them, read big-endian (LoadU32) and fed to the hash least-significant
+// byte first, so the value is the host-endian one. Both sides must hash the same way for the hashes to compare.
+uint32_t HashDwords(const uint8_t* base, uint32_t address, uint32_t dwords) {
+  uint32_t hash = 2166136261u;
+  for (uint32_t i = 0; i < dwords; ++i) {
+    const uint32_t value = rex::glue::guest::LoadU32(base, address + 4 * i);
+    for (uint32_t shift = 0; shift < 32; shift += 8) hash = (hash ^ ((value >> shift) & 0xFFu)) * 16777619u;
+  }
+  return hash;
+}
+
+// The four draws of tools/native/gen_probe.py's table whose device shadows are logged (device layout doc, sections 2-4).
+bool IsParityDraw(std::string_view name) {
+  return name == "sub_82980B20" || name == "sub_82980210" || name == "sub_8297FD30" || name == "sub_829813F0";
+}
+
+void LogParityDraw(std::string_view name, const PPCContext& ctx, const uint8_t* base) {
+  const uint32_t device = ctx.r3.u32;
+  std::lock_guard<std::mutex> hold(g_parity_lock);
+  if (!g_parity_checked) {
+    g_parity_checked = true;
+    const uint32_t global = rex::glue::guest::LoadU32(base, kParityDeviceGlobal);
+    if (global == device) {
+      REXLOG_INFO("PARITY device {:08X} equals the global at {:08X}", device, kParityDeviceGlobal);
+    } else {
+      REXLOG_WARN("PARITY device {:08X} differs from the global at {:08X} ({:08X})", device, kParityDeviceGlobal, global);
+    }
+  }
+
+  const uint32_t draw = g_parity_draw++;
+  if (g_parity_frame % kParityFrameInterval != 0 || draw >= kParityMaxDraws) return;
+
+  // sub_82980B20 documented in section 4: prim = r4 & 0x3F, count = r7. The other three are logged raw.
+  std::string prim = "-";
+  std::string count = "-";
+  if (name == "sub_82980B20") {
+    prim = std::to_string(ctx.r4.u32 & 0x3F);
+    count = std::to_string(ctx.r7.u32);
+  }
+  const auto hash = [&](uint32_t offset, uint32_t dwords) { return HashDwords(base, device + offset, dwords); };
+  REXLOG_INFO(
+      "PARITY GAME f={} d={} fn={} prim={} n={} surf={:08X} prog={:08X} rs={:08X} vp={:08X} scis={:08X} "
+      "fetch={:08X} vsc={:08X} psc={:08X} A={:08X} B={:08X} raw={:08X},{:08X},{:08X},{:08X},{:08X}",
+      g_parity_frame, draw, name, prim, count, hash(10368, 6), hash(10528, 2), hash(10548, 12), hash(10444, 21),
+      hash(10436, 2), hash(1152, 192), hash(1920, 1024), hash(6016, 1024),
+      rex::glue::guest::LoadU32(base, device + 12692), rex::glue::guest::LoadU32(base, device + 12696),
+      ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);
+}
+
+// Called before every counted probe. Swap ends a frame; the four draws are logged in parity mode.
+void OnParityProbe(std::string_view name, const PPCContext& ctx, const uint8_t* base) {
+  if (name == "sub_8298D430") {
+    std::lock_guard<std::mutex> hold(g_parity_lock);
+    ++g_parity_frame;
+    g_parity_draw = 0;
+    return;
+  }
+  if (IsParityDraw(name)) LogParityDraw(name, ctx, base);
+}
+
 }  // namespace
 
 REX_EXTERN(__imp__sub_8298BAB0);
@@ -127,7 +206,14 @@ REX_HOOK_RAW(sub_82981ED8) {
   REX_EXTERN(__imp__##name);                                     \
   REX_HOOK_RAW(name) {                                           \
     g_calls[index].fetch_add(1, std::memory_order_relaxed);      \
+    if (!kParityEnabled) {                                       \
+      __imp__##name(ctx, base);                                  \
+      return;                                                    \
+    }                                                            \
+    /* After the call: the flush inside the draw updates the shadows it used. */ \
+    const PPCContext args = ctx;                                 \
     __imp__##name(ctx, base);                                    \
+    OnParityProbe(#name, args, base);                            \
   }
 #include "probe_hooks.inc"
 #undef PROBE

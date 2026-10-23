@@ -72,3 +72,22 @@ gate stops the project with the measurements documented, as the hybrid's study d
 Gate S0 passes: the frame without draws runs at least 33 % faster than today's warm frame and 60 % faster at the
 warm end. The GPU, not the CPU, is the limit (one submission a frame, no stalls), so the gain has to come from
 cheaper GPU work per draw: fewer render passes and barriers, and lighter shaders (gate G2).
+
+## S1 results so far (2026-10-23, RX 7800 XT, chapter 2 hospital)
+
+`tools/native/native_probe.cpp` (`GOW2_NATIVE_PROBE`, `GOW2_PARITY=1`) hashes the device shadows of
+[NATIVE_RENDERER_DEVICE_LAYOUT.md](../../NATIVE_RENDERER_DEVICE_LAYOUT.md) after each of the four draw functions
+returns (the flush inside the draw updates the shadows it uses), and a temporary SDK spike (`gpu_parity_log`, not in
+`sdk/patches`) hashes the command processor's registers at each draw packet; `tools/native/parity_compare.py` pairs
+them. Every game draw pairs with a command processor draw; the command processor's 185 extra draws a frame are the
+library's clears, resolves and embedded-shader draws.
+
+| Function (draws a frame) | surf | prog | rs | vp | scis | fetch |
+|---|---|---|---|---|---|---|
+| `sub_82980B20` DrawIndexed (~900) | 100 % | 100 % | 100 % | 100 % | 100 % | 100 % |
+| `sub_82980210` (~77) | 100 % | 100 % | 100 % | 100 % | 100 % | 0 % |
+| `sub_829813F0` user vertices, embedded shader (~25) | special path, not from the shadows | | | | | |
+
+Open before S2: the vertex fetch of the non-indexed draws (written outside the fetch shadow), the ALU constants (they
+come through LOAD_ALU_CONSTANT descriptors, not the 1920/6016 shadows: 16-18 % match, as expected), and shader
+identity (A/B microcode addresses against the vertex and pixel shaders the command processor loads).
