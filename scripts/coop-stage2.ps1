@@ -40,17 +40,18 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Presses last 150 ms: with eight copies loading at once, 80 ms presses were sometimes missed.
 # Calibrated menu macros from Stage 1's net-join.ps1; re-check them if the menus change.
 # Each macro value is a coop-instances 'macro' step string.
 if ($TitleWaitSec -le 0) { $TitleWaitSec = 50 }
 if ($LoadSec -le 0) { $LoadSec = 30 }
-$PressStartMacro = 'pad:START:80,wait:300'
-$MainMenuMacro = 'pad:DOWN:80,wait:300'
-$HostLobbyMacro = 'pad:A:80,wait:3000,pad:A:80,wait:3000,pad:A:80,wait:6000'
-$OpenBrowserMacro = 'pad:A:80,wait:3000,pad:DOWN:80,wait:1000,pad:A:80,wait:6000'
-$JoinMacro = 'pad:A:80,wait:15000'
-$LaunchMacro = 'pad:A:80'
-$JoinListedMacro = 'pad:A:80'
+$PressStartMacro = 'pad:START:150,wait:1500'
+$MainMenuMacro = 'pad:DOWN:150,wait:300'
+$HostLobbyMacro = 'pad:A:150,wait:3000,pad:A:150,wait:3000,pad:A:150,wait:6000'
+$OpenBrowserMacro = 'pad:A:150,wait:3000,pad:DOWN:150,wait:1000,pad:A:150,wait:6000'
+$JoinMacro = 'pad:A:150,wait:15000'
+$LaunchMacro = 'pad:A:150'
+$JoinListedMacro = 'pad:A:150'
 $SpawnMacro = 'pad:RT:300,wait:5000'
 
 $script:CheckCount = 0
