@@ -27,6 +27,7 @@ $logPath = Join-Path $OutDir 'inst1\game.log'
 $sweepPath = Join-Path $OutDir 'sweep.md'
 $sticks = @('LY=1', 'RX=1', 'LX=-1', 'LY=-1', 'RX=-1', 'LX=1')
 $hints = [ordered]@{}
+$script:gameStart = Get-Date
 
 function Invoke-Helper {
     $callArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $helper) + $args + @('-OutDir', $OutDir)
@@ -62,6 +63,7 @@ function Wait-Ready {
 function Start-Game {
     Wait-IdleGate
     $common = "--gow2_frame_log=true --vsync=false $Common".Trim()
+    $script:gameStart = Get-Date
     $r = Invoke-Helper 'start' '-Count' '1' '-Common' $common '-Width' "$Width" '-Height' "$Height"
     if ($r.Code -ne 0) { throw "start failed: $($r.Lines -join ' | ')" }
     Wait-Ready
@@ -70,6 +72,7 @@ function Start-Game {
 function Restart-Game {
     Invoke-Helper 'stopone' '-Instance' '1' | Out-Null
     Wait-IdleGate
+    $script:gameStart = Get-Date
     $r = Invoke-Helper 'startone' '-Instance' '1'
     if ($r.Code -ne 0) { throw "startone failed: $($r.Lines -join ' | ')" }
     Wait-Ready
@@ -178,7 +181,7 @@ function Invoke-Chapter([int]$n) {
     $status = 'ok'
     if ($findings.Errors.Count) { $status = 'fatal' }
     # The idle guard kills the game when the user comes back.
-    elseif (-not $running -and (Test-UserBack $since)) { $status = 'interrupted' }
+    elseif (-not $running -and (Test-UserBack $script:gameStart)) { $status = 'interrupted' }
     elseif (-not $running) { $status = 'crash' }
     elseif (-not $findings.Fps.Count) { $status = 'no-load' }
 
