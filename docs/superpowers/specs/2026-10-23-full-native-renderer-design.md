@@ -61,3 +61,14 @@ gate stops the project with the measurements documented, as the hybrid's study d
 - Off by default until S3 passes; then default per platform after measurements, as v0.3.x did.
 - Game runs are idle-gated or explicitly approved; phone runs cool-gated and alternated.
 - No code from projects without a license (Xerenge, Unleashed Recompiled): concepts only.
+
+## S0 results (2026-10-23, Galaxy S25 Ultra, v0.3.1 with native surfaces and resolves on, chapter 2 hospital, unlocked)
+
+| Run | fps | Notes |
+|---|---|---|
+| Hybrid (today's default) | 52.9 from 32.4 °C, falling to 37.2 at 38.0 °C | 1,100 draws a frame (365 without a pixel shader), 53.5 render passes a frame, 1 submission a frame, no pipeline stalls |
+| `gpu_native = true` (no draws, no resolves) | 60.0 steady, still 60 at 36.7 °C | The display's limit, so the real ceiling is higher |
+
+Gate S0 passes: the frame without draws runs at least 33 % faster than today's warm frame and 60 % faster at the
+warm end. The GPU, not the CPU, is the limit (one submission a frame, no stalls), so the gain has to come from
+cheaper GPU work per draw: fewer render passes and barriers, and lighter shaders (gate G2).
