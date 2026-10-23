@@ -1,0 +1,617 @@
+diff --git a/include/rex/kernel/xam/xsession.h b/include/rex/kernel/xam/xsession.h
+index 6aeb60b..31404d9 100644
+--- a/include/rex/kernel/xam/xsession.h
++++ b/include/rex/kernel/xam/xsession.h
+@@ -3,9 +3,12 @@
+ #include <array>
+ #include <cstdint>
+ #include <functional>
++#include <map>
+ #include <mutex>
+ #include <optional>
+ #include <span>
++#include <utility>
++#include <variant>
+ #include <vector>
+ 
+ #include <rex/system/system_link.h>
+@@ -19,6 +22,30 @@ constexpr uint32_t kXSessionMemberSize = 16;
+ constexpr uint32_t kXSessionMemberPrivateSlot = 0x00000001;
+ constexpr uint32_t kFirstXSessionHandle = 0xCAFE0004;
+ constexpr uint32_t kXSessionHandleStep = 4;
++// Context ids the session details report as game type and game mode.
++constexpr uint32_t kXContextGameType = 0x0000800A;
++constexpr uint32_t kXContextGameMode = 0x0000800B;
++// Upper bound on a property value copied out of guest memory.
++constexpr uint32_t kMaxUserPropertySize = 0x1000;
++
++// XUSER_DATA_TYPE values (XDK xuser.h). Only used to decode stored property bytes.
++enum class XUserDataType : uint8_t {
++  kNotSet = 0,
++  kInt32 = 1,
++  kInt64 = 2,
++  kDouble = 3,
++  kWString = 4,
++  kFloat = 5,
++  kBinary = 6,
++  kDateTime = 7,
++};
++
++using TypedUserValue = std::variant<int32_t, int64_t, double, float>;
++
++// Decodes big-endian guest bytes as the given type. Empty when the type has no numeric
++// form or the byte count does not match it.
++std::optional<TypedUserValue> DecodeTypedUserValue(XUserDataType type,
++                                                   std::span<const uint8_t> bytes);
+ 
+ enum class XSessionState : uint32_t {
+   kLobby = 0,
+@@ -38,6 +65,7 @@ struct XSessionRecord {
+   uint32_t handle = 0;
+   uint32_t object = 0;
+   uint32_t flags = 0;
++  uint32_t creator_user_index = kXUserIndexNone;
+   uint32_t host_user_index = kXUserIndexNone;
+   uint32_t max_public = 0;
+   uint32_t max_private = 0;
+@@ -45,6 +73,9 @@ struct XSessionRecord {
+   uint64_t nonce = 0;
+   std::array<uint8_t, system::system_link::kSessionInfoSize> info{};
+   std::vector<XSessionMember> members;
++  // Filled from the creator's contexts when details are read (ApplyCreatorContexts).
++  uint32_t game_type = 0;
++  uint32_t game_mode = 0;
+ };
+ 
+ void AddSessionMembers(XSessionRecord& session, std::span<const XSessionMember> joining);
+@@ -55,6 +86,29 @@ uint32_t CountSessionMembers(const XSessionRecord& session, bool private_slot);
+ uint32_t AvailableSessionSlots(uint32_t max_slots, uint32_t used_slots);
+ uint32_t WriteLocalDetails(const XSessionRecord& session, std::span<uint8_t> out,
+                            uint32_t out_guest_address);
++// Bytes WriteLocalDetails needs for every current member.
++uint32_t RequiredLocalDetailsSize(const XSessionRecord& session);
++
++// Contexts and properties the game sets per local user (XUserSetContextEx / XUserSetPropertyEx).
++// Keyed by (user_index, id); process lifetime. Property values are kept as the raw guest bytes.
++class XUserValueStore {
++ public:
++  void SetContext(uint32_t user_index, uint32_t id, uint32_t value);
++  std::optional<uint32_t> GetContext(uint32_t user_index, uint32_t id) const;
++  void SetProperty(uint32_t user_index, uint32_t id, std::vector<uint8_t> bytes);
++  std::optional<std::vector<uint8_t>> GetProperty(uint32_t user_index, uint32_t id) const;
++
++ private:
++  using Key = std::pair<uint32_t, uint32_t>;
++  mutable std::mutex mutex_;
++  std::map<Key, uint32_t> contexts_;
++  std::map<Key, std::vector<uint8_t>> properties_;
++};
++
++XUserValueStore& UserValueStore();
++
++// Copies the creator's game type and game mode contexts onto the session (unset ones stay 0).
++void ApplyCreatorContexts(XSessionRecord& session, const XUserValueStore& store);
+ 
+ class XSessionRegistry {
+  public:
+diff --git a/src/kernel/xam/apps/xgi_app.cpp b/src/kernel/xam/apps/xgi_app.cpp
+index 7579adf..05c45ba 100644
+--- a/src/kernel/xam/apps/xgi_app.cpp
++++ b/src/kernel/xam/apps/xgi_app.cpp
+@@ -13,6 +13,7 @@
+ #include <array>
+ #include <atomic>
+ #include <cstring>
++#include <optional>
+ #include <span>
+ #include <vector>
+ 
+@@ -21,6 +22,7 @@
+ #include <rex/kernel/xam/xsession.h>
+ #include <rex/logging.h>
+ #include <rex/system/system_link.h>
++#include <rex/system/xtypes.h>
+ #include <rex/thread.h>
+ 
+ REXCVAR_DECLARE(bool, system_link_trace);
+@@ -86,6 +88,15 @@ void WriteHostSessionInfo(memory::Memory* guest_memory, uint32_t info_ptr, uint3
+   }
+ }
+ 
++// First eight bytes of a value as a big-endian number, for the XGI trace lines.
++uint64_t LeadingBytes(std::span<const uint8_t> bytes) {
++  uint64_t value = 0;
++  for (uint8_t byte : bytes.first(std::min<size_t>(bytes.size(), 8))) {
++    value = (value << 8) | byte;
++  }
++  return value;
++}
++
+ uint64_t LocalUserXuid(KernelState* kernel_state, uint32_t user_index) {
+   const auto* user_profile = kernel_state->user_profile(user_index);
+   return user_profile ? user_profile->network_xuid() : 0;
+@@ -153,6 +164,7 @@ X_HRESULT CreateSession(memory::Memory* guest_memory, KernelState* kernel_state,
+   }
+   bool known = SessionRegistry().Update(object, [&](XSessionRecord& session) {
+     session.flags = flags;
++    session.creator_user_index = user_index;
+     session.host_user_index = host ? user_index : kXUserIndexNone;
+     session.max_public = max_public;
+     session.max_private = max_private;
+@@ -248,22 +260,31 @@ X_HRESULT GetSessionDetails(memory::Memory* guest_memory, const uint8_t* buffer,
+ 
+   auto session = SessionRegistry().Snapshot(object);
+   uint32_t details_size = size_ptr ? LoadGuestU32(guest_memory, size_ptr) : 0;
++  uint32_t required = 0;
+   uint32_t returned = 0;
+-  if (session && details_ptr) {
+-    auto out = std::span(guest_memory->TranslateVirtual(details_ptr), details_size);
+-    returned = WriteLocalDetails(*session, out, details_ptr);
++  X_HRESULT result = X_E_SUCCESS;
++  if (session) {
++    ApplyCreatorContexts(*session, UserValueStore());
++    required = RequiredLocalDetailsSize(*session);
++    // The real API fails a short buffer with ERROR_INSUFFICIENT_BUFFER; campaign co-op works with
++    // writing what fits, so that stays until a title is seen to need the failure.
++    if (details_ptr) {
++      auto out = std::span(guest_memory->TranslateVirtual(details_ptr), details_size);
++      returned = WriteLocalDetails(*session, out, details_ptr);
++    }
+   }
+ 
+   REXKRNL_DEBUG("XSessionGetDetails({:08X}, {:08X}, {:08X})", object, size_ptr, details_ptr);
+-  static std::atomic<uint64_t> netlink_trace_count{0};
+-  if (REXCVAR_GET(system_link_trace) && NetLinkTraceAllow(&netlink_trace_count)) {
++  if (REXCVAR_GET(system_link_trace)) {
+     REXLOG_INFO(
+-        "[netlink] XSessionGetDetails buf_len={} obj={:#010x} details_size={} "
+-        "details_ptr={:#010x} known={} members_returned={} ret={:#010x}",
+-        buffer_length, object, details_size, details_ptr, session.has_value(), returned,
+-        (uint32_t)X_E_SUCCESS);
++        "XGI XSessionGetDetails buf_len={} obj={:#010x} details_size={} details_ptr={:#010x} "
++        "known={} required={} game_type={:#010x} game_mode={:#010x} members_returned={} "
++        "ret={:#010x}",
++        buffer_length, object, details_size, details_ptr, session.has_value(), required,
++        session ? session->game_type : 0, session ? session->game_mode : 0, returned,
++        (uint32_t)result);
+   }
+-  return X_E_SUCCESS;
++  return result;
+ }
+ 
+ }  // namespace
+@@ -302,6 +323,11 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       uint32_t context_value = memory::load_and_swap<uint32_t>(buffer + 20);
+       REXKRNL_DEBUG("XGIUserSetContextEx({:08X}, {:08X}, {:08X})", user_index, context_id,
+                     context_value);
++      UserValueStore().SetContext(user_index, context_id, context_value);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO("XGI SetContext user={} id={:#010x} value={:#010x} ret={:#010x}", user_index,
++                    context_id, context_value, (uint32_t)X_E_SUCCESS);
++      }
+       return X_E_SUCCESS;
+     }
+     case 0x000B0007: {
+@@ -311,7 +337,22 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       uint32_t value_ptr = memory::load_and_swap<uint32_t>(buffer + 24);
+       REXKRNL_DEBUG("XGIUserSetPropertyEx({:08X}, {:08X}, {}, {:08X})", user_index, property_id,
+                     value_size, value_ptr);
+-      return X_E_SUCCESS;
++      std::vector<uint8_t> value;
++      X_HRESULT result = X_E_SUCCESS;
++      if (value_size > kMaxUserPropertySize || (value_size && !value_ptr)) {
++        result = X_E_INVALIDARG;
++      } else {
++        value.resize(value_size);
++        if (value_size) {
++          std::memcpy(value.data(), memory_->TranslateVirtual(value_ptr), value_size);
++        }
++        UserValueStore().SetProperty(user_index, property_id, value);
++      }
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO("XGI SetProperty user={} id={:#010x} size={} value_head={:016X} ret={:#010x}",
++                    user_index, property_id, value_size, LeadingBytes(value), (uint32_t)result);
++      }
++      return result;
+     }
+     case 0x000B0008: {
+       // Raw dump so we can confirm the actual buffer layout the game sends.
+@@ -435,10 +476,9 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       REXKRNL_DEBUG("XSessionSearch({}, {}, {}, {}, {}, {:08X}, {:08X}, {}, {:08X})", proc_index,
+                     user_index, num_results, num_props, num_ctx, props_ptr, ctx_ptr,
+                     results_buffer_size, search_results_ptr);
+-      static std::atomic<uint64_t> netlink_trace_count{0};
+-      if (REXCVAR_GET(system_link_trace) && NetLinkTraceAllow(&netlink_trace_count)) {
++      if (REXCVAR_GET(system_link_trace)) {
+         REXLOG_INFO(
+-            "[netlink] XSessionSearch buf_len={} proc={} user={} max_results={} props={} ctx={} "
++            "XGI XSessionSearch buf_len={} proc={} user={} max_results={} props={} ctx={} "
+             "props_ptr={:#010x} ctx_ptr={:#010x} results_size={} results_ptr={:#010x} ret={:#010x}",
+             buffer_length, proc_index, user_index, num_results, num_props, num_ctx, props_ptr,
+             ctx_ptr, results_buffer_size, search_results_ptr, (uint32_t)X_E_SUCCESS);
+@@ -483,10 +523,9 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+                     proc_index, user_index, num_results, num_props, num_ctx, props_ptr, ctx_ptr,
+                     results_buffer_size, search_results_ptr, num_users);
+ 
+-      static std::atomic<uint64_t> netlink_trace_count{0};
+-      if (REXCVAR_GET(system_link_trace) && NetLinkTraceAllow(&netlink_trace_count)) {
++      if (REXCVAR_GET(system_link_trace)) {
+         REXLOG_INFO(
+-            "[netlink] XSessionSearchEx buf_len={} proc={} user={} max_results={} props={} ctx={} "
++            "XGI XSessionSearchEx buf_len={} proc={} user={} max_results={} props={} ctx={} "
+             "props_ptr={:#010x} ctx_ptr={:#010x} results_size={} results_ptr={:#010x} users={} "
+             "ret={:#010x}",
+             buffer_length, proc_index, user_index, num_results, num_props, num_ctx, props_ptr,
+@@ -511,6 +550,12 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XSessionMigrateHost({:08X}, {:08X}, {}, {}, {}, {})", obj_ptr,
+                     session_info_ptr, user_index, reserved1, reserved2, reserved3);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionMigrateHost buf_len={} obj={:#010x} info_ptr={:#010x} user={} "
++            "ret={:#010x}",
++            buffer_length, obj_ptr, session_info_ptr, user_index, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -538,6 +583,13 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       REXKRNL_DEBUG("XSessionArbitrationRegister({:08X}, {:08X}, {:016X}, {:08X}, {:08X}, {:08X})",
+                     obj_ptr, flags, session_nonce, session_duration_sec, results_buffer_size,
+                     results_ptr);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionArbitrationRegister buf_len={} obj={:#010x} flags={:#010x} nonce={:016X} "
++            "duration={} results_size={} results_ptr={:#010x} ret={:#010x}",
++            buffer_length, obj_ptr, flags, session_nonce, session_duration_sec, results_buffer_size,
++            results_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -556,6 +608,13 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       REXKRNL_DEBUG("XSessionSearchByID({}, {:08X}, {:08X}, {:08X}, {:08X}, {}, {}, {})",
+                     user_index, num_session_ids, session_ids_ptr, results_buffer_size,
+                     search_results_ptr, reserved1, reserved2, reserved3);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionSearchByID buf_len={} user={} ids={} ids_ptr={:#010x} results_size={} "
++            "results_ptr={:#010x} ret={:#010x}",
++            buffer_length, user_index, num_session_ids, session_ids_ptr, results_buffer_size,
++            search_results_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -571,6 +630,12 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XSessionModifySkill({:08X}, {}, {:08X}, {}, {}, {})", obj_ptr, array_count,
+                     xuid_array_ptr, reserved1, reserved2, reserved3);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionModifySkill buf_len={} obj={:#010x} count={} xuids_ptr={:#010x} "
++            "ret={:#010x}",
++            buffer_length, obj_ptr, array_count, xuid_array_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -597,6 +662,13 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XUserReadStats({}, {}, {:08X}, {}, {:08X}, {}, {:08X})", title_id, xuids_count,
+                     xuids_ptr, specs_count, specs_ptr, results_size, results_ptr);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XUserReadStats buf_len={} title={:#010x} xuids={} xuids_ptr={:#010x} specs={} "
++            "specs_ptr={:#010x} results_size={} results_ptr={:#010x} ret={:#010x}",
++            buffer_length, title_id, xuids_count, xuids_ptr, specs_count, specs_ptr, results_size,
++            results_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -610,6 +682,12 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XSessionWriteStats({:08X}, {:016X}, {:08X}, {:08X})", obj_ptr, xuid, num_views,
+                     views_ptr);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionWriteStats buf_len={} obj={:#010x} xuid={:016X} views={} "
++            "views_ptr={:#010x} ret={:#010x}",
++            buffer_length, obj_ptr, xuid, num_views, views_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -623,6 +701,12 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+ 
+       REXKRNL_DEBUG("XSessionFlushStats({:08X}, {:016X}, {:08X}, {:08X})", obj_ptr, xuid, num_views,
+                     views_ptr);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionFlushStats buf_len={} obj={:#010x} xuid={:016X} views={} "
++            "views_ptr={:#010x} ret={:#010x}",
++            buffer_length, obj_ptr, xuid, num_views, views_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -656,11 +740,18 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       uint32_t context_id = context ? memory::load_and_swap<uint32_t>(context + 0) : 0;
+       REXKRNL_DEBUG("XGIUserGetContext({:08X}, {:08X}, {:08X}))", user_index, context_ptr,
+                     context_id);
+-      uint32_t value = 0;
++      std::optional<uint32_t> stored =
++          context ? UserValueStore().GetContext(user_index, context_id) : std::nullopt;
++      uint32_t value = stored.value_or(0);
+       if (context) {
+         memory::store_and_swap<uint32_t>(context + 4, value);
+       }
+-      return X_E_FAIL;
++      X_HRESULT result = stored ? X_E_SUCCESS : X_E_FAIL;
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO("XGI GetContext user={} id={:#010x} value={:#010x} ret={:#010x}", user_index,
++                    context_id, value, (uint32_t)result);
++      }
++      return result;
+     }
+     case 0x000B0060: {
+       assert_true(!buffer_length || buffer_length == 32);
+@@ -677,6 +768,13 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       REXKRNL_DEBUG("XSessionSearchByIds({:08X}, {:08X}, {:08X}, {:08X}, {:08X}, {}, {}, {})",
+                     user_index, num_session_ids, session_ids_ptr, results_buffer_size,
+                     search_results_ptr, reserved1, reserved2, reserved3);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionSearchByIds buf_len={} user={} ids={} ids_ptr={:#010x} results_size={} "
++            "results_ptr={:#010x} ret={:#010x}",
++            buffer_length, user_index, num_session_ids, session_ids_ptr, results_buffer_size,
++            search_results_ptr, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+@@ -706,6 +804,15 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+           weighted_search_properties_ptr, weighted_search_contexts_ptr, num_props, num_ctx,
+           non_weighted_search_properties_ptr, non_weighted_search_contexts_ptr, results_buffer_size,
+           search_results_ptr, num_users, weighted_search);
++      if (REXCVAR_GET(system_link_trace)) {
++        REXLOG_INFO(
++            "XGI XSessionSearchWeighted buf_len={} proc={} user={} max_results={} "
++            "weighted_props={} weighted_ctx={} props={} ctx={} results_size={} "
++            "results_ptr={:#010x} users={} weighted={} ret={:#010x}",
++            buffer_length, proc_index, user_index, num_results, num_weighted_properties,
++            num_weighted_contexts, num_props, num_ctx, results_buffer_size, search_results_ptr,
++            num_users, weighted_search, (uint32_t)X_E_SUCCESS);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+diff --git a/src/kernel/xam/xam_session.cpp b/src/kernel/xam/xam_session.cpp
+index 4e8d8a6..f36f4aa 100644
+--- a/src/kernel/xam/xam_session.cpp
++++ b/src/kernel/xam/xam_session.cpp
+@@ -52,6 +52,14 @@ void StoreBigEndian64(std::span<uint8_t> out, size_t offset, uint64_t value) {
+   out[offset + 7] = static_cast<uint8_t>(value);
+ }
+ 
++uint64_t ReadBigEndianBits(std::span<const uint8_t> bytes) {
++  uint64_t value = 0;
++  for (uint8_t byte : bytes) {
++    value = (value << 8) | byte;
++  }
++  return value;
++}
++
+ bool IsDuplicateMember(const XSessionMember& existing, const XSessionMember& joining) {
+   if (joining.xuid != 0) {
+     return existing.xuid == joining.xuid;
+@@ -115,6 +123,11 @@ uint32_t AvailableSessionSlots(uint32_t max_slots, uint32_t used_slots) {
+   return max_slots > used_slots ? max_slots - used_slots : 0;
+ }
+ 
++uint32_t RequiredLocalDetailsSize(const XSessionRecord& session) {
++  return kXSessionLocalDetailsSize +
++         static_cast<uint32_t>(session.members.size()) * kXSessionMemberSize;
++}
++
+ uint32_t WriteLocalDetails(const XSessionRecord& session, std::span<uint8_t> out,
+                            uint32_t out_guest_address) {
+   if (out.size() < kXSessionLocalDetailsSize) {
+@@ -124,8 +137,8 @@ uint32_t WriteLocalDetails(const XSessionRecord& session, std::span<uint8_t> out
+   const size_t capacity = (out.size() - kXSessionLocalDetailsSize) / kXSessionMemberSize;
+   const size_t returned = std::min(session.members.size(), capacity);
+   StoreBigEndian32(out, kDetailsHostUserIndexOffset, session.host_user_index);
+-  StoreBigEndian32(out, kDetailsGameTypeOffset, 0);
+-  StoreBigEndian32(out, kDetailsGameModeOffset, 0);
++  StoreBigEndian32(out, kDetailsGameTypeOffset, session.game_type);
++  StoreBigEndian32(out, kDetailsGameModeOffset, session.game_mode);
+   StoreBigEndian32(out, kDetailsFlagsOffset, session.flags);
+   StoreBigEndian32(out, kDetailsMaxPublicOffset, session.max_public);
+   StoreBigEndian32(out, kDetailsMaxPrivateOffset, session.max_private);
+@@ -228,4 +241,84 @@ XSessionRegistry& SessionRegistry() {
+   return instance;
+ }
+ 
++std::optional<TypedUserValue> DecodeTypedUserValue(XUserDataType type,
++                                                   std::span<const uint8_t> bytes) {
++  switch (type) {
++    case XUserDataType::kInt32:
++      if (bytes.size() != sizeof(uint32_t)) {
++        return std::nullopt;
++      }
++      return static_cast<int32_t>(static_cast<uint32_t>(ReadBigEndianBits(bytes)));
++    case XUserDataType::kInt64:
++      if (bytes.size() != sizeof(uint64_t)) {
++        return std::nullopt;
++      }
++      return static_cast<int64_t>(ReadBigEndianBits(bytes));
++    case XUserDataType::kFloat: {
++      if (bytes.size() != sizeof(float)) {
++        return std::nullopt;
++      }
++      const auto bits = static_cast<uint32_t>(ReadBigEndianBits(bytes));
++      float value;
++      std::memcpy(&value, &bits, sizeof(value));
++      return value;
++    }
++    case XUserDataType::kDouble: {
++      if (bytes.size() != sizeof(double)) {
++        return std::nullopt;
++      }
++      const uint64_t bits = ReadBigEndianBits(bytes);
++      double value;
++      std::memcpy(&value, &bits, sizeof(value));
++      return value;
++    }
++    default:
++      return std::nullopt;
++  }
++}
++
++void XUserValueStore::SetContext(uint32_t user_index, uint32_t id, uint32_t value) {
++  std::lock_guard<std::mutex> lock(mutex_);
++  contexts_[{user_index, id}] = value;
++}
++
++std::optional<uint32_t> XUserValueStore::GetContext(uint32_t user_index, uint32_t id) const {
++  std::lock_guard<std::mutex> lock(mutex_);
++  auto it = contexts_.find({user_index, id});
++  if (it == contexts_.end()) {
++    return std::nullopt;
++  }
++  return it->second;
++}
++
++void XUserValueStore::SetProperty(uint32_t user_index, uint32_t id, std::vector<uint8_t> bytes) {
++  std::lock_guard<std::mutex> lock(mutex_);
++  properties_[{user_index, id}] = std::move(bytes);
++}
++
++std::optional<std::vector<uint8_t>> XUserValueStore::GetProperty(uint32_t user_index,
++                                                                 uint32_t id) const {
++  std::lock_guard<std::mutex> lock(mutex_);
++  auto it = properties_.find({user_index, id});
++  if (it == properties_.end()) {
++    return std::nullopt;
++  }
++  return it->second;
++}
++
++XUserValueStore& UserValueStore() {
++  static XUserValueStore instance;
++  return instance;
++}
++
++void ApplyCreatorContexts(XSessionRecord& session, const XUserValueStore& store) {
++  if (session.creator_user_index == kXUserIndexNone) {
++    return;
++  }
++  session.game_type =
++      store.GetContext(session.creator_user_index, kXContextGameType).value_or(0);
++  session.game_mode =
++      store.GetContext(session.creator_user_index, kXContextGameMode).value_or(0);
++}
++
+ }  // namespace rex::kernel::xam
+diff --git a/tests/unit/kernel/xsession_test.cpp b/tests/unit/kernel/xsession_test.cpp
+index 6249a4e..2a9c360 100644
+--- a/tests/unit/kernel/xsession_test.cpp
++++ b/tests/unit/kernel/xsession_test.cpp
+@@ -3,6 +3,8 @@
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
++#include <optional>
++#include <variant>
+ #include <vector>
+ 
+ #include <rex/kernel/xam/xsession.h>
+@@ -223,3 +225,87 @@ TEST_CASE("xsession: XSessionRegistry assigns handles and snapshots", "[kernel][
+   CHECK(snapshot->handle == first);
+   CHECK_FALSE(registry.Snapshot(0x9999).has_value());
+ }
++
++TEST_CASE("xsession: XUserValueStore stores contexts per user", "[kernel][xsession]") {
++  XUserValueStore store;
++  CHECK_FALSE(store.GetContext(0, kXContextGameType).has_value());
++  store.SetContext(0, kXContextGameType, 0x21);
++  const std::optional<uint32_t> stored = store.GetContext(0, kXContextGameType);
++  REQUIRE(stored.has_value());
++  CHECK(*stored == 0x21);
++  CHECK_FALSE(store.GetContext(1, kXContextGameType).has_value());
++  store.SetContext(0, kXContextGameType, 0x22);
++  CHECK(*store.GetContext(0, kXContextGameType) == 0x22);
++}
++
++TEST_CASE("xsession: XUserValueStore keeps property bytes per user", "[kernel][xsession]") {
++  constexpr uint32_t kPropertyId = 0x40000001;
++  XUserValueStore store;
++  CHECK_FALSE(store.GetProperty(0, kPropertyId).has_value());
++  const std::vector<uint8_t> bytes = {0x00, 0x00, 0x01, 0x02};
++  store.SetProperty(0, kPropertyId, bytes);
++  const std::optional<std::vector<uint8_t>> stored = store.GetProperty(0, kPropertyId);
++  REQUIRE(stored.has_value());
++  CHECK(*stored == bytes);
++  CHECK_FALSE(store.GetProperty(1, kPropertyId).has_value());
++}
++
++TEST_CASE("xsession: DecodeTypedUserValue reads big-endian by type", "[kernel][xsession]") {
++  const std::vector<uint8_t> int32_bytes = {0xFF, 0xFF, 0xFF, 0xFE};
++  const auto as_int32 = DecodeTypedUserValue(XUserDataType::kInt32, int32_bytes);
++  REQUIRE(as_int32.has_value());
++  CHECK(std::get<int32_t>(*as_int32) == -2);
++
++  const std::vector<uint8_t> int64_bytes = {0, 0, 0, 0, 0, 0, 0, 0x2A};
++  const auto as_int64 = DecodeTypedUserValue(XUserDataType::kInt64, int64_bytes);
++  REQUIRE(as_int64.has_value());
++  CHECK(std::get<int64_t>(*as_int64) == 42);
++
++  const std::vector<uint8_t> float_bytes = {0x3F, 0x80, 0x00, 0x00};
++  const auto as_float = DecodeTypedUserValue(XUserDataType::kFloat, float_bytes);
++  REQUIRE(as_float.has_value());
++  CHECK(std::get<float>(*as_float) == 1.0f);
++
++  const std::vector<uint8_t> double_bytes = {0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18};
++  const auto as_double = DecodeTypedUserValue(XUserDataType::kDouble, double_bytes);
++  REQUIRE(as_double.has_value());
++  CHECK(std::get<double>(*as_double) == 3.141592653589793);
++
++  CHECK_FALSE(DecodeTypedUserValue(XUserDataType::kInt32, int64_bytes).has_value());
++  CHECK_FALSE(DecodeTypedUserValue(XUserDataType::kWString, int32_bytes).has_value());
++}
++
++TEST_CASE("xsession: creator game type and mode reach details", "[kernel][xsession]") {
++  XUserValueStore store;
++  store.SetContext(0, kXContextGameType, 0x21);
++  store.SetContext(0, kXContextGameMode, 0x03);
++  store.SetContext(1, kXContextGameMode, 0x07);
++  XSessionRecord session = MakeDetailsSession();
++  session.creator_user_index = 0;
++  ApplyCreatorContexts(session, store);
++  std::vector<uint8_t> buffer(640, kFillByte);
++  WriteLocalDetails(session, buffer, kGuestBaseAddress);
++  CHECK(ReadBigEndian32(buffer, kDetailsGameTypeOffset) == 0x21);
++  CHECK(ReadBigEndian32(buffer, kDetailsGameModeOffset) == 0x03);
++}
++
++TEST_CASE("xsession: unset creator contexts leave game type and mode at zero",
++          "[kernel][xsession]") {
++  XUserValueStore store;
++  store.SetContext(1, kXContextGameType, 0x21);
++  XSessionRecord session = MakeDetailsSession();
++  session.creator_user_index = 0;
++  ApplyCreatorContexts(session, store);
++  CHECK(session.game_type == 0);
++  CHECK(session.game_mode == 0);
++}
++
++TEST_CASE("xsession: RequiredLocalDetailsSize covers every member", "[kernel][xsession]") {
++  const XSessionRecord session = MakeDetailsSession();
++  const uint32_t required = RequiredLocalDetailsSize(session);
++  CHECK(required == kXSessionLocalDetailsSize + 2 * kXSessionMemberSize);
++  std::vector<uint8_t> exact(required, kFillByte);
++  CHECK(WriteLocalDetails(session, exact, kGuestBaseAddress) == 2);
++  std::vector<uint8_t> one_short(required - 1, kFillByte);
++  CHECK(WriteLocalDetails(session, one_short, kGuestBaseAddress) == 1);
++}
