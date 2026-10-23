@@ -82,7 +82,22 @@ Shipped settings (`resolution_scale` 2, unlocked, hospital, RX 7800 XT, 2026-10-
 Soaks with the native renderer (10 minutes of scripted movement, aiming and firing, 1600x900,
 `resolution_scale` 1, unlocked): chapter 4 mean 186 fps, chapter 2 mean 211 fps, no faults or GPU errors.
 
+## Android (Vulkan): on by default
+
+Galaxy S25 Ultra, v0.3.0 APK, chapter 2 hospital, frame rate unlocked, runs alternated and started below 34.5 °C
+(2026-10-23):
+
+| Run | Native | Emulated |
+|---|---|---|
+| Round 1 | 46.3 fps (p95 22-28 ms) | 39.3 fps (p95 24-32 ms) |
+| Round 2 | 43.6 fps (p95 24-25 ms) | 40.9 fps (p95 25-27 ms) |
+
+The native path draws the hospital correctly and is about 12 % faster with a lower p95, so
+`gow2_native_renderer = "auto"` now turns it on on Android too (unless the player sets `render_target_path_vulkan`).
+Checked on the phone with a `gow2.toml` holding only `net_link_active`: the log says `gow2 native renderer on`.
+
 ## Next
+
 
 - Resolves that still reload (counted, correct): `k_16_16` colour (once a frame), resolves that span
   two render targets (`multiple_sources`, about once a frame), and the other views of a resolved address

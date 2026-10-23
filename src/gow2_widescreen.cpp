@@ -35,7 +35,8 @@ REXCVAR_DEFINE_STRING(gow2_widescreen, "auto", "Display",
 
 REXCVAR_DEFINE_STRING(gow2_native_renderer, "auto", "Display",
                       "Native renderer: render targets are host surfaces and resolves write textures directly (faster, "
-                      "any aspect). auto = on for AMD on Windows unless render_target_path_d3d12 is set; on; off.")
+                      "any aspect). auto = on for AMD on Windows and on Android, unless the render target path is set "
+                      "(render_target_path_d3d12, or render_target_path_vulkan on Android); on; off.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DEFINE_BOOL(gow2_ui_projection_fix, true, "Display",

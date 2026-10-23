@@ -10,13 +10,14 @@
 
 namespace rex::glue::native_renderer {
 
-// "on" and "off" name it; anything else is "auto", which turns it on for AMD unless the player chose a render
-// target path.
-inline bool UseNativeRenderer(const std::string& mode, bool path_set_by_player, const std::string& gpu_name) {
+// "on" and "off" name it; anything else is "auto", which turns it on for AMD on Windows and on every Android
+// device (Android reports no GPU name), unless the player chose a render target path.
+inline bool UseNativeRenderer(const std::string& mode, bool path_set_by_player, const std::string& gpu_name,
+                              bool android) {
   if (mode == "on") return true;
   if (mode == "off") return false;
   return !path_set_by_player &&
-         (widescreen::GpuNameHas(gpu_name, "AMD") || widescreen::GpuNameHas(gpu_name, "RADEON"));
+         (android || widescreen::GpuNameHas(gpu_name, "AMD") || widescreen::GpuNameHas(gpu_name, "RADEON"));
 }
 
 }  // namespace rex::glue::native_renderer

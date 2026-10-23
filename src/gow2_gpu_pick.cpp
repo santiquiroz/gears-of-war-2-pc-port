@@ -19,9 +19,16 @@ namespace rex::glue {
 bool NativeRendererActive() {
   static const bool active = [] {
     const std::string mode = REXCVAR_GET(gow2_native_renderer);
+#if defined(__ANDROID__)
+    const bool android = true;
+    const char* path_cvar = "render_target_path_vulkan";
+#else
+    const bool android = false;
+    const char* path_cvar = "render_target_path_d3d12";
+#endif
     const bool path_set_by_player =
-        rex::cvar::GetFlagSource("render_target_path_d3d12") != rex::cvar::Source::kDefault;
-    return native_renderer::UseNativeRenderer(mode, path_set_by_player, ChooseRenderGpu().name);
+        rex::cvar::GetFlagSource(path_cvar) != rex::cvar::Source::kDefault;
+    return native_renderer::UseNativeRenderer(mode, path_set_by_player, ChooseRenderGpu().name, android);
   }();
   return active;
 }

@@ -16,14 +16,17 @@ void Expect(bool ok, std::string_view what) {
 
 int main() {
   using rex::glue::native_renderer::UseNativeRenderer;
-  Expect(UseNativeRenderer("on", false, "NVIDIA GeForce RTX 5080"), "on is on for NVIDIA");
-  Expect(!UseNativeRenderer("off", false, "AMD Radeon RX 7800 XT"), "off is off for AMD");
-  Expect(UseNativeRenderer("auto", false, "AMD Radeon RX 7800 XT"), "auto on AMD with the path unset is on");
-  Expect(!UseNativeRenderer("auto", true, "AMD Radeon RX 7800 XT"), "auto on AMD with the path set is off");
-  Expect(!UseNativeRenderer("auto", false, "NVIDIA GeForce RTX 5080"), "auto on NVIDIA is off");
-  Expect(!UseNativeRenderer("auto", false, ""), "auto with an unknown GPU is off");
-  Expect(UseNativeRenderer("garbage", false, "AMD Radeon RX 7800 XT"), "a garbage mode behaves like auto on AMD");
-  Expect(!UseNativeRenderer("garbage", false, "NVIDIA GeForce RTX 5080"), "a garbage mode behaves like auto on NVIDIA");
+  Expect(UseNativeRenderer("on", false, "NVIDIA GeForce RTX 5080", false), "on is on for NVIDIA");
+  Expect(!UseNativeRenderer("off", false, "AMD Radeon RX 7800 XT", false), "off is off for AMD");
+  Expect(UseNativeRenderer("auto", false, "AMD Radeon RX 7800 XT", false), "auto on AMD with the path unset is on");
+  Expect(!UseNativeRenderer("auto", true, "AMD Radeon RX 7800 XT", false), "auto on AMD with the path set is off");
+  Expect(!UseNativeRenderer("auto", false, "NVIDIA GeForce RTX 5080", false), "auto on NVIDIA is off");
+  Expect(!UseNativeRenderer("auto", false, "", false), "auto with an unknown GPU is off");
+  Expect(UseNativeRenderer("garbage", false, "AMD Radeon RX 7800 XT", false), "a garbage mode behaves like auto on AMD");
+  Expect(!UseNativeRenderer("garbage", false, "NVIDIA GeForce RTX 5080", false), "a garbage mode behaves like auto on NVIDIA");
+  Expect(UseNativeRenderer("auto", false, "", true), "auto on Android with no GPU name is on");
+  Expect(!UseNativeRenderer("auto", true, "", true), "auto on Android with the path set is off");
+  Expect(!UseNativeRenderer("off", false, "", true), "off is off on Android");
   std::printf("native_renderer_math_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }
