@@ -20,6 +20,8 @@ REXCVAR_DEFINE_STRING(gow2_test_input, "", "Testing",
                       "Path of a text file whose first line names the pad buttons and stick values "
                       "to hold for guest user 0 (format in src/gow2_test_input.h). Read even when the "
                       "window has no focus; for automated tests. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_test_input_p2, "", "Testing",
+                      "Like gow2_test_input, for guest user 1 (split-screen tests).");
 
 namespace rex::glue {
 namespace {
@@ -41,6 +43,10 @@ PadFile& TheFile() {
   static PadFile file;
   return file;
 }
+PadFile& TheFileP2() {
+  static PadFile file;
+  return file;
+}
 
 bool ReadFirstLine(const std::string& path, std::string* line) {
   std::ifstream in(path, std::ios::binary);
@@ -49,23 +55,31 @@ bool ReadFirstLine(const std::string& path, std::string* line) {
   return true;
 }
 
-void Refresh(PadFile* file, const std::string& path) {
+void Refresh(PadFile* file, const std::string& path, uint32_t user_index) {
   std::string line;
   const bool read = ReadFirstLine(path, &line);
   const PadState pad = read ? test_input::ParsePadLine(line) : PadState{};
   if (read && !file->logged) {
     file->logged = true;
-    REXLOG_INFO("TESTINPUT pad state for user 0 from {}", path);
+    REXLOG_INFO("TESTINPUT pad state for user {} from {}", user_index, path);
   }
   if (!(pad == file->pad)) ++file->packet_bump;
   file->pad = pad;
 }
 
-void RefreshIfDue(PadFile* file, const std::string& path) {
+void RefreshIfDue(PadFile* file, const std::string& path, uint32_t user_index) {
   const auto now = std::chrono::steady_clock::now();
   if (now < file->next_read) return;
-  Refresh(file, path);
+  Refresh(file, path, user_index);
   file->next_read = now + kRereadEvery;
+}
+
+void ApplyForFile(uint8_t* base, uint32_t user_index, uint32_t state_addr, uint32_t* result,
+                  const std::string& path, PadFile& file) {
+  std::lock_guard<std::mutex> hold(file.lock);
+  RefreshIfDue(&file, path, user_index);
+  if (test_input::IsNeutral(file.pad)) return;
+  test_input::OverlayPad(guest::HostPtr(base, state_addr), file.pad, file.packet_bump, result);
 }
 
 }  // namespace
@@ -75,7 +89,7 @@ bool test_input::CurrentPad(PadState* out) {
   if (path.empty()) return false;
   PadFile& file = TheFile();
   std::lock_guard<std::mutex> hold(file.lock);
-  RefreshIfDue(&file, path);
+  RefreshIfDue(&file, path, 0);
   if (IsNeutral(file.pad)) return false;
   *out = file.pad;
   return true;
@@ -83,14 +97,15 @@ bool test_input::CurrentPad(PadState* out) {
 
 void ApplyTestInput(uint8_t* base, uint32_t user_index, uint32_t state_addr, uint32_t* result) {
   if (HostUiOpen()) return;
-  if (user_index != 0) return;
-  const std::string path = REXCVAR_GET(gow2_test_input);
-  if (path.empty()) return;
-  PadFile& file = TheFile();
-  std::lock_guard<std::mutex> hold(file.lock);
-  RefreshIfDue(&file, path);
-  if (test_input::IsNeutral(file.pad)) return;
-  test_input::OverlayPad(guest::HostPtr(base, state_addr), file.pad, file.packet_bump, result);
+  if (user_index == 0) {
+    const std::string path = REXCVAR_GET(gow2_test_input);
+    if (path.empty()) return;
+    ApplyForFile(base, user_index, state_addr, result, path, TheFile());
+  } else if (user_index == 1) {
+    const std::string path = REXCVAR_GET(gow2_test_input_p2);
+    if (path.empty()) return;
+    ApplyForFile(base, user_index, state_addr, result, path, TheFileP2());
+  }
 }
 
 }  // namespace rex::glue
