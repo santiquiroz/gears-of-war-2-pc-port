@@ -2,6 +2,10 @@
 processor, pairing them by (frame, draw index). Prints, per hashed group, the share of paired draws whose
 values match, the first 10 mismatches, and the draw counts of each side per frame.
 
+Derived checks: vsc2/psc2 (shadows under the LOAD_ALU_CONSTANT records) against CP vsc/psc; fetch2 (fetch shadow
+under the fetch slot the non-indexed draws write into the ring) against CP fetch for sub_82980210/sub_8297FD30;
+and the shader objects {Aaddr, Baddr} against the CP loads {vsa, psa} in either order, reporting which is which.
+
 Where a frame has a different number of draws on each side (Clear, Resolve and other draws reach DRAW_INDX
 but are not among the four probed functions), the frame is aligned instead: each game draw is paired with the
 next CP draw whose prim and count agree, and the CP draws skipped on the way are reported as CP-only.
@@ -15,6 +19,14 @@ import sys
 LINE = re.compile(r"PARITY (GAME|CP) (.*)$")
 TOKEN = re.compile(r"(\w+)=(\S+)")
 NOT_GROUPS = {"f", "d", "fn", "prim", "n", "raw"}
+# GAME fields with no same-named CP field; compared by the derived checks below instead.
+DERIVED_FIELDS = {"Aaddr", "Alen", "Baddr", "Blen", "vsc2", "psc2", "fetch2"}
+# (group name, GAME field, CP field, functions it applies to or None for all).
+DERIVED_GROUPS = (
+    ("vsc2~vsc", "vsc2", "vsc", None),
+    ("psc2~psc", "psc2", "psc", None),
+    ("fetch2~fetch", "fetch2", "fetch", ("sub_82980210", "sub_8297FD30")),
+)
 FIRST_MISMATCHES = 10
 
 
@@ -61,6 +73,29 @@ def same_draw(game, cp):
     return True
 
 
+def shader_match(g, c):
+    """Matches the game's shader objects {A, B} with the CP's {vertex, pixel} loads. Returns (role, ok), role
+    "A=vs B=ps" or "A=ps B=vs" (the order that matched) or None. A CP load given as imm (IM_LOAD_IMMEDIATE) has
+    no address and is matched by dword length instead. Returns None when a side lacks the fields."""
+    gg, cg = g["groups"], c["groups"]
+    if not all(k in gg for k in ("Aaddr", "Alen", "Baddr", "Blen")) or not all(k in cg for k in ("vsa", "psa")):
+        return None
+
+    def same(obj, stage):
+        addr, length = cg[stage + "a"], cg.get(stage + "l")
+        if addr.lower() == "imm":
+            # The command processor prints lengths in decimal, the game probe in hex.
+            return length is not None and parse_int(length, 10) == parse_int(gg[obj + "len"], 16)
+        ga, ca = parse_int(gg[obj + "addr"], 16), parse_int(addr, 16)
+        return ga is not None and ca is not None and (ga & 0x1FFFFFFC) == (ca & 0x1FFFFFFC)
+
+    if same("A", "vs") and same("B", "ps"):
+        return "A=vs B=ps", True
+    if same("A", "ps") and same("B", "vs"):
+        return "A=ps B=vs", True
+    return None, False
+
+
 def pair_frame(game, cp):
     """Returns (pairs, game_only, cp_only, aligned) for the draws of one frame."""
     if len(game) == len(cp):
@@ -93,27 +128,49 @@ def compare(text):
             draws.sort(key=lambda r: r["d"])
 
     totals, mismatches, groups = {}, {}, []
+    roles = {}
     frame_rows = []
+
+    def tally(name, ok, frame, g, gv, cv):
+        if name not in groups:
+            groups.append(name)
+        matched, paired = totals.get(name, (0, 0))
+        totals[name] = (matched + ok, paired + 1)
+        if not ok:
+            mismatches.setdefault(name, []).append((frame, g["d"], g["fn"], gv, cv))
+
     for frame in sorted(set(games) | set(cps)):
         game, cp = games.get(frame, []), cps.get(frame, [])
         pairs, game_only, cp_only, aligned = pair_frame(game, cp)
         frame_rows.append((frame, len(game), len(cp), len(pairs), game_only, cp_only, aligned))
         for g, c in pairs:
             for name, value in g["groups"].items():
+                if name in DERIVED_FIELDS:
+                    continue
                 if name not in groups:
                     groups.append(name)
                 if name not in c["groups"]:
                     continue
-                ok = value.lower() == c["groups"][name].lower()
-                matched, paired = totals.get(name, (0, 0))
-                totals[name] = (matched + ok, paired + 1)
-                if not ok:
-                    mismatches.setdefault(name, []).append((frame, g["d"], g["fn"], value, c["groups"][name]))
-    return frame_rows, groups, totals, mismatches
+                tally(name, value.lower() == c["groups"][name].lower(), frame, g, value, c["groups"][name])
+            for name, gkey, ckey, fns in DERIVED_GROUPS:
+                gv, cv = g["groups"].get(gkey), c["groups"].get(ckey)
+                if gv is None or cv is None or gv == "-" or (fns is not None and g["fn"] not in fns):
+                    continue
+                tally(name, gv.lower() == cv.lower(), frame, g, gv, cv)
+            shader = shader_match(g, c)
+            if shader is not None:
+                role, ok = shader
+                if role is not None:
+                    roles[role] = roles.get(role, 0) + 1
+                gg, cg = g["groups"], c["groups"]
+                tally("shader{A,B}~{vs,ps}", ok, frame, g,
+                      f"A={gg['Aaddr']}/{gg['Alen']} B={gg['Baddr']}/{gg['Blen']}",
+                      f"vs={cg['vsa']}/{cg.get('vsl', '-')} ps={cg['psa']}/{cg.get('psl', '-')}")
+    return frame_rows, groups, totals, mismatches, roles
 
 
 def report(text):
-    frame_rows, groups, totals, mismatches = compare(text)
+    frame_rows, groups, totals, mismatches, roles = compare(text)
     out = []
     for name in groups:
         matched, paired = totals.get(name, (0, 0))
@@ -121,13 +178,15 @@ def report(text):
         out.append(f"group {name}: {matched}/{paired} paired draws match ({pct:.2f}%)")
         for frame, d, fn, gv, cv in mismatches.get(name, [])[:FIRST_MISMATCHES]:
             out.append(f"  mismatch f={frame} d={d} fn={fn} game={gv} cp={cv}")
+    for role, n in sorted(roles.items()):
+        out.append(f"shader roles: {role} in {n} paired draws")
     out.append("per frame: frame game_draws cp_draws paired game_only cp_only")
     for frame, ng, nc, paired, game_only, cp_only, aligned in frame_rows:
         note = " (aligned by prim/count)" if aligned else ""
         out.append(f"  {frame} {ng} {nc} {paired} {game_only} {cp_only}{note}")
     if any(nc > ng for _, ng, nc, *_ in frame_rows):
         out.append("CP has draws the game side does not: draws outside the four probed functions reach DRAW_INDX.")
-    return "\n".join(out), frame_rows, totals
+    return "\n".join(out), frame_rows, totals, roles
 
 
 SELFTEST_GAME = (
@@ -138,17 +197,36 @@ SELFTEST_CP = (
     "I 0.2 PARITY CP f=300 d=0 prim=4 n=6 surf=0000AAAA prog=00000009 rs=00000002 vp=00000003 "
     "scis=00000004 fetch=00000005 vsc=00000006 psc=00000007 A=82000100 B=82000200"
 )
+# A non-indexed draw with the new fields: A is the pixel shader by address, B the vertex one loaded inline (imm,
+# matched by length); vsc2 and fetch2 match, psc2 does not.
+SELFTEST_GAME_2 = (
+    "I 0.3 PARITY GAME f=300 d=1 fn=sub_82980210 prim=- n=- surf=0000AAAA prog=00000001 rs=00000002 vp=00000003 "
+    "scis=00000004 fetch=00000005 vsc=00000006 psc=00000007 A=82000100 B=82000200 raw=4,0,0,3,0 "
+    "Aaddr=0A001000 Alen=40 Baddr=0A002000 Blen=20 vsc2=00000011 psc2=00000012 fetch2=00000013"
+)
+SELFTEST_CP_2 = (
+    "I 0.4 PARITY CP f=300 d=1 prim=4 n=3 surf=0000AAAA prog=00000001 rs=00000002 vp=00000003 "
+    "scis=00000004 fetch=00000013 vsc=00000011 psc=00000099 vsa=imm vsl=32 psa=0A001000 psl=64"
+)
 
 
 def selftest():
-    text = SELFTEST_GAME + "\n" + SELFTEST_CP + "\n"
-    _, frame_rows, totals = report(text)
+    text = "\n".join((SELFTEST_GAME, SELFTEST_CP, SELFTEST_GAME_2, SELFTEST_CP_2)) + "\n"
+    _, frame_rows, totals, roles = report(text)
     failures = []
-    if totals.get("surf") != (1, 1):
+    if totals.get("surf") != (2, 2):
         failures.append(f"surf totals {totals.get('surf')}")
-    if totals.get("prog") != (0, 1):
+    if totals.get("prog") != (1, 2):
         failures.append(f"prog totals {totals.get('prog')}")
-    if frame_rows != [(300, 1, 1, 1, 0, 0, False)]:
+    expected = {"vsc2~vsc": (1, 1), "psc2~psc": (0, 1), "fetch2~fetch": (1, 1), "shader{A,B}~{vs,ps}": (1, 1)}
+    for name, want in expected.items():
+        if totals.get(name) != want:
+            failures.append(f"{name} totals {totals.get(name)}")
+    if roles != {"A=ps B=vs": 1}:
+        failures.append(f"roles {roles}")
+    if "Aaddr" in totals or "vsc2" in totals:
+        failures.append("derived fields compared as plain groups")
+    if frame_rows != [(300, 2, 2, 2, 0, 0, False)]:
         failures.append(f"frame rows {frame_rows}")
     if failures:
         print("selftest FAILED: " + "; ".join(failures))
@@ -164,7 +242,7 @@ def main(argv):
         print("usage: python -I tools/native/parity_compare.py game.log | --selftest", file=sys.stderr)
         return 2
     with open(argv[1], encoding="utf-8", errors="replace") as f:
-        text, _, _ = report(f.read())
+        text, _, _, _ = report(f.read())
     print(text)
     return 0
 

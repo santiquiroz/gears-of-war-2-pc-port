@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
 
 #include <rex/hook.h>
 #include <rex/logging.h>
@@ -114,13 +115,91 @@ bool g_parity_checked = false;
 
 // FNV-1a over the dwords as the guest stores them, read big-endian (LoadU32) and fed to the hash least-significant
 // byte first, so the value is the host-endian one. Both sides must hash the same way for the hashes to compare.
-uint32_t HashDwords(const uint8_t* base, uint32_t address, uint32_t dwords) {
+uint32_t HashValues(const uint32_t* values, uint32_t dwords) {
   uint32_t hash = 2166136261u;
   for (uint32_t i = 0; i < dwords; ++i) {
-    const uint32_t value = rex::glue::guest::LoadU32(base, address + 4 * i);
-    for (uint32_t shift = 0; shift < 32; shift += 8) hash = (hash ^ ((value >> shift) & 0xFFu)) * 16777619u;
+    for (uint32_t shift = 0; shift < 32; shift += 8) hash = (hash ^ ((values[i] >> shift) & 0xFFu)) * 16777619u;
   }
   return hash;
+}
+
+uint32_t HashDwords(const uint8_t* base, uint32_t address, uint32_t dwords) {
+  std::vector<uint32_t> values(dwords);
+  for (uint32_t i = 0; i < dwords; ++i) values[i] = rex::glue::guest::LoadU32(base, address + 4 * i);
+  return HashValues(values.data(), dwords);
+}
+
+// The physical-address fixup the library applies before putting an address in a packet (120.cpp:20504-20510,
+// 22.cpp sub_8298F378): clrlwi 3, plus 0x1000 when the top 12 bits are >= 0xE00 (rlwinm 12,20,31; addi 512;
+// rlwinm 0,19,19).
+uint32_t PhysicalAddress(uint32_t address) {
+  return (address & 0x1FFFFFFFu) + ((((address >> 20) + 512u) & 0x1000u));
+}
+
+// Microcode of a shader object as its load packet names it: guest address (type bits stripped) and dwords.
+struct ShaderMicrocode {
+  uint32_t address = 0;
+  uint32_t dwords = 0;
+};
+
+// A (dev+12692), IM_LOAD in sub_8298F600 (120.cpp:20489-20530): payload [(Phys(*(S_A+40) + *(A+24)) & 0x1FFFFFFE)
+// | 1, *(S_A+44) >> 2] with S_A = A + *(A+64).
+ShaderMicrocode MicrocodeOfA(const uint8_t* base, uint32_t a) {
+  using rex::glue::guest::LoadU32;
+  const uint32_t s = a + LoadU32(base, a + 64);
+  return {PhysicalAddress(LoadU32(base, s + 40) + LoadU32(base, a + 24)) & ~3u, LoadU32(base, s + 44) >> 2};
+}
+
+// B (dev+12696): no IM_LOAD in sub_8298F600; its microcode goes through sub_8298F210 (18.cpp:19104-19160, called
+// at 120.cpp:20785-20795 with r4 = 0, r10 = r24), an IM_LOAD_IMMEDIATE of type 0 copied from
+// Phys(*(S+872) + *(B+32)) with *(S+876) >> 2 dwords, S = B + *(B + 896 + 8·r24), r24 = (*(B+872) & 0x20) != 0
+// (120.cpp:20327-20336). When the shader cache sub_8298F4C0 hits instead, the command processor may load another copy.
+ShaderMicrocode MicrocodeOfB(const uint8_t* base, uint32_t b) {
+  using rex::glue::guest::LoadU32;
+  const uint32_t variant = (LoadU32(base, b + 872) & 0x20u) != 0 ? 1u : 0u;
+  const uint32_t s = b + LoadU32(base, b + 896 + 8 * variant);
+  return {PhysicalAddress(LoadU32(base, s + 872) + LoadU32(base, b + 32)) & ~3u, LoadU32(base, s + 876) >> 2};
+}
+
+// LOAD_ALU_CONSTANT records of sub_8298F378 (22.cpp:20511-20693): header at desc + *(desc+20); records
+// {u16 start, u16 count, u32 offset} from header+20 to header+20+*(header+16), stopping at count 0. The packet is
+// [Phys(offset + data), start·4, count]: count is in dwords (the ring copy moves count·4 bytes), the destination is
+// register 0x4000 + start·4. Overlaid on the 2048 dwords of 0x4000-0x47FF.
+void OverlayAluConstants(const uint8_t* base, uint32_t desc, uint32_t data, std::vector<uint32_t>& registers) {
+  using rex::glue::guest::LoadU32;
+  const uint32_t header_offset = LoadU32(base, desc + 20);
+  if (header_offset == 0) return;
+  const uint32_t header = desc + header_offset;
+  uint32_t record = header + 20;
+  const uint32_t end = record + LoadU32(base, header + 16);
+  for (uint32_t guard = 0; record < end && guard < 4096; ++guard, record += 8) {
+    const uint32_t start_count = LoadU32(base, record);
+    const uint32_t start = start_count >> 16;
+    const uint32_t count = start_count & 0xFFFFu;
+    if (count == 0) break;
+    const uint32_t source = LoadU32(base, record + 4) + data;
+    for (uint32_t i = 0; i < count && start * 4 + i < registers.size(); ++i) {
+      registers[start * 4 + i] = LoadU32(base, source + 4 * i);
+    }
+  }
+}
+
+// sub_8297FD30 (78.cpp:20305-20330) and sub_82980210 (1.cpp:19272-19300) copy their vertices into a ring allocation
+// and write fetch slot 31 (fetch constants 93-95, stream 0 = 95) straight into the ring with the type-0 header
+// 0x000548BA (6 dwords at 0x48BA), leaving the fetch shadow alone. The address comes from sub_8298B5B0, not from
+// 12460, so it is read back from the ring: the last such header in the 64 dwords before the write pointer dev+48.
+// Overlays those 6 dwords at fetch dword 186 and returns false when no header is found.
+bool OverlayRingFetch(const uint8_t* base, uint32_t device, std::vector<uint32_t>& fetch) {
+  using rex::glue::guest::LoadU32;
+  const uint32_t write = LoadU32(base, device + 48);
+  for (uint32_t back = 0; back < 64; ++back) {
+    const uint32_t at = write - 4 * back;
+    if (LoadU32(base, at) != 0x000548BAu) continue;
+    if (back < 6) return false;
+    for (uint32_t i = 0; i < 6; ++i) fetch[186 + i] = LoadU32(base, at + 4 + 4 * i);
+    return true;
+  }
+  return false;
 }
 
 // The four draws of tools/native/gen_probe.py's table whose device shadows are logged (device layout doc, sections 2-4).
@@ -152,13 +231,36 @@ void LogParityDraw(std::string_view name, const PPCContext& ctx, const uint8_t* 
     count = std::to_string(ctx.r7.u32);
   }
   const auto hash = [&](uint32_t offset, uint32_t dwords) { return HashDwords(base, device + offset, dwords); };
+  const uint32_t a = rex::glue::guest::LoadU32(base, device + 12692);
+  const uint32_t b = rex::glue::guest::LoadU32(base, device + 12696);
+  const ShaderMicrocode code_a = a != 0 ? MicrocodeOfA(base, a) : ShaderMicrocode{};
+  const ShaderMicrocode code_b = b != 0 ? MicrocodeOfB(base, b) : ShaderMicrocode{};
+
+  // Constants as the command processor holds them: shadows 1920/6016 (flushed through masks 0/8 by sub_8298E5B8)
+  // under the LOAD_ALU_CONSTANT records of A (A+40, data *(A+24)) and B (B+872, data *(B+32)) (120.cpp:20468-20472,
+  // 20716-20726, 20870-20876).
+  std::vector<uint32_t> constants(2048);
+  for (uint32_t i = 0; i < 1024; ++i) {
+    constants[i] = rex::glue::guest::LoadU32(base, device + 1920 + 4 * i);
+    constants[1024 + i] = rex::glue::guest::LoadU32(base, device + 6016 + 4 * i);
+  }
+  if (a != 0) OverlayAluConstants(base, a + 40, rex::glue::guest::LoadU32(base, a + 24), constants);
+  if (b != 0) OverlayAluConstants(base, b + 872, rex::glue::guest::LoadU32(base, b + 32), constants);
+
+  std::string fetch2 = "-";
+  if (name == "sub_82980210" || name == "sub_8297FD30") {
+    std::vector<uint32_t> fetch(192);
+    for (uint32_t i = 0; i < 192; ++i) fetch[i] = rex::glue::guest::LoadU32(base, device + 1152 + 4 * i);
+    if (OverlayRingFetch(base, device, fetch)) fetch2 = fmt::format("{:08X}", HashValues(fetch.data(), 192));
+  }
   REXLOG_INFO(
       "PARITY GAME f={} d={} fn={} prim={} n={} surf={:08X} prog={:08X} rs={:08X} vp={:08X} scis={:08X} "
-      "fetch={:08X} vsc={:08X} psc={:08X} A={:08X} B={:08X} raw={:08X},{:08X},{:08X},{:08X},{:08X}",
+      "fetch={:08X} vsc={:08X} psc={:08X} A={:08X} B={:08X} raw={:08X},{:08X},{:08X},{:08X},{:08X} "
+      "Aaddr={:08X} Alen={:X} Baddr={:08X} Blen={:X} vsc2={:08X} psc2={:08X} fetch2={}",
       g_parity_frame, draw, name, prim, count, hash(10368, 6), hash(10528, 2), hash(10548, 12), hash(10444, 21),
-      hash(10436, 2), hash(1152, 192), hash(1920, 1024), hash(6016, 1024),
-      rex::glue::guest::LoadU32(base, device + 12692), rex::glue::guest::LoadU32(base, device + 12696),
-      ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);
+      hash(10436, 2), hash(1152, 192), hash(1920, 1024), hash(6016, 1024), a, b,
+      ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.r8.u32, code_a.address, code_a.dwords, code_b.address,
+      code_b.dwords, HashValues(constants.data(), 1024), HashValues(constants.data() + 1024, 1024), fetch2);
 }
 
 // Called before every counted probe. Swap ends a frame; the four draws are logged in parity mode.
