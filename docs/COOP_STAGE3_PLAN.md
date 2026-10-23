@@ -197,3 +197,12 @@ addresses, with `net_broadcast_targets` listing every PC (`docs/COOP_N_PLAYERS.m
 4. Whether DG:24059 copies the host's tier to every joiner (the hash depends on it).
 5. Whether party `MaxPlayers` (DG:25262) affects campaign co-op (it appears set only in party setup).
 6. Whether `UpdateNetSpeeds` runs in local tests: it skips only with a LAN `GameSettings` (DE:21293-21295).
+
+## Results
+
+- 2026-10-22, step 3 at 8 players, eight copies on one PC (RX 7800 XT, 640x360, `resolution_scale` 1, 30 fps cap,
+  audio muted, `coop-stage2.ps1 -Scenario setup -Players 8 -WaitScale 2 -TitleWaitSec 120 -LoadSec 60`): the host
+  created the session and all seven clients joined (`XGISessionJoinRemote`), 8 player controllers. Marcus and players
+  3-8 (`GearPawn_COGGear`) spawned and walked; Dom was still waiting for the Right Trigger after the opening
+  cinematic, as in the two-player run. Each copy used about 1 GB of RAM and 0.5 GB of VRAM. A first run with the
+  default waits sent the host into the solo campaign: with eight copies starting, the menu needs the longer waits.
