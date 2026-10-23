@@ -69,13 +69,10 @@ function Start-Game {
     Wait-Ready
 }
 
+# A full stop and start: the idle guard exits after it trips once, and only 'start' launches a new one.
 function Restart-Game {
-    Invoke-Helper 'stopone' '-Instance' '1' | Out-Null
-    Wait-IdleGate
-    $script:gameStart = Get-Date
-    $r = Invoke-Helper 'startone' '-Instance' '1'
-    if ($r.Code -ne 0) { throw "startone failed: $($r.Lines -join ' | ')" }
-    Wait-Ready
+    Invoke-Helper 'stop' | Out-Null
+    Start-Game
 }
 
 function Test-Running {
@@ -174,7 +171,8 @@ function Invoke-Chapter([int]$n) {
     Invoke-Helper 'chapter' '-Chapter' "$n" '-TimeoutSec' '60' | Out-Null
     Start-Sleep -Seconds $LoadSec
     Invoke-Play
-    $shotPath = Take-Shot $label
+    $shotPath = ''
+    if (-not (Test-UserBack $script:gameStart)) { $shotPath = Take-Shot $label }
     $running = Test-Running
     $findings = Read-Findings $logStart
 
