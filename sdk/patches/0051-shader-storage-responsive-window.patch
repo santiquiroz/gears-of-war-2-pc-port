@@ -1,0 +1,322 @@
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index 141eea1..03a7824 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -199,6 +199,12 @@ class D3D12CommandProcessor : public CommandProcessor {
+     return pipeline_cache_->GetD3D12PipelineByHandle(handle);
+   }
+ 
++  // Zero until the pipeline cache is created.
++  PipelineCache::ShaderStorageProgress GetShaderStorageProgress() const {
++    return pipeline_cache_ ? pipeline_cache_->GetShaderStorageProgress()
++                           : PipelineCache::ShaderStorageProgress{};
++  }
++
+   // Sets the current cached values to external ones. This is for cache
+   // invalidation primarily. A submission must be open.
+   void SetExternalPipeline(ID3D12PipelineState* pipeline);
+diff --git a/include/rex/graphics/d3d12/pipeline_cache.h b/include/rex/graphics/d3d12/pipeline_cache.h
+index 9d6eba1..141ce7d 100644
+--- a/include/rex/graphics/d3d12/pipeline_cache.h
++++ b/include/rex/graphics/d3d12/pipeline_cache.h
+@@ -97,6 +97,19 @@ class PipelineCache {
+     return reinterpret_cast<const Pipeline*>(handle)->state.load(std::memory_order_acquire);
+   }
+ 
++  // Progress of InitializeShaderStorage, safe to read from any thread (for
++  // example, to report it while the UI thread waits for the storage to load).
++  struct ShaderStorageProgress {
++    uint32_t shaders_done;
++    uint32_t shaders_total;
++    uint32_t pipelines_done;
++    uint32_t pipelines_total;
++  };
++  ShaderStorageProgress GetShaderStorageProgress() const {
++    return {storage_shaders_done_.load(), storage_shaders_total_.load(),
++            storage_pipelines_done_.load(), storage_pipelines_total_.load()};
++  }
++
+  private:
+   REXPACKEDSTRUCT(ShaderStoredHeader, {
+     uint64_t ucode_data_hash;
+@@ -432,6 +445,15 @@ class PipelineCache {
+   // creation_request_cond_ when set.
+   size_t creation_threads_shutdown_from_ = SIZE_MAX;
+   std::vector<std::unique_ptr<rex::thread::Thread>> creation_threads_;
++
++  // Shader storage progress, see GetShaderStorageProgress.
++  std::atomic<uint32_t> storage_shaders_done_{0};
++  std::atomic<uint32_t> storage_shaders_total_{0};
++  std::atomic<uint32_t> storage_pipelines_done_{0};
++  std::atomic<uint32_t> storage_pipelines_total_{0};
++  // Pipeline completions are only counted while the storage is being loaded,
++  // runtime pipeline creation shares the same creation threads.
++  std::atomic<bool> storage_progress_active_{false};
+ };
+ 
+ }  // namespace rex::graphics::d3d12
+diff --git a/include/rex/ui/presenter.h b/include/rex/ui/presenter.h
+index 6745608..92832f8 100644
+--- a/include/rex/ui/presenter.h
++++ b/include/rex/ui/presenter.h
+@@ -332,6 +332,9 @@ class Presenter {
+ 
+   virtual Surface::TypeFlags GetSupportedSurfaceTypes() const = 0;
+ 
++  // The window the presenter is attached to, null if none. UI thread only.
++  Window* window() const { return window_; }
++
+   // For calling from the Window for the Presenter attached to it.
+   // May be called from the destructor of the presenter through the window.
+   void SetWindowSurfaceFromUIThread(Window* new_window, Surface* new_surface);
+diff --git a/src/graphics/d3d12/pipeline_cache.cpp b/src/graphics/d3d12/pipeline_cache.cpp
+index 241ec8e..1836261 100644
+--- a/src/graphics/d3d12/pipeline_cache.cpp
++++ b/src/graphics/d3d12/pipeline_cache.cpp
+@@ -237,6 +237,10 @@ void PipelineCache::Shutdown() {
+ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+                                             uint32_t title_id, bool blocking) {
+   ShutdownShaderStorage();
++  storage_shaders_done_ = 0;
++  storage_shaders_total_ = 0;
++  storage_pipelines_done_ = 0;
++  storage_pipelines_total_ = 0;
+ 
+   auto shader_storage_root = cache_root / "shaders";
+   // For files that can be moved between different hosts.
+@@ -335,6 +339,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+       }
+     }
+   }
++  storage_pipelines_total_ = uint32_t(pipeline_stored_descriptions.size());
+ 
+   size_t logical_processor_count = rex::thread::logical_processor_count();
+   if (!logical_processor_count) {
+@@ -446,6 +451,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+             stats::Record(stats::Counter::kShadersDeferred);
+           }
+         }
++        ++storage_shaders_done_;
+         {
+           std::lock_guard<std::mutex> lock(shaders_translation_thread_mutex);
+           --shader_translation_threads_busy;
+@@ -510,6 +516,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+         std::lock_guard<std::mutex> lock(shaders_translation_thread_mutex);
+         shaders_to_translate.push_back(shader);
+       }
++      ++storage_shaders_total_;
+       shaders_translation_thread_cond.notify_one();
+       ++shaders_translated;
+     }
+@@ -547,6 +554,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+   // Create the pipelines.
+   if (!pipeline_stored_descriptions.empty()) {
+     uint64_t pipeline_creation_start_ = rex::chrono::Clock::QueryHostTickCount();
++    storage_progress_active_ = true;
+ 
+     // Launch additional creation threads to use all cores to create
+     // pipelines faster. Will also be using the main thread, so minus 1.
+@@ -668,6 +676,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+       } else {
+         new_pipeline->state.store(CreateD3D12Pipeline(pipeline_runtime_description),
+                                   std::memory_order_release);
++        ++storage_pipelines_done_;
+       }
+       ++pipelines_created;
+     }
+@@ -706,6 +715,7 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_r
+         }
+       }
+     }
++    storage_progress_active_ = false;
+ 
+     REXGPU_INFO(
+         "Created {} graphics pipelines (not including reading the "
+@@ -3297,6 +3307,9 @@ void PipelineCache::CreationThread(size_t thread_index) {
+       pipeline_to_create->state.store(CreateD3D12Pipeline(runtime_description),
+                                       std::memory_order_release);
+     }
++    if (storage_progress_active_) {
++      ++storage_pipelines_done_;
++    }
+ 
+     // Pipeline created - the thread is not busy anymore, safe to set the
+     // completion event if needed (at the next iteration, or in some other
+@@ -3323,10 +3336,16 @@ void PipelineCache::CreateQueuedPipelinesOnProcessorThread() {
+     PipelineRuntimeDescription runtime_description;
+     if (!PrepareRuntimeDescriptionForQueuedCreation(pipeline_to_create, runtime_description)) {
+       pipeline_to_create->state.store(nullptr, std::memory_order_release);
++      if (storage_progress_active_) {
++        ++storage_pipelines_done_;
++      }
+       continue;
+     }
+     pipeline_to_create->state.store(CreateD3D12Pipeline(runtime_description),
+                                     std::memory_order_release);
++    if (storage_progress_active_) {
++      ++storage_pipelines_done_;
++    }
+   }
+ }
+ 
+diff --git a/src/graphics/graphics_system.cpp b/src/graphics/graphics_system.cpp
+index 13ff07d..3f9b069 100644
+--- a/src/graphics/graphics_system.cpp
++++ b/src/graphics/graphics_system.cpp
+@@ -12,16 +12,24 @@
+ #include <rex/graphics/graphics_system.h>
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cctype>
++#include <chrono>
+ #include <cstdint>
+ #include <functional>
+ #include <memory>
+ #include <mutex>
++#include <string>
++#include <thread>
+ #include <utility>
+ 
++#include <fmt/format.h>
+ #include <rex/cvar.h>
+ #include <rex/graphics/command_processor.h>
+ #include <rex/graphics/flags.h>
++#if REX_HAS_D3D12
++#include <rex/graphics/d3d12/command_processor.h>
++#endif
+ #include <rex/kernel/xboxkrnl/video.h>
+ #include <rex/logging.h>
+ #include <rex/stream.h>
+@@ -31,6 +39,13 @@
+ #include <rex/ui/window.h>
+ #include <rex/ui/windowed_app_context.h>
+ 
++#if REX_PLATFORM_WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
+ REXCVAR_DEFINE_STRING(swap_post_effect, "none", "GPU", "Swap post effect: none, fxaa, fxaa_extreme")
+     .allowed({"none", "fxaa", "fxaa_extreme"})
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+@@ -56,6 +71,93 @@ rex::graphics::CommandProcessor::SwapPostEffect ParseSwapPostEffect(
+   }
+   return rex::graphics::CommandProcessor::SwapPostEffect::kNone;
+ }
++
++constexpr auto kShaderStorageWaitSlice = std::chrono::milliseconds(100);
++constexpr auto kShaderStorageTitleInterval = std::chrono::milliseconds(500);
++constexpr auto kShaderStorageLogInterval = std::chrono::seconds(5);
++
++// Snapshot of the shader storage progress. Stays zero for backends that don't
++// report it yet.
++struct ShaderStorageProgress {
++  uint32_t shaders_done = 0;
++  uint32_t shaders_total = 0;
++  uint32_t pipelines_done = 0;
++  uint32_t pipelines_total = 0;
++};
++
++ShaderStorageProgress QueryShaderStorageProgress(
++    rex::graphics::CommandProcessor* command_processor) {
++  ShaderStorageProgress progress;
++#if REX_HAS_D3D12
++  auto* d3d12_command_processor =
++      dynamic_cast<rex::graphics::d3d12::D3D12CommandProcessor*>(command_processor);
++  if (d3d12_command_processor) {
++    auto d3d12_progress = d3d12_command_processor->GetShaderStorageProgress();
++    progress.shaders_done = d3d12_progress.shaders_done;
++    progress.shaders_total = d3d12_progress.shaders_total;
++    progress.pipelines_done = d3d12_progress.pipelines_done;
++    progress.pipelines_total = d3d12_progress.pipelines_total;
++  }
++#endif
++  return progress;
++}
++
++#if REX_PLATFORM_WIN32
++// Drains the UI thread's Win32 message queue so Windows doesn't flag the window
++// as not responding. SDL's window procedure only queues SDL events from here,
++// the app's own loop still handles them later.
++void PumpWindowMessages() {
++  MSG msg;
++  while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
++    if (msg.message == WM_QUIT) {
++      // Keep the quit request for the app's own loop.
++      PostQuitMessage(int(msg.wParam));
++      break;
++    }
++    TranslateMessage(&msg);
++    DispatchMessageW(&msg);
++  }
++}
++#else
++void PumpWindowMessages() {}
++#endif
++
++// Keeps the UI thread pumping OS messages until done is set. Progress goes to
++// the window title, or to the log when the presenter has no window.
++void PumpWhileShaderStorageLoads(rex::graphics::CommandProcessor* command_processor,
++                                 const rex::ui::Presenter* presenter,
++                                 const std::atomic<bool>& done) {
++  using Clock = std::chrono::steady_clock;
++  // The window can be closed while waiting, so it's looked up on every pass.
++  auto find_window = [presenter]() -> rex::ui::Window* {
++    return presenter ? presenter->window() : nullptr;
++  };
++  rex::ui::Window* window = find_window();
++  const std::string original_title = window ? window->GetTitle() : std::string();
++  auto last_title_update = Clock::now();
++  auto last_log = last_title_update;
++  while (!done.load()) {
++    PumpWindowMessages();
++    window = find_window();
++    ShaderStorageProgress progress = QueryShaderStorageProgress(command_processor);
++    auto now = Clock::now();
++    if (window && now - last_title_update >= kShaderStorageTitleInterval) {
++      last_title_update = now;
++      window->SetTitle(fmt::format("{} - compiling shaders {}/{}, pipelines {}/{}",
++                                   original_title, progress.shaders_done, progress.shaders_total,
++                                   progress.pipelines_done, progress.pipelines_total));
++    }
++    if (!window && now - last_log >= kShaderStorageLogInterval) {
++      last_log = now;
++      REXGPU_INFO("Compiling shaders {}/{}, pipelines {}/{}", progress.shaders_done,
++                  progress.shaders_total, progress.pipelines_done, progress.pipelines_total);
++    }
++    std::this_thread::sleep_for(kShaderStorageWaitSlice);
++  }
++  if (rex::ui::Window* current_window = find_window()) {
++    current_window->SetTitle(original_title);
++  }
++}
+ }  // namespace
+ 
+ namespace rex::graphics {
+@@ -348,6 +450,23 @@ void GraphicsSystem::InitializeShaderStorage(const std::filesystem::path& cache_
+     return;
+   }
+   if (blocking) {
++    if (app_context_ && app_context_->IsInUIThread()) {
++      // A plain fence wait here would leave the window unresponsive for minutes.
++      std::atomic<bool> done{false};
++      auto initialize = [this, cache_root, title_id, &done]() {
++        command_processor_->InitializeShaderStorage(cache_root, title_id, true);
++        done = true;
++      };
++      if (command_processor_->is_paused()) {
++        std::thread worker(initialize);
++        PumpWhileShaderStorageLoads(command_processor_.get(), presenter_.get(), done);
++        worker.join();
++      } else {
++        command_processor_->CallInThread(initialize);
++        PumpWhileShaderStorageLoads(command_processor_.get(), presenter_.get(), done);
++      }
++      return;
++    }
+     if (command_processor_->is_paused()) {
+       // Safe to run on any thread while the command processor is paused, no
+       // race condition.
