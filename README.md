@@ -187,7 +187,7 @@ Versus works over System Link: in Multiplayer set Match Type to System Link, cre
 - **Green-looking lighting** has been reported on skin, lights and the menu flames; it has not been reproduced on the development PC yet. Screenshots are welcome in an issue.
 - **Co-op with three or four players is new.** Stage 2 has been tested with four copies on one PC: players 3 and 4 keep their bodies and weapons through chapter changes and travel, respawn, leave and rejoin, return after checkpoint loads, hide during cinematics, stay unharmed on foot while a hero rides, and are moved next to Marcus or Dom by the host when left far behind. Co-op splits, getting out of a vehicle, the Ride-Reaver section, joining during a cinematic, long real combat, four PCs over a LAN or the internet, and Android with 3+ players have not been tried ([docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md)).
 - **Every player needs the same release.** Everyone must run v0.1.2; with three or more players, campaigns with different co-op hashes stay hidden, while two-player co-op has no check and v0.1.1 is expected to crash at the end of Act 1 chapter 2.
-- Only Act 1 has been played through; the co-op tests reached chapters 13, 16 and 27 by chapter travel.
+- Only Act 1 has been played through. On 2026-10-22 `scripts/chapter-sweep.ps1` travelled to each of the 29 chapters and played a minute of scripted movement and fire in each with no missing-function crash; one run hit a GPU timeout (TDR) in chapter 23 that three later runs did not repeat. Playing acts 2-5 start to finish is still open (issue #8).
 
 ## Building from source
 
