@@ -72,6 +72,7 @@ using System; using System.Runtime.InteropServices;
 public static class CoopWin {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -281,7 +282,9 @@ function Save-InstanceShot([int]$i, [string]$shotLabel) {
     $proc = Get-InstanceProcess $i
     $h = $proc.MainWindowHandle
     $r = New-Object CoopWin+RECT
-    [CoopWin]::GetWindowRect($h, [ref]$r) | Out-Null
+    # The visible frame: GetWindowRect also covers the invisible resize border, which captures
+    # a strip of whatever is behind the window. DWMWA_EXTENDED_FRAME_BOUNDS = 9.
+    if ([CoopWin]::DwmGetWindowAttribute($h, 9, [ref]$r, 16) -ne 0) { [CoopWin]::GetWindowRect($h, [ref]$r) | Out-Null }
     $bmp = New-Object System.Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
