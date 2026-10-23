@@ -1,33 +1,36 @@
 diff --git a/include/rex/system/kernel_state.h b/include/rex/system/kernel_state.h
-index 9b9cf9e..53e20ce 100644
+index 9b9cf9e..046db08 100644
 --- a/include/rex/system/kernel_state.h
 +++ b/include/rex/system/kernel_state.h
-@@ -199,7 +199,15 @@ class KernelState {
+@@ -199,7 +199,18 @@ class KernelState {
  
    xam::AppManager* app_manager() const { return app_manager_.get(); }
    xam::ContentManager* content_manager() const { return content_manager_.get(); }
--  xam::UserProfile* user_profile() const { return user_profile_.get(); }
 +  // Profile 0 is the primary local player.
-+  xam::UserProfile* user_profile() const { return user_profiles_.front().get(); }
+   xam::UserProfile* user_profile() const { return user_profile_.get(); }
 +  // Profile of local player `user_index`, or nullptr when no player is signed in at that index.
 +  xam::UserProfile* user_profile(uint32_t user_index) const {
-+    return user_index < local_user_count() ? user_profiles_[user_index].get() : nullptr;
++    if (user_index == 0) return user_profile_.get();
++    return user_index < local_user_count() ? extra_user_profiles_[user_index - 1].get() : nullptr;
 +  }
-+  uint32_t local_user_count() const { return static_cast<uint32_t>(user_profiles_.size()); }
++  uint32_t local_user_count() const {
++    return 1 + static_cast<uint32_t>(extra_user_profiles_.size());
++  }
 +  // One bit per signed-in local user (bit N = user index N), as XN_SYS_SIGNINCHANGED carries it.
 +  uint32_t signed_in_user_mask() const { return (1u << local_user_count()) - 1; }
  
    // Access must be guarded by the global critical region.
    util::ObjectTable* object_table() { return &object_table_; }
-@@ -353,7 +361,8 @@ class KernelState {
+@@ -396,6 +407,10 @@ class KernelState {
+   std::condition_variable_any dispatch_cond_;
+   std::list<std::function<void()>> dispatch_queue_;
  
-   std::unique_ptr<xam::AppManager> app_manager_;
-   std::unique_ptr<xam::ContentManager> content_manager_;
--  std::unique_ptr<xam::UserProfile> user_profile_;
-+  // Index 0 is the primary profile; 1..local_users-1 are the other local players.
-+  std::vector<std::unique_ptr<xam::UserProfile>> user_profiles_;
- 
-   rex::thread::global_critical_region global_critical_region_;
++  // Players 2-4 (split-screen). Last, so the members before keep their offsets for games built
++  // against the unpatched SDK headers (their inline accessors read KernelState directly).
++  std::vector<std::unique_ptr<xam::UserProfile>> extra_user_profiles_;
++
+   friend class XObject;
+ };
  
 diff --git a/include/rex/system/xam/content_manager.h b/include/rex/system/xam/content_manager.h
 index 949d185..00806ab 100644
@@ -304,7 +307,7 @@ index c70b248..37016ec 100644
    // XN_SYS_UI (off)
    REX_KERNEL_STATE()->BroadcastNotification(0x00000009, 0);
 diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
-index c8709c4..4f96657 100644
+index c8709c4..7de7921 100644
 --- a/src/system/kernel_state.cpp
 +++ b/src/system/kernel_state.cpp
 @@ -9,6 +9,7 @@
@@ -340,35 +343,23 @@ index c8709c4..4f96657 100644
  namespace rex::system {
  
  constexpr uint32_t kDeferredOverlappedDelayMillis = 100;
-@@ -65,15 +70,25 @@ KernelState::KernelState(Runtime* emulator)
-   file_system_ = emulator->file_system();
- 
-   app_manager_ = std::make_unique<xam::AppManager>();
--  user_profile_ = std::make_unique<xam::UserProfile>();
--  user_profile_->set_kernel_state(this);
-+  user_profiles_.push_back(std::make_unique<xam::UserProfile>());
-+  user_profiles_.front()->set_kernel_state(this);
- 
-   auto user_data_root = emulator_->user_data_root();
-   if (!user_data_root.empty()) {
-     user_data_root = std::filesystem::absolute(user_data_root);
-   }
+@@ -75,6 +80,16 @@ KernelState::KernelState(Runtime* emulator)
    content_manager_ = std::make_unique<xam::ContentManager>(this, user_data_root);
--  user_profile_->LoadNetworkIdentity(user_data_root);
-+  user_profiles_.front()->LoadNetworkIdentity(user_data_root);
-+
+   user_profile_->LoadNetworkIdentity(user_data_root);
+ 
 +  // Players 2-4 (split-screen) are derived from the primary profile once its identity is loaded.
 +  const auto player_count = std::clamp<uint32_t>(REXCVAR_GET(local_users), 1, 4);
 +  for (uint32_t user_index = 1; user_index < player_count; ++user_index) {
-+    auto profile = std::make_unique<xam::UserProfile>(*user_profiles_.front(), user_index);
++    auto profile = std::make_unique<xam::UserProfile>(*user_profile_, user_index);
 +    profile->set_kernel_state(this);
 +    REXSYS_INFO("Local player {}: XUID {}, gamertag '{}'", user_index + 1,
 +                system_link::FormatXuid(profile->network_xuid()), profile->gamertag());
-+    user_profiles_.push_back(std::move(profile));
++    extra_user_profiles_.push_back(std::move(profile));
 +  }
- 
++
    if (shared_kernel_state_ != nullptr) {
      REXSYS_ERROR("KernelState constructed but shared_kernel_state_ already set");
+     rex::FatalError("Double initialization of KernelState");
 @@ -1098,8 +1113,8 @@ void KernelState::RegisterNotifyListener(XNotifyListener* listener) {
      listener->EnqueueNotification(0x00000009, 1);
      listener->EnqueueNotification(0x00000009, 0);
