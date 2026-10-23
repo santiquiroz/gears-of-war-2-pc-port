@@ -49,7 +49,9 @@ Leer en español: [README.es.md](README.es.md)
 - [x] Automatic settings for integrated GPUs (720p internal, 2x anisotropic filtering, no per-frame guest memory re-upload) for handhelds and laptops
 - [x] Android: the white objects/effects of the Vulkan renderer are fixed (0.2.3); object shadows are an option, off by default on Android
 - [x] VSync waits for the display on D3D12 and the 30 fps cap holds with VSync off (0.2.4)
-- [ ] System Link Horde and Versus
+- [x] Split-screen campaign co-op on one PC (PC Options > Multiplayer > Split-screen players, then Co-op Campaign > Split-screen Campaign; each extra player needs a controller, or the keyboard as player 1), verified 2026-10-22 with two players
+- [x] System Link Versus: two copies on one PC joined a party and played Warzone on Avalanche on 2026-10-22
+- [ ] System Link Horde
 - [ ] Android: a build from the repository reaches gameplay and joins a PC's System Link campaign, but is not finished yet; an experimental APK has been attached to every release since v0.1.2 (see [Android](#android-experimental)). The whole scene has drawn since October 15; it runs at about 30 fps for the first minutes from a cool start, falling to about 10-12.5 fps once the phone is warm ([docs/ANDROID.md](docs/ANDROID.md))
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
@@ -176,7 +178,7 @@ Campaign co-op over System Link works between PCs and between several copies on 
 - [docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md): Stage 2 co-op with more than two players covers chapter changes, deaths, leave/rejoin, checkpoints and cinematics; what is still missing includes co-op splits, vehicle exit, the Ride-Reaver section and four PCs over the internet.
 - [docs/ONLINE.md](docs/ONLINE.md): playing over the internet. From the repository (not in the release zip), [`scripts/host-online.ps1`](https://github.com/santiquiroz/gears-of-war-2-pc-port/blob/master/scripts/host-online.ps1) `-Start` opens UDP 14001 and 41000 through UPnP on every router between the PC and the internet, with a lease (6 h by default, 24 h at most), and schedules an automatic `-Stop` for the end of the lease; `-Stop` closes them. Run `-Stop` after every session: some routers ignore the lease. Without UPnP: forward by hand; with no open ports: Tailscale or ZeroTier. Verified on 2026-10-15: a phone on mobile data joined a PC host behind two routers in a row.
 
-Horde and Versus over System Link have not been tried. See [ROADMAP.md](ROADMAP.md).
+Versus works over System Link: in Multiplayer set Match Type to System Link, create the party on one copy and join it from the System Link Browser on the others (two copies on one PC played Warzone on 2026-10-22). Horde over System Link needs SDK patch 0049 and is being tested. See [ROADMAP.md](ROADMAP.md).
 
 ## Known issues
 

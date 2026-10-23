@@ -1,0 +1,129 @@
+diff --git a/include/rex/input/flags.h b/include/rex/input/flags.h
+index 95eb580..ffdd3a1 100644
+--- a/include/rex/input/flags.h
++++ b/include/rex/input/flags.h
+@@ -17,3 +17,4 @@ REXCVAR_DECLARE(bool, guide_button);
+ REXCVAR_DECLARE(bool, xam_input_block);
+ REXCVAR_DECLARE(std::string, hid_mappings_file);
+ REXCVAR_DECLARE(std::string, input_backend);
++REXCVAR_DECLARE(uint32_t, input_pad_first_user);
+diff --git a/src/input/device_assignment.cpp b/src/input/device_assignment.cpp
+index 52e0073..a945708 100644
+--- a/src/input/device_assignment.cpp
++++ b/src/input/device_assignment.cpp
+@@ -9,7 +9,10 @@
+  *              See LICENSE file in the project root for full license text.
+  */
+ 
++#include <algorithm>
++
+ #include <rex/input/device_assignment.h>
++#include <rex/input/flags.h>
+ 
+ namespace rex::input {
+ 
+@@ -18,13 +21,16 @@ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+     user.clear();
+   }
+ 
++  // Clamp so the subtraction below cannot underflow.
++  const uint32_t first_user = std::min(REXCVAR_GET(input_pad_first_user), kMaxGuestUsers);
++
+   // Key off the ordinal rather than list position, so unplugging pad one does
+   // not promote pad two to player one.
+   for (const auto& device : devices) {
+     if (device.synthetic) {
+       users_[0].push_back(device.id);
+-    } else if (device.ordinal < kMaxGuestUsers) {
+-      users_[device.ordinal].push_back(device.id);
++    } else if (device.ordinal < kMaxGuestUsers - first_user) {
++      users_[device.ordinal + first_user].push_back(device.id);
+     }
+   }
+ }
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index fd8f7d4..a7d5907 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -33,6 +33,11 @@ REXCVAR_DEFINE_DOUBLE(pad_right_stick_deadzone, 0.0, "Input",
+                       "Radial dead zone for the right stick of physical controllers, 0 to 0.9. "
+                       "Set by games that turn off their own look dead zone so stick noise does "
+                       "not move the camera.");
++REXCVAR_DEFINE_UINT32(input_pad_first_user, 0, "Input",
++                      "First guest user that real controllers are assigned to (1 = keyboard and "
++                      "mouse play as player 1 and the first controller as player 2, for "
++                      "split-screen).")
++    .range(0, 3);
+ namespace rex::input {
+ 
+ namespace {
+diff --git a/tests/unit/input/input_assignment_test.cpp b/tests/unit/input/input_assignment_test.cpp
+index 096238d..8a23702 100644
+--- a/tests/unit/input/input_assignment_test.cpp
++++ b/tests/unit/input/input_assignment_test.cpp
+@@ -6,6 +6,7 @@
+ #include <vector>
+ 
+ #include <rex/input/device_assignment.h>
++#include <rex/input/flags.h>
+ #include <rex/input/input_system.h>
+ 
+ // The X_STATUS_* / X_ERROR_* macros cast through these unqualified, so
+@@ -36,12 +37,31 @@ DeviceInfo Pad(uint64_t id, uint32_t ordinal) {
+   return info;
+ }
+ 
++DeviceInfo Synthetic(uint64_t id) {
++  DeviceInfo info;
++  info.id = static_cast<DeviceId>(id);
++  info.synthetic = true;
++  return info;
++}
++
+ std::vector<DeviceId> For(const DeviceAssignment& a, uint32_t user) {
+   std::vector<DeviceId> out;
+   a.DevicesForUser(user, out);
+   return out;
+ }
+ 
++/// Sets input_pad_first_user for one test and restores the previous value.
++class FirstUserGuard {
++ public:
++  explicit FirstUserGuard(uint32_t value) : saved_(REXCVAR_GET(input_pad_first_user)) {
++    REXCVAR_GET(input_pad_first_user) = value;
++  }
++  ~FirstUserGuard() { REXCVAR_GET(input_pad_first_user) = saved_; }
++
++ private:
++  uint32_t saved_;
++};
++
+ /// Exercises assignment with no SDL, window, or OS behind it.
+ class FakeDriver final : public InputDriver {
+  public:
+@@ -236,3 +256,25 @@ TEST_CASE("A synthetic device does not push the first pad off guest user 0", "[i
+   REQUIRE(static_cast<uint16_t>(state.gamepad.buttons) == X_INPUT_GAMEPAD_B);
+   REQUIRE(system->GetState(1, &state) == X_ERROR_DEVICE_NOT_CONNECTED);
+ }
++
++TEST_CASE("input_pad_first_user moves pads past keyboard player 1", "[input]") {
++  FirstUserGuard guard(1);
++  SlotAssignment slots;
++  slots.OnDevicesChanged({Synthetic(1), Pad(10, 0), Pad(11, 1)});
++
++  REQUIRE(For(slots, 0) == std::vector<DeviceId>{static_cast<DeviceId>(1)});
++  REQUIRE(For(slots, 1) == std::vector<DeviceId>{static_cast<DeviceId>(10)});
++  REQUIRE(For(slots, 2) == std::vector<DeviceId>{static_cast<DeviceId>(11)});
++  REQUIRE(For(slots, 3).empty());
++}
++
++TEST_CASE("input_pad_first_user drops pads that land past the last guest user", "[input]") {
++  FirstUserGuard guard(3);
++  SlotAssignment slots;
++  slots.OnDevicesChanged({Pad(10, 0), Pad(11, 1)});
++
++  REQUIRE(For(slots, 0).empty());
++  REQUIRE(For(slots, 1).empty());
++  REQUIRE(For(slots, 2).empty());
++  REQUIRE(For(slots, 3) == std::vector<DeviceId>{static_cast<DeviceId>(10)});
++}

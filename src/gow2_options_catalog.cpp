@@ -881,6 +881,40 @@ void AddMultiplayer(std::vector<Setting>& out) {
           C("4", "4"),
       }});
   out.push_back(Setting{
+      .id = "local_users",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Split-screen players",
+      .label_es = "Jugadores en pantalla dividida",
+      .help_en =
+          "Local players signed in for split-screen campaign co-op (Co-op Campaign > Split-screen). "
+          "Each extra player needs a controller. Applies on the next start.",
+      .help_es =
+          "Jugadores locales para la campaña cooperativa en pantalla dividida (Campaña cooperativa > "
+          "Pantalla dividida). Cada jugador extra necesita un mando. Se aplica al reiniciar.",
+      .choices = {
+          C("1", "1"),
+          C("2", "2"),
+          C("3", "3"),
+          C("4", "4"),
+      }});
+  out.push_back(Setting{
+      .id = "input_pad_first_user",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kToggle,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Keyboard is player 1",
+      .label_es = "El teclado es el jugador 1",
+      .help_en =
+          "With split-screen, the keyboard and mouse play as player 1 and the first controller as "
+          "player 2. Applies on the next start.",
+      .help_es =
+          "En pantalla dividida, teclado y ratón juegan como jugador 1 y el primer mando como "
+          "jugador 2. Se aplica al reiniciar."});
+  out.push_back(Setting{
       .id = "coop_check",
       .tab = Tab::kMultiplayer,
       .kind = Kind::kInfo,

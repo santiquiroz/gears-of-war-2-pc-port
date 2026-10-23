@@ -197,7 +197,7 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kGraphics) == 46, "graphics has 46 rows including quality heading, preset and 24 settings");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
-  Expect(CountTab(options::Tab::kMultiplayer) == 10, "multiplayer has 10 rows");
+  Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
   Expect(CountTab(options::Tab::kSystem) == 13, "system has 13 rows");
@@ -237,6 +237,23 @@ void TestGraphicsQualityRows() {
          "raw engine settings remain advanced on both platforms");
 }
 
+void TestSplitScreenRows() {
+  const auto* players = options::FindSetting("local_users");
+  Expect(players != nullptr, "split-screen players row exists");
+  if (players) {
+    Expect(players->kind == options::Kind::kChoice && players->apply == options::Apply::kRestart,
+           "split-screen players is a restart choice");
+    Expect(players->choices.size() == 4 && players->choices.front().value == "1" &&
+               players->choices.back().value == "4", "split-screen players offers 1 to 4");
+  }
+  const auto* keyboard = options::FindSetting("input_pad_first_user");
+  Expect(keyboard != nullptr, "keyboard is player 1 row exists");
+  if (keyboard) {
+    Expect(keyboard->kind == options::Kind::kToggle && keyboard->apply == options::Apply::kRestart,
+           "keyboard is player 1 is a restart toggle");
+  }
+}
+
 void TestWindowsUpdateRows() {
   for (const auto id : {"update_status", "gow2_update_check", "update_download",
                         "update_check_now", "update_dismiss"}) {
@@ -264,6 +281,7 @@ int main() {
     TestPlatformMenuNames();
     TestCounts();
     TestWindowsUpdateRows();
+    TestSplitScreenRows();
     TestGraphicsQualityRows();
   } catch (const std::exception& e) {
     ++g_checks;

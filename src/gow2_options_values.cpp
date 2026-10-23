@@ -101,6 +101,7 @@ std::string RowValue(std::string_view id, ReadValue read) {
   if (id == "upscaler" || id == "upscaler_dlss") return UpscalerValue(read);
   if (id == "texture_memory")
     return read("texture_cache_memory_limit_soft") + "/" + read("texture_cache_memory_limit_hard");
+  if (id == "input_pad_first_user") return read("input_pad_first_user") == "1" ? "true" : "false";
   return read(CvarName(id));
 }
 
@@ -162,6 +163,7 @@ bool SetRow(std::string_view id, std::string_view value) {
   if (id == "window_size") return SetWindowSize(value);
   if (id == "upscaler" || id == "upscaler_dlss") return SetUpscaler(value);
   if (id == "texture_memory") return SetTextureMemory(value);
+  if (id == "input_pad_first_user") return SetCvar(id, value == "true" ? "1" : "0");
   return SetCvar(CvarName(id), value);
 }
 
