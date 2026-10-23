@@ -873,12 +873,16 @@ void AddMultiplayer(std::vector<Setting>& out) {
       .platforms = kAllPlatforms,
       .label_en = "Co-op players",
       .label_es = "Jugadores en co-op",
-      .help_en = "Campaign co-op player cap. Every player must choose the same number.",
-      .help_es = "Tope de jugadores del co-op de campaña. Todos deben elegir el mismo número.",
+      .help_en = "Campaign co-op player cap. Every player must choose the same number. "
+                 "5 to 10 players is experimental.",
+      .help_es = "Tope de jugadores del co-op de campaña. Todos deben elegir el mismo número. "
+                 "De 5 a 10 jugadores es experimental.",
       .choices = {
           C("2", "2 (original)"),
           C("3", "3"),
           C("4", "4"),
+          C("8", "8"),
+          C("10", "10"),
       }});
   out.push_back(Setting{
       .id = "local_users",

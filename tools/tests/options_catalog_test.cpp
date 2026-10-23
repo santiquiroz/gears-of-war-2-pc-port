@@ -237,6 +237,23 @@ void TestGraphicsQualityRows() {
          "raw engine settings remain advanced on both platforms");
 }
 
+void TestCoopPlayersRow() {
+  const auto* players = options::FindSetting("gow2_coop_players");
+  Expect(players != nullptr, "co-op players row exists");
+  if (players) {
+    Expect(players->kind == options::Kind::kChoice && players->apply == options::Apply::kRestart,
+           "co-op players is a restart choice");
+    Expect(players->choices.size() == 5 && players->choices[0].value == "2" &&
+               players->choices[1].value == "3" && players->choices[2].value == "4" &&
+               players->choices[3].value == "8" && players->choices[4].value == "10",
+           "co-op players offers 2, 3, 4, 8 and 10");
+    Expect(players->help_en.find("5 to 10 players is experimental") != std::string_view::npos,
+           "co-op players help says 5 to 10 is experimental (EN)");
+    Expect(players->help_es.find("De 5 a 10 jugadores es experimental") != std::string_view::npos,
+           "co-op players help says 5 to 10 is experimental (ES)");
+  }
+}
+
 void TestSplitScreenRows() {
   const auto* players = options::FindSetting("local_users");
   Expect(players != nullptr, "split-screen players row exists");
@@ -281,6 +298,7 @@ int main() {
     TestPlatformMenuNames();
     TestCounts();
     TestWindowsUpdateRows();
+    TestCoopPlayersRow();
     TestSplitScreenRows();
     TestGraphicsQualityRows();
   } catch (const std::exception& e) {

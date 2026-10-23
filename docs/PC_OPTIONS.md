@@ -199,7 +199,7 @@ next start. Menu prompts update after a restart.
 |---|---|---|---|---|
 | Your name | `user_name` | text, up to 15 characters | restart | both |
 | System Link (LAN and internet) | `net_link_active` | on, off | restart | both |
-| Co-op players | `gow2_coop_players` | 2, 3, 4 | restart | both |
+| Co-op players | `gow2_coop_players` | 2, 3, 4, 8, 10 (8 and 10 experimental) | restart | both |
 | Co-op check code | info | the combined hash | now | both |
 | Join a host (name or IP) | `net_peers` | text | restart | both |
 | Host over the internet | opens the page below | | now | Windows |

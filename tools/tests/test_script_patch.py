@@ -265,6 +265,35 @@ def test_players_out_of_range():
     assert "out of range" in exc.value.reason
 
 
+@pytest.mark.parametrize("players", [8, 10])
+def test_players_value_written_for_large_counts(players):
+    model, rows, handle_a, _ = two_row_setup()
+    plan = sp.plan_group(model, rows, players)
+    out = sp.apply_plan(model, plan)
+    assert out[handle_a][2] == players
+    assert sp.group_lines(plan) == [
+        f"T-1 {FUNC_A.path}: 1 write(s)",
+        f"T-2 {FUNC_B.path}: 1 write(s)",
+    ]
+
+
+@pytest.mark.parametrize("players", [8, 10])
+def test_main_accepts_large_counts(monkeypatch, players):
+    seen = []
+    monkeypatch.setattr(sp, "check_package", lambda pkg, n: seen.append(("stage1", pkg, n)) or 0)
+    monkeypatch.setattr(sp, "check_stage2_stack", lambda pkg, n: seen.append(("stage2", pkg, n)) or 0)
+    assert sp.main(["--check", "x", "--players", str(players)]) == 0
+    assert seen == [("stage1", "x", players), ("stage2", "x", players)]
+
+
+@pytest.mark.parametrize("players", [8, 10])
+def test_real_packages_check_at_large_counts(players):
+    pkg = Path(__file__).resolve().parents[2] / "out" / "re-mouse" / "pkg"
+    if not (pkg / "GearGame.upk").exists():
+        pytest.skip("decompressed game packages are not in out/re-mouse/pkg")
+    assert sp.main(["--check", str(pkg), "--players", str(players)]) == 0
+
+
 def test_render_cpp_matches_file():
     root = Path(__file__).resolve().parents[2]
     with open(root / "src" / "gow2_script_patch_table.cpp", "r", encoding="utf-8", newline="") as f:

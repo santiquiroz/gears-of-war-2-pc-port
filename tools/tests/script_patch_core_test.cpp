@@ -724,6 +724,22 @@ void TestHashDependsOnPlayers() {
   Expect(GroupHash(first, 4) == GroupHash(second, 4), "hash stable across builds");
 }
 
+void TestRealGroupAppliesAtLargeCounts() {
+  PatchGroup group = CoopStage1Group(false);
+  uint64_t hash_4 = GroupHash(group, 4);
+  for (int players : {8, 10}) {
+    FakeGuest guest = BuildForGroup(group);
+    GuestTables tables = guest.tables();
+    GuestAlloc alloc = [&guest](uint32_t size) { return guest.Alloc(size); };
+    GroupResult result = ApplyGroup(guest.base(), tables, group, players, alloc);
+    Expect(result.applied, "real group applies at large counts");
+    Expect(result.lines.size() == 6u, "real group 6 lines at large counts");
+    Expect(result.set_hash == GroupHash(group, players), "real group hash matches at large counts");
+    Expect(result.set_hash != hash_4, "real group hash differs from 4 players");
+  }
+  Expect(GroupHash(group, 8) != GroupHash(group, 10), "hash differs between 8 and 10 players");
+}
+
 void TestGuestBytesCrossThePhysicalBoundary() {
   FakeGuest guest;
   guest.Put8(0xDFFFFFFEu, 0x11);
@@ -1200,10 +1216,32 @@ void TestStackCombinedDiffersOnOneState() {
          "stack combined differs on one state");
 }
 
+// The default stack at 8 and 10 players (docs/COOP_STAGE3_PLAN.md section 5 step 2).
+void TestStackCombinedAtLargeCounts() {
+  Expect(GroupHash(CoopStage1Group(false), 8) == 0x60bb547961baa4f7ull, "stage1 hash at 8");
+  Expect(GroupHash(CoopStage1Group(false), 10) == 0xe5a7b50e83bd01d9ull, "stage1 hash at 10");
+  Expect(GroupHash(CoopBodyGroup(false, false), 8) == 0x86cb94f58e6c76d2ull, "body hash at 8");
+  Expect(GroupHash(CoopBodyGroup(false, false), 10) == 0xd754a3c737744215ull, "body hash at 10");
+  Expect(GroupHash(CoopRideGroup(), 8) == 0x9bf0050eec22acdcull, "ride hash at 8");
+  Expect(GroupHash(CoopRideGroup(), 10) == 0x6e31696ad129342bull, "ride hash at 10");
+  std::vector<StackEntry> eight = {
+      {"coop", "60bb547961baa4f7"},      {"survival", "2ce334f51ab690d1"},
+      {"split-revive", "off"},           {"coop-body", "86cb94f58e6c76d2"},
+      {"coop-ride", "9bf0050eec22acdc"}, {"coop-scenes", "803cef5fa03d88f8"}};
+  std::vector<StackEntry> ten = {
+      {"coop", "e5a7b50e83bd01d9"},      {"survival", "eded09c52ff086aa"},
+      {"split-revive", "off"},           {"coop-body", "d754a3c737744215"},
+      {"coop-ride", "6e31696ad129342b"}, {"coop-scenes", "83634267c1bfe3bd"}};
+  Expect(EndsWith(StackLine(8, eight), " combined=b2cb03575c3f3175"), "combined at 8");
+  Expect(EndsWith(StackLine(10, ten), " combined=97bc5d0d82d8e6e2"), "combined at 10");
+}
+
 }  // namespace
 
 int main() {
   TestRealGroupApplies();
+  TestRealGroupAppliesAtLargeCounts();
+  TestStackCombinedAtLargeCounts();
   TestSecondApplyIsAlreadyApplied();
   TestWrongOldByteSkipsWholeGroup();
   TestWrongNumSkips();

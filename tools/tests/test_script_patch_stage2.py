@@ -103,3 +103,19 @@ def test_skip_names_the_group():
 def test_main_rejects_bad_arguments():
     assert st.main([]) == 2
     assert st.main(["--check", "x", "--players", "2"]) == 2
+
+
+@pytest.mark.parametrize("players", [8, 10])
+def test_main_accepts_large_counts(monkeypatch, players):
+    seen = []
+    monkeypatch.setattr(st, "check_stack", lambda pkg, n: seen.append((pkg, n)) or 0)
+    assert st.main(["--check", "x", "--players", str(players)]) == 0
+    assert seen == [("x", players)]
+
+
+@pytest.mark.parametrize("players", [8, 10])
+def test_stack_plans_for_large_counts(players):
+    model = FakeModel(bytes([0x10, 0x20, 0x30, 0x40]))
+    grouped, overlay, changed = st.plan_stack(model, first_second_groups(0x21), players)
+    assert [g.name for g, _ in grouped] == ["first", "second"]
+    assert overlay[model.handle] == bytes([0x10, 0x21, 0x31, 0x40])
