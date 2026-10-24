@@ -53,7 +53,9 @@ struct State {
   std::atomic<bool> keycaps{false};  // the font's cells hold keycaps (set by the worker)
   std::mutex mutex;
   std::vector<Slot> slots;  // written once by the worker, then read by the game thread
+  uint32_t cell_table = 0, cell_stride = 0;  // the font's cell table, set by the worker with keycaps
   // Game thread only:
+  std::map<char16_t, std::vector<uint8_t>> pad_cells;  // original cells of the pad glyphs moved
   Clock::time_point next_poll{};
   int applied = -1;  // 1 keyboard, 0 controller, -1 nothing written yet
   std::string applied_signature;
@@ -183,6 +185,8 @@ bool PatchFontCells(uint8_t* base) {
   }
   const auto& t = tables[0];
   for (const keycap::Cell& c : keycap::kCells) StoreCell(base, t.table + uint32_t(c.ch) * t.stride, c);
+  S().cell_table = t.table;
+  S().cell_stride = t.stride;
   REXLOG_INFO("PROMPTS keycaps: {} cells patched into the font table at 0x{:08X}",
               sizeof(keycap::kCells) / sizeof(keycap::kCells[0]), t.table);
   return true;
@@ -229,13 +233,30 @@ const keycap::Cell* CellFor(char16_t ch) {
   return nullptr;
 }
 
-// The one character of a one-glyph keycap markup ("<Fonts:...>X<Fonts:/>"), 0 for anything else.
-char16_t MarkupGlyph(const std::u16string& markup) {
-  const std::u16string open = keycap::Markup(u"");
-  const size_t tag = open.find(u'>');
-  const size_t close = markup.rfind(u'<');
-  if (tag == std::u16string::npos || close == std::u16string::npos || close != tag + 2) return 0;
-  return markup[tag + 1];
+// The HUD prompts of gameplay draw pad glyphs straight from the button font, not through
+// [ControllerFont] (docs/PROMPTS_GAMEPLAY_FINDINGS.md). In keyboard mode those characters' cells
+// point at the keycaps of the same bindings; otherwise they get their own cells back.
+int SwapPadGlyphs(uint8_t* base, bool keyboard, const std::map<std::string, keycap::Prompt>& caps) {
+  State& s = S();
+  if (!s.cell_table || s.cell_stride < 24) return 0;
+  const auto addr = [&](char16_t ch) { return s.cell_table + uint32_t(ch) * s.cell_stride; };
+  for (const auto& kv : s.pad_cells) guest::WriteBytes(base, addr(kv.first), kv.second);
+  if (!keyboard) return 0;
+  std::vector<std::pair<std::string, std::u16string>> originals;
+  for (const Slot& slot : s.slots) originals.emplace_back(slot.key, slot.original);
+  int moved = 0;
+  const auto swaps = keycap::PadGlyphSwaps(originals, [&](const std::string& key) {
+    const auto it = caps.find(key);
+    return it != caps.end() ? it->second : keycap::Prompt{};
+  });
+  for (const keycap::GlyphSwap& sw : swaps) {
+    const keycap::Cell* cell = CellFor(sw.cap);
+    if (!cell) continue;
+    if (!s.pad_cells.count(sw.pad)) s.pad_cells[sw.pad] = guest::ReadBytes(base, addr(sw.pad), s.cell_stride);
+    StoreCell(base, addr(sw.pad), *cell);
+    ++moved;
+  }
+  return moved;
 }
 
 struct PageImages {
@@ -266,7 +287,7 @@ bool ComposeAtlas(const std::map<std::string, keycap::Prompt>& caps, bool mouse_
       glyph = keycap::CharFor("IC_MOUSE");
     } else {
       const auto it = caps.find(button == "RS" ? "Controller_RightStick" : "Controller_" + button);
-      if (it != caps.end()) glyph = MarkupGlyph(it->second.brief);
+      if (it != caps.end()) glyph = keycap::SingleGlyph(it->second.brief);
     }
     const keycap::Cell* cell = glyph ? CellFor(glyph) : nullptr;
     if (!cell) continue;
@@ -429,6 +450,7 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
     Write(base, slot, keyboard ? KeyboardText(slot, caps, text) : slot.original);
     ++written;
   }
+  const int glyphs = s.keycaps ? SwapPadGlyphs(base, keyboard != 0, caps) : 0;
   s.applied = keyboard;
   s.applied_signature = signature;
   if (keyboard && s.keycaps && VariantPresent()) {
@@ -440,8 +462,8 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
   } else {
     SetVariant("");
   }
-  REXLOG_INFO("PROMPTS live: {} labels ({} strings written)",
-              keyboard ? (s.keycaps ? "keycap" : "keyboard text") : "controller", written);
+  REXLOG_INFO("PROMPTS live: {} labels ({} strings written, {} pad glyphs on keycaps)",
+              keyboard ? (s.keycaps ? "keycap" : "keyboard text") : "controller", written, glyphs);
 }
 
 [[maybe_unused]] const bool kPromptSwapRegistered = (AddEngineTickListener(&PromptSwapTick), true);

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 #include "gow2_keycaps.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "gow2_keycap_layout.inc"
@@ -116,6 +117,38 @@ const std::vector<std::string>& ControllerKeys() {
       "Controller_ArrowRight", "Controller_LeftBumper", "Controller_RightBumper",
       "Controller_Start", "Controller_Back", "Controller_UpDown", "Controller_UpDownLeftRight"};
   return keys;
+}
+
+char16_t SingleGlyph(const std::u16string& markup) {
+  const std::u16string open = Markup(u""), close = u"<Fonts:/>";
+  const size_t tag = open.size() - close.size();  // Markup(u"") is the opening tag + the closing one
+  if (markup.size() != tag + 1 + close.size()) return 0;
+  if (markup.compare(0, tag, open, 0, tag) != 0 || markup.compare(tag + 1, close.size(), close) != 0) return 0;
+  return markup[tag];
+}
+
+std::vector<GlyphSwap> PadGlyphSwaps(const std::vector<std::pair<std::string, std::u16string>>& originals,
+                                     const std::function<Prompt(const std::string&)>& prompt_for) {
+  std::vector<GlyphSwap> swaps;
+  std::vector<char16_t> conflicting;
+  for (const auto& kv : originals) {
+    const char16_t pad = SingleGlyph(kv.second);
+    if (!pad) continue;  // Start and Back are two characters each, and other characters share them
+    bool keycap_char = false;
+    for (const Cell& c : kCells) keycap_char = keycap_char || c.ch == pad;
+    if (keycap_char) continue;  // already one of ours: never move a keycap's own cell
+    const char16_t cap = SingleGlyph(prompt_for(kv.first).brief);
+    if (!cap || cap == pad) continue;
+    if (std::find(conflicting.begin(), conflicting.end(), pad) != conflicting.end()) continue;
+    auto it = std::find_if(swaps.begin(), swaps.end(), [&](const GlyphSwap& s) { return s.pad == pad; });
+    if (it == swaps.end()) {
+      swaps.push_back({pad, cap});
+    } else if (it->cap != cap) {
+      swaps.erase(it);
+      conflicting.push_back(pad);
+    }
+  }
+  return swaps;
 }
 
 Prompt PromptFor(const std::string& key, const std::function<std::string(const char*)>& get) {

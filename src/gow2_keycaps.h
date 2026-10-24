@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rex::glue::keycap {
@@ -35,5 +36,19 @@ Prompt PromptFor(const std::string& controller_key, const std::function<std::str
 
 // The names [ControllerFont] entries the port gives a cap to.
 const std::vector<std::string>& ControllerKeys();
+
+// The one character of a one-glyph markup ("<Fonts:...>X<Fonts:/>" -> 'X'), 0 for anything else.
+char16_t SingleGlyph(const std::u16string& markup);
+
+// Pad glyphs that strings draw without going through [ControllerFont]: the HUD text of
+// GearGame.int (GearHud_Base, UIScene_Spectator, TUTORIALS ...) and string literals in the
+// script of GearGame.u. `pad` is the character of a one-glyph [ControllerFont] value, `cap` the
+// keycap character of the same entry's binding; pointing pad's font cell at cap's makes every
+// such string show the key. A pad character two entries would send to different caps is left out.
+struct GlyphSwap {
+  char16_t pad, cap;
+};
+std::vector<GlyphSwap> PadGlyphSwaps(const std::vector<std::pair<std::string, std::u16string>>& originals,
+                                     const std::function<Prompt(const std::string&)>& prompt_for);
 
 }  // namespace rex::glue::keycap

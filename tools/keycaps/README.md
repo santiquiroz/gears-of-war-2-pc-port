@@ -43,6 +43,11 @@ The SVGs in `assets/keycaps/svg` are original artwork and can be used on their o
   `[ControllerFont]` (`Controller_A` ...) in place: keycap markup while no controller is connected,
   the original glyph while one is. It reads the `keybind_*` settings twice a second, so a rebind
   shows up at once on the next screen drawn. `src/gow2_keycaps.cpp` maps a binding to characters.
+- Gameplay prompts and some text write the pad characters directly (script literals in GearGame.u,
+  `GearHud_Base`, `XboxButtonLabels` ...). With keycaps and no controller, the cell of each pad
+  character of a one-glyph `[ControllerFont]` value (`X`, `` ` ``, `]` ...) also points at the
+  keycap of that entry's binding, and gets its own cell back when a controller connects
+  (`keycap::PadGlyphSwaps`, docs/PROMPTS_GAMEPLAY_FINDINGS.md).
 - `keycaps.id` in the pack names the layout; the game ignores a pack made for another layout.
 - The tutorial pictograms (the "look at something" hint and the other tutorial panels) are one
   texture with Xbox buttons painted in. `atlas.py` makes the same picture without those nine

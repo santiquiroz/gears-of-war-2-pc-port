@@ -4,20 +4,22 @@ Status (October 2026): `scripts/build-android.ps1` builds an APK with the game's
 (SDK, GPU plugin and the recompiled game for arm64) from a clean clone of this repository, the SDK
 included. On the phone the game plays the start of Act 1 with on-screen touch controls (also
 controllers, and a keyboard and mouse attached at launch): menus, the campaign intro, the opening
-cutscene and gameplay, where Marcus moves, turns the camera and fires. From a cool start (thermal
-status 0, skin 37.1 C), the current build (commit `373c1e8` and later docs) ran at the game's 30 fps
-cap (29.7 fps at 734 MHz), 27.9 at 607 MHz, 25.0 at 525 MHz and 23.2 at 443 MHz in the first
-minutes, then, as the thermal cap kept falling, 15.8 fps at 342 MHz and 12.7 fps at 222 MHz by the
-end of that six-minute run (on USB power); warm (thermal status 3, GPU capped at 160-222 MHz) it
-runs at about 10-12.5 fps (10.1 fps at 160 MHz, 12.5 at 222 MHz). In the cool-start run the GPU
-cost was 19.5 Mcycles per game frame (median of quiet windows), against 24.2 for the October 15
-morning build, which still had the black regions. At the same 222 MHz cap, the current build draws
-17 % more frames than that build. Boot builds 852 stored pipelines in 2.7 s instead of 27.5 s, and the panel runs at 30 Hz. On October 15, the
-black regions were traced to a depth mismatch between the prepass and base-pass vertex shaders on
-Adreno and fixed with the Android color depth bias default of 16 (step 4). Light environment
-shadows caused the white lamp objects and hanging banner; the current build's Android default
-`LightEnvironmentShadows=0` removes them while keeping the world's dynamic shadows. The cause in
-the Vulkan backend or driver and the colour grade difference from the PC remain open.
+cutscene and gameplay, where Marcus moves, turns the camera and fires.
+Since v0.3.1 the native renderer (host render targets and native resolves instead of emulated EDRAM)
+is on by default on Android. On a Samsung Galaxy S25 Ultra (Adreno 830, 1280x720 internal), chapter 1
+hospital checkpoint: 2026-10-23 (v0.3.1) measured 52.9 fps from a cool start (32 °C battery), falling
+to about 37 fps warm (38 °C); 1,100 draws and 53 render passes a frame; the GPU is the limit (95-99 %
+busy). 2026-10-24: patch 0054 (on by default on Android) copies guest memory to the GPU a whole
+256 KB block at a time, halving the render passes (55 to 26 a frame) and cutting GPU work per frame
+by about 7 %. 2026-10-24: v0.3.4 draws from the game's Direct3D calls (Graphics → Draw source,
+Automatic = Direct3D on PC and Android): every draw function and Clear take their state and shaders
+from the game's own Direct3D device; measured on the S25 at 46.7 fps cool with the same picture as the
+emulated path. This moves CPU work; it does not reduce the GPU work per draw, which is what limits
+the phone. New in v0.3.4: Graphics → Anti-aliasing (FXAA, FXAA Extreme) on every platform.
+Light environment shadows caused the white lamp objects and hanging banner; the current build's
+Android default `LightEnvironmentShadows=0` removes them while keeping the world's dynamic shadows.
+The cause in the Vulkan backend or driver remains open. Still open on Android: keyboard/mouse
+hot-plug not tested on a phone; checkpoints saved by very old builds can crash on load.
 Target device for bring-up: Samsung Galaxy S25 Ultra
 (Snapdragon 8 Elite, Adreno 830, Vulkan 1.3). Controls:
 [`android/README.md`](../android/README.md#controls). [`ANDROID_EXPERIMENTS.md`](ANDROID_EXPERIMENTS.md)
@@ -204,12 +206,12 @@ copy of the generated code.
    Disabling only light environment shadows removed the white objects and reached 12.3 fps at
    222 MHz, keeping the world's dynamic shadows; the current build makes this the Android default
    and measured 10.1 fps at 160 MHz and 12.5 fps at 222 MHz on a warm phone.
-   From a cool start (thermal status 0, skin 37.1 C), the current build ran at the game's 30 fps cap
-   (29.7 fps at 734 MHz), 27.9 at 607 MHz, 25.0 at 525 MHz and 23.2 at 443 MHz in the first minutes,
-   then, as the thermal cap kept falling, 15.8 fps at 342 MHz and 12.7 fps at 222 MHz by the end of
-   that six-minute run on USB power, with a median quiet-window GPU cost of 19.5 Mcycles/frame
-   against 24.2 for the October 15 morning build, which still had the black regions. Warm (thermal
-   status 3, GPU capped at 160-222 MHz), it runs at about 10-12.5 fps (above).
+   From a cool start (thermal status 0) on the S25 Ultra at 1280x720 internal: v0.3.1 (2026-10-23)
+   measured 52.9 fps (32 °C battery), falling to about 37 fps warm (38 °C); 1,100 draws and 53 render
+   passes a frame; GPU 95-99 % busy. Patch 0054 (2026-10-24, on by default) halves render passes (55
+   to 26) and cuts GPU work by about 7 %. v0.3.4 (2026-10-24) uses the game's Direct3D device for
+   every draw and Clear; measured 46.7 fps cool, same picture as emulated path. The GPU work per draw
+   does not change, which is what limits the phone.
    With only the depth bias (before the shadow default), a cool start peaked at 23.6 fps at 734 MHz,
    but on USB power the phone went from thermal status 0 (skin 35.8 C) to status 3 about 90 s into
    gameplay.
@@ -238,7 +240,7 @@ by edge stretch, and composite the HUD from a pre-HUD snapshot. Pace with FIFO a
 `VK_GOOGLE_display_timing` (or Swappy, Apache-2.0), enable above 28 fps sustained for 2 s and disable
 below 24 fps; the panel request must then be 60 Hz. The guest vblank is a fixed timer, so extra
 host presents never reach game timing and remain cross-play safe. This is not worth starting
-until the sustained base rate is near 28 fps; warm, it runs at about 10-12.5 fps.
+until the sustained base rate is near 28 fps; warm measurements are around 37 fps (v0.3.1, 38 °C).
 
 The codegen options `skip_msr` (plan C5) and register-as-local (C10) also change the PC build and
 need a PC/System Link regression.
