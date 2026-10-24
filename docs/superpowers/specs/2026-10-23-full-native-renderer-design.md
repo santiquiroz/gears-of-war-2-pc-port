@@ -176,3 +176,23 @@ Round 2 (same method, one switch at a time; the three baselines so far span 15.7
 Ambient occlusion, depth of field and motion blur together make up the 20 % of round 1; nothing dominates, and
 about 80 % of the frame is the scene passes themselves. Next: GPU time per render pass with timestamps at pass
 boundaries (valid on a tiler, unlike inside a pass), `vulkan_android_pass_timing`.
+
+Round 3: GPU time per render pass (patch 0052, `vulkan_android_pass_timing`; 14.4 Mcycles/frame, 40 fps, so the
+timing itself costs nothing visible). About 16.7 ms of GPU work a frame, 53 passes:
+
+| Pass kind (color, depth, width) | ms/frame | Passes/frame | Draws/frame | Ended by |
+|---|---|---|---|---|
+| Scene: `2_10_10_10_FLOAT` + `D24FS8`, 1280 | 6.7 | 5.8-6.7 | 633 | barrier |
+| Between passes (barriers, copies, uploads) | 3.4 | | | |
+| `8_8_8_8`, no depth, 1280 | 2.5 | 25 | 82 | barrier |
+| `16_16_FLOAT` + `D24FS8`, 640 | 1.1 | 5 | 60 | barrier |
+| `16_16_16_16_FLOAT`, no depth, 400 | 1.0 | 4 | 28 | barrier |
+| `2_10_10_10_FLOAT`, no depth, 1280 | 0.43 | 1 | 25 | switch |
+| Depth only, `D24FS8`, 1280 | 0.42 | 2 | 211 | switch |
+| `16_16` + `D24FS8`, 640 | 0.39 | 1 | 10 | barrier |
+| Rest | ~0.6 | | | |
+
+On a tiler every pass end stores the tiles and the next pass loads them again. The scene is cut into about six
+passes and the 8888 passes average three draws each (about 100 µs apiece, mostly that overhead); 48 of the 53 pass
+ends are barriers, and the gaps between passes take 20 % of the frame. Next: name what pushes each barrier (upload,
+resolve, render target transfer, texture layout) and remove the avoidable ones.
