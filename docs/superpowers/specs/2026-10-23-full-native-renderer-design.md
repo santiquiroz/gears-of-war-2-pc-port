@@ -270,3 +270,11 @@ those draws (skip the flush inside the hook, keep the device's dirty-mask bookke
 only from the device. S2c: shaders from A/B microcode (load them on the snapshot instead of IM_LOAD).
 
 **Switch.** `gow2_native_frontend` (auto/on/off) in Graphics → Renderer group; auto turns it on after S3 passes.
+
+### S2a result (2026-10-24, RX 7800 XT, chapter 2 hospital)
+
+`gow2_native_frontend = on` with `gpu_native_frontend_verify`: 270,030 DrawIndexed calls per 300 frames (about 900
+a frame) rewritten by the game and drawn by the command processor from their snapshots; 0 mismatches in every group
+(surf, prog, rs, vp, scissor, fetch, ALU constants), 0 bad snapshots, 0 draws off the inline path, 13 MB of arenas.
+The picture is the same as the emulated path. Note from the implementation: `dev+48` holds the address of the last
+dword written (`stwu`), so the DRAW_INDX header sits at write pointer − 16.

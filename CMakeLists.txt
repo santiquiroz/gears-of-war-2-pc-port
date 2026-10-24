@@ -17,6 +17,7 @@ set(GOW2_SOURCES
     src/gow2_coalesced.cpp
     src/gow2_sha_table.cpp
     src/gow2_gpu_pick.cpp
+    src/gow2_native_frontend.cpp
     src/gow2_mouse_aim.cpp
     src/gow2_key_names.cpp
     src/gow2_native_bindings.cpp
@@ -91,6 +92,8 @@ endif()
 option(GOW2_NATIVE_PROBE "Build the native renderer identification probe (development only)" OFF)
 if(GOW2_NATIVE_PROBE)
     target_sources(gow2 PRIVATE tools/native/native_probe.cpp)
+    # The probe hooks the same functions as src/gow2_native_frontend.cpp, which then compiles to nothing.
+    target_compile_definitions(gow2 PRIVATE GOW2_NATIVE_PROBE_BUILD)
     target_include_directories(gow2 PRIVATE src)
 endif()
 
@@ -168,12 +171,13 @@ add_executable(gow2_frame_stats_test EXCLUDE_FROM_ALL tools/tests/frame_stats_te
 add_executable(gow2_update_check_test EXCLUDE_FROM_ALL tools/tests/update_check_test.cpp)
 add_executable(gow2_widescreen_math_test EXCLUDE_FROM_ALL tools/tests/widescreen_math_test.cpp)
 add_executable(gow2_native_renderer_math_test EXCLUDE_FROM_ALL tools/tests/native_renderer_math_test.cpp)
+add_executable(gow2_native_frontend_test EXCLUDE_FROM_ALL tools/tests/native_frontend_test.cpp)
 add_executable(gow2_audio_volume_test EXCLUDE_FROM_ALL tools/tests/audio_volume_test.cpp)
 add_executable(gow2_coalesced_text_test EXCLUDE_FROM_ALL tools/tests/coalesced_text_test.cpp)
 foreach(_options_test gow2_toml_edit_test gow2_options_catalog_test gow2_options_model_test
         gow2_options_input_test gow2_options_values_test gow2_options_actions_test gow2_fps_cap_test
         gow2_audio_volume_test gow2_coalesced_text_test gow2_gpu_pick_test gow2_widescreen_math_test gow2_frame_stats_test
-        gow2_update_check_test gow2_native_renderer_math_test)
+        gow2_update_check_test gow2_native_renderer_math_test gow2_native_frontend_test)
     target_include_directories(${_options_test} PRIVATE src)
 endforeach()
 

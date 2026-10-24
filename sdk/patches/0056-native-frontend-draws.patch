@@ -1,0 +1,272 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 2dc9b50..f2774c1 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -41,6 +41,8 @@
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/user_module.h>
+ 
++#include "native_frontend_snapshot.h"
++
+ #if REX_PLATFORM_ANDROID
+ #include <chrono>
+ #include <thread>
+@@ -59,6 +61,13 @@ REXCVAR_DEFINE_BOOL(gpu_msaa_fill_at_1x, false, "GPU",
+                     "the size on the same EDRAM, so the 1x render target that owns that EDRAM keeps it and "
+                     "nothing is copied to a 4x render target and back");
+ 
++REXCVAR_DEFINE_BOOL(gpu_native_frontend, true, "GPU",
++                    "Draw the packets the game rewrote into native draws from the game's device snapshot");
++
++REXCVAR_DEFINE_BOOL(gpu_native_frontend_verify, false, "GPU",
++                    "Compare each native draw's device snapshot with the register file before writing it "
++                    "and count the mismatching register groups (NATIVEFRONT log line)");
++
+ #if REX_PLATFORM_ANDROID
+ REXCVAR_DEFINE_INT32(gpu_worker_spin_us, -1, "GPU",
+                      "Microseconds the GPU command thread polls for new commands, pausing with an "
+@@ -318,6 +327,55 @@ void ReportMsaaFillAt1x() {
+   }
+ }
+ 
++// Draw packet words already decoded to host order (a native front end draw), read by the draw
++// handlers instead of the ring when they get a null reader. Command processor thread only.
++thread_local const uint32_t* g_decoded_draw_words = nullptr;
++
++uint32_t ReadDrawWord(memory::RingBuffer* reader) {
++  if (reader) {
++    return reader->ReadAndSwap<uint32_t>();
++  }
++  return *g_decoded_draw_words++;
++}
++
++void SkipDrawWords(memory::RingBuffer* reader, uint32_t count) {
++  if (reader) {
++    reader->AdvanceRead(count * sizeof(uint32_t));
++  } else {
++    g_decoded_draw_words += count;
++  }
++}
++
++// Native front end counters, logged and reset every kNativeFrontendLogSwaps swaps.
++constexpr uint32_t kNativeFrontendLogSwaps = 300;
++struct NativeFrontendStats {
++  uint64_t draws = 0;
++  uint64_t verified = 0;
++  uint64_t mismatch_surf = 0;
++  uint64_t mismatch_prog = 0;
++  uint64_t mismatch_rs = 0;
++  uint64_t mismatch_vp = 0;
++  uint64_t mismatch_scis = 0;
++  uint64_t mismatch_fetch = 0;
++  uint64_t mismatch_alu = 0;
++  uint64_t bad_snapshot = 0;
++  uint32_t swaps = 0;
++};
++NativeFrontendStats g_native_frontend_stats;
++
++void ReportNativeFrontendOnSwap() {
++  NativeFrontendStats& s = g_native_frontend_stats;
++  if (++s.swaps < kNativeFrontendLogSwaps) {
++    return;
++  }
++  REXGPU_INFO(
++      "NATIVEFRONT draws {} verified {} mismatches surf {} prog {} rs {} vp {} scis {} fetch {} "
++      "alu {} bad_snapshot {}",
++      s.draws, s.verified, s.mismatch_surf, s.mismatch_prog, s.mismatch_rs, s.mismatch_vp,
++      s.mismatch_scis, s.mismatch_fetch, s.mismatch_alu, s.bad_snapshot);
++  s = NativeFrontendStats();
++}
++
+ }  // namespace
+ 
+ namespace {
+@@ -1169,9 +1227,79 @@ bool CommandProcessor::ExecutePacketType3_ME_INIT(memory::RingBuffer* reader, ui
+ 
+ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32_t packet,
+                                               uint32_t count) {
++  // A DRAW_INDX the game rewrote into a native draw: 'NATV', the low and high halves of a host
++  // pointer to the device snapshot, 0. Drawn here, in ring order, from the snapshot.
++  uint32_t words_read = 0;
++  bool native_draw = false;
++  if (count == 4 && REXCVAR_GET(gpu_native_frontend)) {
++    native_draw = reader->ReadAndSwap<uint32_t>() == native_frontend::kPacketMagic;
++    words_read = 1;
++  }
++  if (native_draw) {
++    using native_frontend::NativeDrawSnapshot;
++    uint64_t snapshot_low = reader->ReadAndSwap<uint32_t>();
++    uint64_t snapshot_high = reader->ReadAndSwap<uint32_t>();
++    reader->AdvanceRead(sizeof(uint32_t));
++    const auto* snapshot = reinterpret_cast<const NativeDrawSnapshot*>(
++        static_cast<uintptr_t>(snapshot_low | (snapshot_high << 32)));
++    NativeFrontendStats& stats = g_native_frontend_stats;
++    if (!snapshot || snapshot->magic != native_frontend::kSnapshotMagic ||
++        snapshot->size != sizeof(NativeDrawSnapshot)) {
++      // The draw is lost.
++      ++stats.bad_snapshot;
++      return true;
++    }
++
++    const RegisterFile& regs = *register_file_;
++    if (REXCVAR_GET(gpu_native_frontend_verify)) {
++      auto differs = [&regs](uint32_t first, const uint32_t* values, uint32_t n) {
++        return std::memcmp(regs.values + first, values, n * sizeof(uint32_t)) != 0;
++      };
++      stats.mismatch_surf += differs(0x2000, snapshot->surf, 6);
++      stats.mismatch_prog += differs(0x2180, snapshot->prog, 2);
++      stats.mismatch_rs += differs(0x2200, snapshot->rs, 12);
++      stats.mismatch_vp += differs(0x2100, snapshot->vp, 21);
++      stats.mismatch_scis += differs(0x2081, snapshot->scissor, 2);
++      stats.mismatch_fetch += differs(0x4800, snapshot->fetch, 192);
++      bool alu_differs = false;
++      for (uint32_t i = 0; i < 128 && !alu_differs; ++i) {
++        alu_differs = !snapshot->alu[i] || differs(0x4000 + 16 * i, snapshot->alu[i], 16);
++      }
++      stats.mismatch_alu += alu_differs;
++      ++stats.verified;
++    }
++
++    // Through WriteRegister, like type-0 packets, so the backend's register write hooks run; only the
++    // registers that change, since a fetch constant write invalidates that slot's cached resources.
++    auto write = [this](uint32_t first, const uint32_t* values, uint32_t n) {
++      for (uint32_t i = 0; i < n; ++i) {
++        if (register_file_->values[first + i] != values[i]) {
++          WriteRegister(first + i, values[i]);
++        }
++      }
++    };
++    write(0x2000, snapshot->surf, 6);
++    write(0x2180, snapshot->prog, 2);
++    write(0x2200, snapshot->rs, 12);
++    write(0x2100, snapshot->vp, 21);
++    write(0x2081, snapshot->scissor, 2);
++    write(0x4800, snapshot->fetch, 192);
++    for (uint32_t i = 0; i < 128; ++i) {
++      if (snapshot->alu[i]) {
++        write(0x4000 + 16 * i, snapshot->alu[i], 16);
++      }
++    }
++
++    ++stats.draws;
++    g_decoded_draw_words = snapshot->draw_words;
++    bool result = ExecutePacketType3_DRAW_INDX(nullptr, packet, 4);
++    g_decoded_draw_words = nullptr;
++    return result;
++  }
++
+   // skip N 32-bit words to get to the next packet
+   // No-op, ignore some data.
+-  reader->AdvanceRead(count * sizeof(uint32_t));
++  reader->AdvanceRead((count - words_read) * sizeof(uint32_t));
+   return true;
+ }
+ 
+@@ -1224,6 +1352,7 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(memory::RingBuffer* reader, ui
+   reader->AdvanceRead((count - 4) * sizeof(uint32_t));
+ 
+   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
++  ReportNativeFrontendOnSwap();
+ 
+   ++counter_;
+   return true;
+@@ -1555,6 +1684,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+   // uint32_t viz_id = viz_query_condition & 0x3F;
+   // when true, render conditionally based on query result
+   // uint32_t viz_use = viz_query_condition & 0x100;
++  // A null reader is a native front end draw: the words come decoded from g_decoded_draw_words.
+ 
+   assert_not_zero(count_remaining);
+   if (!count_remaining) {
+@@ -1562,7 +1692,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+     return false;
+   }
+   reg::VGT_DRAW_INITIATOR vgt_draw_initiator;
+-  vgt_draw_initiator.value = reader->ReadAndSwap<uint32_t>();
++  vgt_draw_initiator.value = ReadDrawWord(reader);
+   --count_remaining;
+   WriteRegister(XE_GPU_REG_VGT_DRAW_INITIATOR, vgt_draw_initiator.value);
+ 
+@@ -1584,7 +1714,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+         REXGPU_ERROR("{}: Packet too small, can't read VGT_DMA_BASE", opcode_name);
+         return false;
+       }
+-      uint32_t vgt_dma_base = reader->ReadAndSwap<uint32_t>();
++      uint32_t vgt_dma_base = ReadDrawWord(reader);
+       --count_remaining;
+       WriteRegister(XE_GPU_REG_VGT_DMA_BASE, vgt_dma_base);
+       reg::VGT_DMA_SIZE vgt_dma_size;
+@@ -1593,7 +1723,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+         REXGPU_ERROR("{}: Packet too small, can't read VGT_DMA_SIZE", opcode_name);
+         return false;
+       }
+-      vgt_dma_size.value = reader->ReadAndSwap<uint32_t>();
++      vgt_dma_size.value = ReadDrawWord(reader);
+       --count_remaining;
+       WriteRegister(XE_GPU_REG_VGT_DMA_SIZE, vgt_dma_size.value);
+ 
+@@ -1631,7 +1761,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+ 
+   // Skip to the next command, for example, if there are immediate indexes that
+   // we don't support yet.
+-  reader->AdvanceRead(count_remaining * sizeof(uint32_t));
++  SkipDrawWords(reader, count_remaining);
+ 
+   if (draw_succeeded) {
+     auto viz_query = register_file_->Get<reg::PA_SC_VIZ_QUERY>();
+@@ -1688,7 +1818,7 @@ bool CommandProcessor::ExecutePacketType3_DRAW_INDX(memory::RingBuffer* reader,
+     REXGPU_ERROR("PM4_DRAW_INDX: Packet too small, can't read the viz query token");
+     return false;
+   }
+-  uint32_t viz_query_condition = reader->ReadAndSwap<uint32_t>();
++  uint32_t viz_query_condition = ReadDrawWord(reader);
+   --count_remaining;
+   return ExecutePacketType3Draw(reader, packet, "PM4_DRAW_INDX", viz_query_condition,
+                                 count_remaining);
+diff --git a/src/graphics/native_frontend_snapshot.h b/src/graphics/native_frontend_snapshot.h
+new file mode 100644
+index 0000000..3de5e14
+--- /dev/null
++++ b/src/graphics/native_frontend_snapshot.h
+@@ -0,0 +1,41 @@
++/**
++ * @file        graphics/native_frontend_snapshot.h
++ * @brief       Device snapshot behind the draw packets the game rewrote into native draws
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++namespace rex::graphics::native_frontend {
++
++// The game rewrites a DRAW_INDX packet in place into a type-3 NOP of the same length (4 payload
++// words): kPacketMagic, the low and high halves of a host pointer to a NativeDrawSnapshot, and 0.
++constexpr uint32_t kPacketMagic = 0x5654414E;    // 'NATV' as the guest dword value
++constexpr uint32_t kSnapshotMagic = 0x3153444E;  // 'NDS1'
++
++// Host memory, host byte order. The game defines the identical struct; keep the layout in sync.
++struct NativeDrawSnapshot {
++  uint32_t magic;
++  uint32_t size;
++  uint64_t sequence;
++  uint32_t draw_words[4];    // DRAW_INDX payload words 1-4, host order
++  uint32_t surf[6];          // registers 0x2000-0x2005
++  uint32_t prog[2];          // 0x2180-0x2181
++  uint32_t rs[12];           // 0x2200-0x220B
++  uint32_t vp[21];           // 0x2100-0x2114
++  uint32_t scissor[2];       // 0x2081-0x2082
++  uint32_t fetch[192];       // 0x4800-0x48BF
++  const uint32_t* alu[128];  // each 16 dwords: registers 0x4000 + 16*i .. +15
++};
++
++static_assert(sizeof(void*) != 8 || offsetof(NativeDrawSnapshot, alu) == 976,
++              "NativeDrawSnapshot layout must match the game's");
++static_assert(sizeof(void*) != 8 || sizeof(NativeDrawSnapshot) == 2000,
++              "NativeDrawSnapshot layout must match the game's");
++
++}  // namespace rex::graphics::native_frontend
