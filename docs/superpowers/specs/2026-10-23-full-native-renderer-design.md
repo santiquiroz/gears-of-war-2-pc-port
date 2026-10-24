@@ -227,3 +227,46 @@ Round 6 (0054 on): 13.2 Mcycles/frame at native resolution, 29.4 at `draw_resolu
 pixels). Cost ≈ 7.8 + 5.4 × (pixels / native), so about 40 % of today's frame grows with the pixels and 60 % does not
 (per-draw and per-pass work, vertex shaders). Empty fragment shaders saved nothing, so the pixel part is render
 target bandwidth (tile loads and stores, blending), not shading.
+
+## S2 design (2026-10-24): draws from the device, in ring order
+
+Owner decision: build the full native renderer, no more measurement rounds. S2 moves `sub_82980B20` (DrawIndexed,
+~90 % of draws) to the device state; the other draw functions, Clear and Resolve follow in S3.
+
+**Ordering without new SDK API.** The game and the command processor run in one process. After the original
+`sub_82980B20` returns, the game hook finds the DRAW_INDX packet it just wrote (header `0xC0032201`, the last packet
+before the write pointer `dev+48`, inline path) and rewrites it in place into a type-3 NOP of the same length
+(`0xC0031000`): words `'NATV'` (0x5654414E), the low and high halves of a host pointer to a `NativeDrawSnapshot`, and 0.
+The command processor reads it in ring order, exactly where the draw was, so clears, resolves and fences keep their
+places. A draw that is not on the inline path (segment record at 13256) is left alone and counted.
+
+**Snapshot** (host memory, host byte order, layout shared by both sides and checked by `magic` and `size`):
+
+| Field | Registers | Source on the game side |
+|---|---|---|
+| `magic` `'NDS1'`, `size`, `sequence` | | |
+| `draw_words[4]` | DRAW_INDX words 1-4 | the packet before the rewrite |
+| `surf[6]` | 0x2000-0x2005 | shadow 10368 |
+| `prog[2]` | 0x2180-0x2181 | shadow 10528 |
+| `rs[12]` | 0x2200-0x220B | shadow 10548 |
+| `vp[21]` | 0x2100-0x2114 | shadow 10444 |
+| `scissor[2]` | 0x2081-0x2082 | 10436 / 10440 |
+| `fetch[192]` | 0x4800-0x48BF | shadow 1152 |
+| `alu[128]` pointers to 16 dwords | 0x4000-0x47FF | constant mirror (S1), copy-on-write blocks |
+
+The game keeps the constant mirror of S1 (fed by `sub_8298F378` and `sub_8298E5B8`) as 128 blocks of 16 dwords;
+a block written since the last snapshot gets a new copy in a per-frame arena, so a snapshot copies about 1 KB of
+fixed registers plus the changed blocks. Arenas rotate over 4 frames (the command processor runs at most 2 behind).
+
+**Command processor side (SDK patch).** The NOP handler recognises `'NATV'` and, with `gpu_native_frontend`
+(default on; it only acts on rewritten packets), writes the snapshot's registers into the register file and issues
+the draw from `draw_words` through the normal `IssueDraw` path. `gpu_native_frontend_verify` compares the snapshot
+with the register file first and counts the mismatching groups (online G1). Counters every 300 frames:
+`NATIVEFRONT draws N verified N mismatches {group: n} bad_snapshot N`.
+
+**Steps.** S2a: rewrite + snapshot + register write + draw, with the library's state packets still emitted (the
+register write is then a no-op: the picture cannot change). S2b: stop emitting the library's state packets for
+those draws (skip the flush inside the hook, keep the device's dirty-mask bookkeeping), so state reaches the GPU
+only from the device. S2c: shaders from A/B microcode (load them on the snapshot instead of IM_LOAD).
+
+**Switch.** `gow2_native_frontend` (auto/on/off) in Graphics → Renderer group; auto turns it on after S3 passes.
