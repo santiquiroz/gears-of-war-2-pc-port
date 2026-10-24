@@ -306,3 +306,24 @@ per 300 frames. With suppression on (default), per frame about 8,700 library pac
 loads, shader loads) are turned into NOPs and DrawIndexed state and shaders reach the GPU only from the device;
 about 1,070 packets a frame are outside the snapshot and kept, and about 7 draws a frame keep their packets because
 the region could not be walked (`aborted`). The picture is the same as the emulated path.
+
+### S3 result (2026-10-24): every draw path and Clear
+
+- `sub_82980210` and `sub_8297FD30` write their state and draw into the ring but leave the new write pointer in
+  `dev+13444` (the caller commits it to `dev+48` after copying the vertices): the hook reads it there, and only when the
+  function succeeded (`sub_82980210` returns 0, `sub_8297FD30` the vertex pointer). Details:
+  `tools/native/S3_SEGMENT_FINDINGS.md`.
+- Every draw of a hooked call gets its own snapshot: the device shadows plus the covered register writes of the call,
+  folded in order up to that draw. Segments are compacted (kept packets first, one marker over the rest), so short
+  draws (DRAW_INDX_2 of the rectangles, the 3-dword DRAW_INDX of `sub_8297FD30`) get a marker too.
+- Clear (`sub_82981ED8`) is hooked as a whole: its rectangles (`sub_829813F0`) use the state Clear writes in its own
+  packets, which the per-draw folding now carries; Clear's two inline shaders (IM_LOAD_IMMEDIATE) stay in the ring.
+  `sub_829813F0` called outside Clear stays on the console path. Details: `tools/native/S3_CLEAR_FINDINGS.md`.
+- A call during which `sub_8298C1A0` ran (the ring went past its high-water mark and may have been handed to the GPU)
+  is left as the library wrote it (`ring_moved`, about 3 calls a frame).
+- Hospital, RX 7800 XT: DrawIndexed, both non-indexed functions and Clear all through the front end; `not_inline`,
+  `short_draw` and `segments_kept` 0; same picture as the emulated path. Galaxy S25 Ultra (DrawIndexed stage): same
+  picture, 0 bad snapshots, 46.7 fps from a cool start.
+
+Still on the command processor by design: the library's resolves (native resolves since 0037-0045), swaps, fences and
+the packets the snapshot does not cover (kept in their place).
