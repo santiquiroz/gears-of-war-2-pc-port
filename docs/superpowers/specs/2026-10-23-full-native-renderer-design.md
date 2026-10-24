@@ -196,3 +196,19 @@ On a tiler every pass end stores the tiles and the next pass loads them again. T
 passes and the 8888 passes average three draws each (about 100 µs apiece, mostly that overhead); 48 of the 53 pass
 ends are barriers, and the gaps between passes take 20 % of the frame. Next: name what pushes each barrier (upload,
 resolve, render target transfer, texture layout) and remove the avoidable ones.
+
+Round 4: what ends the passes (patch 0053; 14.1 Mcycles/frame, 39.5 fps):
+
+| Pass kind | Ended by | Passes/frame | ms/frame |
+|---|---|---|---|
+| Scene, last part | `barrier:rt` | 1 | 5.1 |
+| `8_8_8_8`, 1280 | `barrier:upload` | 24 | 2.3 |
+| Scene, earlier parts | `barrier:upload` | 5.8 | 1.2 |
+| `16_16_FLOAT`, 640 | `barrier:rt` | 5 | 1.1 |
+| `16_16_16_16_FLOAT`, 400 | `barrier:rt` | 2 | 0.9 |
+
+Between passes per frame: 36 buffer copies, 9 image copies, 32 compute dispatches and 127 barrier batches; barriers
+pushed per frame by source: upload 90, rt 48, texture 33, other 6. **About 30 of the 53 passes end only because guest
+memory was uploaded in the middle of the frame** (each upload is a copy, which cannot run inside a render pass). The
+render-target ones are real dependencies (the next pass samples what was drawn). First fix to measure: patch 0054
+(`gpu_upload_whole_blocks`), which batches the uploads of a block into one copy.
