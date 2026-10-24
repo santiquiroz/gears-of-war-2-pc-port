@@ -330,6 +330,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
   const bool suppress = Suppress();
   static const SuppressPlan kNoPlan{};  // without suppression only draws of kMarkerDwords or more get a marker
   thread_local SuppressPlan plan;
+  thread_local std::vector<uint32_t> compacted;
   for (size_t k = 0; k < all.draws.size(); ++k) {
     const DrawPacket& draw = all.draws[k];
     // S2b+c: plan the NOPs before touching the ring; nothing is written unless the snapshot exists.
@@ -343,11 +344,20 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
     const uint32_t header = start + 4 * uint32_t(draw.index);
     const uint32_t draw_dwords = draw.payload + 1;
 
+    // With suppression the segment is compacted (kept packets first, one marker over the rest), so a short draw gets a
+    // marker even when a kept packet sits right before it; without it only a draw of kMarkerDwords or more can be
+    // rewritten in place.
+    const std::span<const uint32_t> segment_and_draw =
+        std::span<const uint32_t>(emitted).subspan(size_t(region.data() - emitted.data()), region.size() + draw_dwords);
     std::optional<size_t> span_start;
+    size_t compact_marker = 0;
     if (draw.payload > kMaxDrawPayload) {
       g_unsupported.fetch_add(1, std::memory_order_relaxed);
+    } else if (suppress) {
+      if (CompactSegment(segment_and_draw, plan, draw_dwords, compacted, &compact_marker)) span_start = 0;
+      if (!span_start) g_short_draw.fetch_add(1, std::memory_order_relaxed);
     } else {
-      span_start = MarkerSpanStart(region, suppress ? plan : kNoPlan, draw_dwords);
+      span_start = MarkerSpanStart(region, kNoPlan, draw_dwords);
       if (span_start && region.size() - *span_start + draw_dwords > kMaxSuppressDwords) span_start.reset();
       if (!span_start) g_short_draw.fetch_add(1, std::memory_order_relaxed);
     }
@@ -379,17 +389,26 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
     snapshot->draw_word_count = draw.payload;
 
     const uint32_t segment = header - 4 * uint32_t(region.size());
+    const uint64_t pointer = uint64_t(reinterpret_cast<uintptr_t>(snapshot));
     if (suppress) {
-      for (uint32_t i : plan.nops) StoreU32(base, segment + 4 * i, NopHeaderFor(region[i]));
+      // The compacted segment: the kept packets, then the marker's payload, then its header, so the NOP header never
+      // sits over stale words.
+      compacted[compact_marker + 2] = uint32_t(pointer);
+      compacted[compact_marker + 3] = uint32_t(pointer >> 32);
+      for (size_t i = 0; i < compacted.size(); ++i) {
+        if (i != compact_marker) StoreU32(base, segment + 4 * uint32_t(i), compacted[i]);
+      }
+      StoreU32(base, segment + 4 * uint32_t(compact_marker), compacted[compact_marker]);
       snapshot->flags |= kSnapshotFlagSuppressed;
       g_suppressed_packets.fetch_add(plan.nops.size(), std::memory_order_relaxed);
       g_kept_packets.fetch_add(plan.kept, std::memory_order_relaxed);
+      g_rewritten[uint32_t(function)].fetch_add(1, std::memory_order_relaxed);
+      continue;
     }
 
-    // One NOP over the span (the draw packet, plus the NOPed packets before it when the draw is short).
+    // One NOP over the draw packet, rewritten in place.
     const uint32_t marker = segment + 4 * uint32_t(*span_start);
     const uint32_t span_dwords = (header - marker) / 4 + draw_dwords;
-    const uint64_t pointer = uint64_t(reinterpret_cast<uintptr_t>(snapshot));
     StoreU32(base, marker, NopHeaderForSpan(span_dwords));
     StoreU32(base, marker + 4, kPacketMagic);
     StoreU32(base, marker + 8, uint32_t(pointer));

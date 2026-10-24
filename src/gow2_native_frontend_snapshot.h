@@ -333,4 +333,42 @@ inline std::optional<size_t> MarkerSpanStart(std::span<const uint32_t> region, c
 // Header of a NOP covering span_dwords dwords (header included).
 inline uint32_t NopHeaderForSpan(uint32_t span_dwords) { return 0xC0001000u | ((span_dwords - 2) << 16); }
 
+// segment_and_draw: segment k (the region PlanSegment returned, planned into plan) followed by draw k's draw_dwords.
+// Rewrites it, same length, as the kept packets copied verbatim in ring order, then one NOP marker over the rest:
+// header, 'NATV', two pointer placeholders (0) the caller fills, zeros. The NOPed packets are folded into the
+// snapshot and the kept ones write registers the snapshot does not carry (or no register), so moving the kept ones
+// ahead of the folded writes changes nothing; type-2 filler goes into the marker. marker_index, when given, receives
+// the marker header's index in out. false (out unspecified) when the plan failed, the walk does not end at the
+// draw, or the marker would be under kMarkerDwords or over kMaxSuppressDwords.
+inline bool CompactSegment(std::span<const uint32_t> segment_and_draw, const SuppressPlan& plan, uint32_t draw_dwords,
+                           std::vector<uint32_t>& out, size_t* marker_index = nullptr) {
+  out.clear();
+  if (!plan.ok || draw_dwords > segment_and_draw.size()) return false;
+  const size_t segment_dwords = segment_and_draw.size() - draw_dwords;
+  size_t next_nop = 0;
+  size_t i = 0;
+  while (i < segment_dwords) {
+    const uint32_t h = segment_and_draw[i];
+    size_t length = 2 + ((h >> 16) & 0x3FFFu);
+    if ((h >> 30) == 1) length = 3;
+    if ((h >> 30) == 2) length = 1;
+    if (length > segment_dwords - i) return false;
+    const bool nop = next_nop < plan.nops.size() && plan.nops[next_nop] == i;
+    if (nop) {
+      ++next_nop;
+    } else if ((h >> 30) != 2) {
+      out.insert(out.end(), segment_and_draw.begin() + i, segment_and_draw.begin() + i + length);
+    }
+    i += length;
+  }
+  if (next_nop != plan.nops.size()) return false;  // the plan does not match this segment
+  const size_t span = segment_and_draw.size() - out.size();
+  if (span < kMarkerDwords || span > kMaxSuppressDwords) return false;
+  if (marker_index != nullptr) *marker_index = out.size();
+  out.push_back(NopHeaderForSpan(uint32_t(span)));
+  out.push_back(kPacketMagic);
+  out.resize(segment_and_draw.size(), 0);
+  return true;
+}
+
 }  // namespace rex::glue::native_frontend

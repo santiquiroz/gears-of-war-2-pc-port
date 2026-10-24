@@ -202,6 +202,41 @@ int main() {
   PlanSuppression(shader_loads, plan, true);
   Expect(plan.ok && plan.nops == std::vector<uint32_t>({0, 3}) && plan.kept == 0, "shader loads NOPed with them");
 
+  // Compaction (sub_8297FD30): covered type-0, kept 0x5000 packet right before a 3-dword DRAW_INDX. The kept packet
+  // moves to the front and one marker covers the rest.
+  using rex::glue::native_frontend::CompactSegment;
+  const std::vector<uint32_t> fd30 = {0x00012200, 0x11, 0x22, 0x00025000, 0xA, 0xB, 0xC, 0xC0012201, 0x77, 0x88};
+  const auto all_fd30 = FindAllDraws(fd30);
+  Expect(all_fd30.walk_ok && all_fd30.draws.size() == 1 && all_fd30.draws[0].index == 7 &&
+             all_fd30.draws[0].payload == 2,
+         "sub_8297FD30 draw found");
+  const auto fd30_seg = PlanSegment(fd30, all_fd30, 0, true, plan);
+  Expect(plan.ok && plan.nops == std::vector<uint32_t>({0}) && plan.kept == 1, "fd30 segment: rs NOPed, 0x5000 kept");
+  Expect(!MarkerSpanStart(fd30_seg, plan, 3), "fd30: MarkerSpanStart alone gives short_draw");
+  std::vector<uint32_t> compacted;
+  size_t marker_at = 99;
+  Expect(CompactSegment(fd30, plan, 3, compacted, &marker_at), "fd30 segment compacts");
+  const std::vector<uint32_t> fd30_expected = {0x00025000, 0xA, 0xB, 0xC, 0xC0041000, 0x5654414E, 0, 0, 0, 0};
+  Expect(compacted == fd30_expected, "kept packet first, then a 6-dword marker, length unchanged");
+  Expect(marker_at == 4, "marker index after the kept packet");
+  Expect(compacted.size() == fd30.size(), "compacted length equals the input");
+
+  // Filler goes into the marker; a 5-dword draw with nothing NOPed is a marker over the draw after the kept packets.
+  const std::vector<uint32_t> filler = {0x80000000, 0x00002007, 9, 0x80000000, kDrawIndxHeader, 1, 2, 3, 4};
+  PlanSuppression(std::span<const uint32_t>(filler).first(4), plan);
+  Expect(plan.ok && plan.nops.empty() && plan.kept == 1, "filler region parses");
+  Expect(CompactSegment(filler, plan, 5, compacted, &marker_at) && marker_at == 2 &&
+             compacted == std::vector<uint32_t>({0x00002007, 9, 0xC0051000, 0x5654414E, 0, 0, 0, 0, 0}),
+         "filler folded into the marker");
+
+  // Only kept packets before a 3-dword draw: the marker would be 3 dwords.
+  const std::vector<uint32_t> only_kept = {0x00025000, 0xA, 0xB, 0xC, 0xC0012201, 0x77, 0x88};
+  PlanSuppression(std::span<const uint32_t>(only_kept).first(4), plan);
+  Expect(plan.ok && plan.nops.empty() && !CompactSegment(only_kept, plan, 3, compacted),
+         "only kept packets and a 3-dword draw: false");
+  PlanSuppression(second, plan);
+  Expect(!CompactSegment(fd30, plan, 3, compacted), "failed plan: false");
+
   std::printf("native_frontend_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }
