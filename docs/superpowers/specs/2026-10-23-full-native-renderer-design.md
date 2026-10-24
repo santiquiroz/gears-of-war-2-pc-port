@@ -140,3 +140,24 @@ mirror is a sufficient state source.
 
 Known issue of the probe build: 2 of 11 runs hung at startup with one guest thread spinning; not seen in release
 builds, not investigated (diagnostic build only).
+
+## After G1: where the phone's GPU time goes (2026-10-23, S25 Ultra, chapter 1 checkpoint)
+
+G1 shows the device state equals what the command processor already draws, so swapping the front end (S2-S3) would
+not change the GPU work; the owner chose to measure the GPU cost first. Method of `docs/ANDROID_EXPERIMENTS.md`:
+cool-gated runs (battery ≤ 34.5 °C), 60 s of gameplay sampled with `scripts/android-gpu-clocks.sh`, compared as GPU
+megacycles per game frame (effective clock x busy / fps), so thermal clock drops cancel out. Logs and clock samples
+in `out/native/gpucost`.
+
+| Run | fps | GPU busy | Mcycles/frame |
+|---|---|---|---|
+| Baseline (first) | 32.4 | 95 % | 16.7 |
+| `vulkan_android_empty_fragment_shader` | 34.6 | 99 % | 15.9 |
+| Game effects off (AO, motion blur, depth of field, high-quality bloom, distortion) | 40.1 | 99 % | 13.0 |
+| Baseline (last) | 39.4 | 99 % | 15.9 |
+
+- The GPU is the limit (95-99 % busy).
+- Fragment shader work is not the cost: empty fragment shaders save about 2.5 %, inside the run-to-run spread.
+- The game's full-screen effects cost about 20 %. Since their shading is cheap, that is bandwidth and pass overhead
+  on the tiler: per frame about 53 render passes (48 ended by a barrier), 180 geometry-shader draws and 35 uploads.
+- A Perfetto trace with `gpu.renderstages` came back empty: this phone exposes no render-stage producer to the shell.
