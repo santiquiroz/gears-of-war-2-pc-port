@@ -182,6 +182,8 @@ Versus works over System Link: in Multiplayer set Match Type to System Link, cre
 
 ## Known issues
 
+- **"Bad Image ... rexruntime.dll ... 0xc0e90002" on Windows 11.** That is Smart App Control blocking the release's DLLs because they are not code-signed yet; the files are not damaged. Turning Smart App Control off (Windows Security → App & browser control) lets the game start, but Windows cannot turn it back on without a reinstall, so decide with that in mind. Signing the releases is being looked into.
+
 - **Mouse aim changed in 0.1.1.** In 0.1.0 the mouse was turned into a right-stick movement, and the game ignored any stick deflection under 30% (its `DeadZone=0.3` binding). Now the mouse goes through the game's own PC mouse axes (`gow2_mouse_aim`), with no dead zone, while controllers keep the game's own aiming. Keys still pass through an emulated controller. Reports of how it feels are welcome in an issue.
 - **Hints show Xbox button pictures.** Menu prompts show keyboard keys ([Space], [E]...) while no controller is connected and switch to the Xbox buttons when you plug one in, and back when you unplug it (`gow2_prompts` = `auto`; `keyboard` and `controller` fix one choice at launch; on Android the choice is still made at launch). A menu already on screen changes the next time it opens; the tutorial hint pictures have their Xbox button circles removed while no controller is connected (the hint text names your key), and any other art with buttons painted in still shows Xbox buttons.
 - **Green-looking lighting** has been reported on skin, lights and the menu flames; it has not been reproduced on the development PC yet. Screenshots are welcome in an issue.
