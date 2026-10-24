@@ -18,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -155,7 +156,12 @@ uint32_t g_current = 0;
 uint64_t g_sequence = 0;
 bool g_mirror_initialized = false;
 
-std::atomic<uint64_t> g_rewritten{0};
+// The hooked draw functions, in the order of the log line.
+enum class DrawFunction : uint32_t { k82980B20, k82980210, k8297FD30, k829813F0, kCount };
+
+std::array<std::atomic<uint64_t>, uint32_t(DrawFunction::kCount)> g_rewritten{};
+std::atomic<uint64_t> g_unsupported{0};
+std::atomic<uint64_t> g_short_draw{0};
 std::atomic<uint64_t> g_not_inline{0};
 std::atomic<uint64_t> g_arena_full{0};
 std::atomic<uint64_t> g_suppressed_packets{0};
@@ -245,44 +251,73 @@ void ReadDwords(const uint8_t* base, uint32_t address, uint32_t* out, uint32_t c
   for (uint32_t i = 0; i < count; ++i) out[i] = LoadU32(base, address + 4 * i);
 }
 
-// After sub_82980B20 returned. Its inline path writes the header and the 4 payload dwords with stwu (pre-increment)
-// and stores the pointer to the last one at dev+48 (183.cpp:22656-22681, 22817-22818), so the header sits 16 bytes
-// before the write pointer. before is dev+48 at the call, so this call's packets start at before + 4.
-void OnDrawIndexed(uint8_t* base, uint32_t device, uint32_t before) {
+// The ALU part of a fold: register 0x4000 + i goes to mirror dword i and marks its block changed, so the snapshot
+// allocated next copies it. The caller holds g_lock.
+void FoldAluWritesLocked(std::span<const RegisterWrite> writes) {
+  for (const RegisterWrite& w : writes) {
+    if (w.reg >= 0x4000 && w.reg < 0x4000 + kMirrorDwords) WriteMirror(w.reg - 0x4000, w.value);
+  }
+}
+
+// After a draw function returned. The library writes the ring with stwu (pre-increment) and stores the pointer to
+// the last dword written at dev+48 (sub_82980B20: 183.cpp:22656-22681, 22817-22818). before is dev+48 at the call,
+// so this call's packets are the dwords before + 4 through write. The draw is the last one among them; packets after
+// it (sub_82980210 and sub_8297FD30 restore state and bin masks) stay in place and run after the native draw.
+void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction function, bool shaders) {
   const uint32_t write = LoadU32(base, device + kDevWritePointer);
-  if (write < 4 * kMaxScanDwords) {
+  // write < before: the ring wrapped (sub_8298C1A0) during the call.
+  if (write <= before || (write - before) / 4 > kMaxSuppressDwords + 64) {
     g_not_inline.fetch_add(1, std::memory_order_relaxed);
     return;
   }
-  std::array<uint32_t, kMaxScanDwords> tail{};
-  const uint32_t first = write - 4 * (kMaxScanDwords - 1);
-  ReadDwords(base, first, tail.data(), kMaxScanDwords);
-  const auto index = FindTrailingDrawIndx(tail);
-  if (!index) {
+  const uint32_t start = before + 4;
+  thread_local std::vector<uint32_t> emitted;
+  emitted.resize((write - before) / 4);
+  ReadDwords(base, start, emitted.data(), uint32_t(emitted.size()));
+  const auto draw = FindLastDraw(emitted);
+  if (!draw) {
     g_not_inline.fetch_add(1, std::memory_order_relaxed);
     return;
   }
-  const uint32_t header = first + 4 * uint32_t(*index);
+  if (draw->payload > kMaxDrawPayload) {
+    g_unsupported.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  const uint32_t header = start + 4 * uint32_t(draw->index);
+  const uint32_t draw_dwords = draw->payload + 1;
 
   // S2b+c: plan the NOPs before touching the ring; nothing is written unless the snapshot exists.
-  thread_local std::vector<uint32_t> region;
   thread_local SuppressPlan plan;
+  std::span<const uint32_t> region;
   bool suppress = false;
+  plan.ok = false;
   if (Suppress()) {
-    const uint32_t start = before + 4;
-    // write < before: the ring wrapped (sub_8298C1A0) during the call.
-    if (write >= before && header >= start && (header - start) / 4 <= kMaxSuppressDwords) {
-      region.resize((header - start) / 4);
-      ReadDwords(base, start, region.data(), uint32_t(region.size()));
+    // Another draw in the call: the snapshot is the state of the last one only, leave the packets alone.
+    if (draw->draws_seen == 1 && draw->index <= kMaxSuppressDwords) {
+      region = std::span<const uint32_t>(emitted).first(draw->index);
       PlanSuppression(region, plan);
       suppress = plan.ok;
     }
     if (!suppress) g_aborted.fetch_add(1, std::memory_order_relaxed);
   }
+  const auto span_start = MarkerSpanStart(region, plan, draw_dwords);
+  if (!span_start) {
+    g_short_draw.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  // Back from the draw header: region is empty when suppression did not run, and the span is then the draw alone.
+  const uint32_t marker = header - 4 * uint32_t(region.size() - *span_start);
+  const uint32_t span_dwords = (header - marker) / 4 + draw_dwords;
+  if (span_dwords > kMaxSuppressDwords) {
+    g_short_draw.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
 
   NativeDrawSnapshot* snapshot = nullptr;
   {
     std::lock_guard<std::mutex> hold(g_lock);
+    // The ALU writes of the packets about to become NOPs go into the mirror before its blocks are copied.
+    if (suppress) FoldAluWritesLocked(plan.writes);
     snapshot = AllocateSnapshotLocked();
     if (snapshot == nullptr) {
       g_arena_full.fetch_add(1, std::memory_order_relaxed);
@@ -293,7 +328,10 @@ void OnDrawIndexed(uint8_t* base, uint32_t device, uint32_t before) {
     snapshot->sequence = ++g_sequence;
     for (uint32_t b = 0; b < kBlocks; ++b) snapshot->alu[b] = g_block[b];
   }
-  ReadDwords(base, header + 4, snapshot->draw_words, 4);
+  std::memset(snapshot->draw_words, 0, sizeof(snapshot->draw_words));
+  ReadDwords(base, header + 4, snapshot->draw_words, draw->payload);
+  snapshot->draw_opcode = draw->opcode;
+  snapshot->draw_word_count = draw->payload;
   ReadDwords(base, device + kDevSurf, snapshot->surf, 6);
   ReadDwords(base, device + kDevProg, snapshot->prog, 2);
   ReadDwords(base, device + kDevRs, snapshot->rs, 12);
@@ -309,30 +347,35 @@ void OnDrawIndexed(uint8_t* base, uint32_t device, uint32_t before) {
   ReadDwords(base, device + kDevBoolConsts, snapshot->bool_consts, 40);
   snapshot->vs_address = snapshot->vs_dwords = 0;
   snapshot->ps_address = snapshot->ps_dwords = 0;
-  if (const uint32_t b = LoadU32(base, device + kDevShaderB); b != 0) {
-    MicrocodeOfB(base, b, snapshot->vs_address, snapshot->vs_dwords);
-  }
-  if (const uint32_t a = LoadU32(base, device + kDevShaderA); a != 0) {
-    MicrocodeOfA(base, a, snapshot->ps_address, snapshot->ps_dwords);
-  }
   snapshot->flags = 0;
   snapshot->reserved = 0;
+  if (shaders) {
+    if (const uint32_t b = LoadU32(base, device + kDevShaderB); b != 0) {
+      MicrocodeOfB(base, b, snapshot->vs_address, snapshot->vs_dwords);
+    }
+    if (const uint32_t a = LoadU32(base, device + kDevShaderA); a != 0) {
+      MicrocodeOfA(base, a, snapshot->ps_address, snapshot->ps_dwords);
+    }
+    snapshot->flags |= kSnapshotFlagShaders;
+  }
 
   if (suppress) {
-    const uint32_t start = before + 4;
+    // The packets' values over the shadows' (sub_829813F0 writes the ring without touching the shadows), then NOPs.
+    FoldRegisterWrites(plan.writes, *snapshot);
     for (uint32_t i : plan.nops) StoreU32(base, start + 4 * i, NopHeaderFor(region[i]));
     snapshot->flags |= kSnapshotFlagSuppressed;
     g_suppressed_packets.fetch_add(plan.nops.size(), std::memory_order_relaxed);
     g_kept_packets.fetch_add(plan.kept, std::memory_order_relaxed);
   }
 
+  // One NOP over the span (the draw packet, plus the NOPed packets before it when the draw is short).
   const uint64_t pointer = uint64_t(reinterpret_cast<uintptr_t>(snapshot));
-  StoreU32(base, header, kNopHeader);
-  StoreU32(base, header + 4, kPacketMagic);
-  StoreU32(base, header + 8, uint32_t(pointer));
-  StoreU32(base, header + 12, uint32_t(pointer >> 32));
-  StoreU32(base, header + 16, 0);
-  g_rewritten.fetch_add(1, std::memory_order_relaxed);
+  StoreU32(base, marker, NopHeaderForSpan(span_dwords));
+  StoreU32(base, marker + 4, kPacketMagic);
+  StoreU32(base, marker + 8, uint32_t(pointer));
+  StoreU32(base, marker + 12, uint32_t(pointer >> 32));
+  for (uint32_t i = 4; i < span_dwords; ++i) StoreU32(base, marker + 4 * i, 0);
+  g_rewritten[uint32_t(function)].fetch_add(1, std::memory_order_relaxed);
 }
 
 void OnEngineTick(const PPCContext&, uint8_t*) {
@@ -351,10 +394,14 @@ void OnEngineTick(const PPCContext&, uint8_t*) {
     std::lock_guard<std::mutex> hold(g_lock);
     for (const Arena& arena : g_arenas) arena_bytes += arena.chunks.size() * kChunkBytes;
   }
-  REXLOG_INFO("NATIVEFRONT game rewritten {} not_inline {} arena_kb {} suppressed_packets {} kept_packets {} "
-              "aborted {}",
-              g_rewritten.exchange(0, std::memory_order_relaxed),
-              g_not_inline.exchange(0, std::memory_order_relaxed), arena_bytes / 1024,
+  std::array<uint64_t, uint32_t(DrawFunction::kCount)> rewritten{};
+  for (uint32_t f = 0; f < rewritten.size(); ++f) rewritten[f] = g_rewritten[f].exchange(0, std::memory_order_relaxed);
+  REXLOG_INFO("NATIVEFRONT game rewritten {} (82980B20 {} 82980210 {} 8297FD30 {} 829813F0 {}) not_inline {} "
+              "unsupported {} short_draw {} arena_kb {} suppressed_packets {} kept_packets {} aborted {}",
+              rewritten[0] + rewritten[1] + rewritten[2] + rewritten[3], rewritten[0], rewritten[1], rewritten[2],
+              rewritten[3], g_not_inline.exchange(0, std::memory_order_relaxed),
+              g_unsupported.exchange(0, std::memory_order_relaxed),
+              g_short_draw.exchange(0, std::memory_order_relaxed), arena_bytes / 1024,
               g_suppressed_packets.exchange(0, std::memory_order_relaxed),
               g_kept_packets.exchange(0, std::memory_order_relaxed),
               g_aborted.exchange(0, std::memory_order_relaxed));
@@ -396,17 +443,17 @@ REX_HOOK_RAW(sub_8298E5B8) {
   rex::glue::native_frontend::MirrorFlushAluShadow(base, mask, register_base, shadow);
 }
 
-// DrawIndexed.
-REX_EXTERN(__imp__sub_82980B20);
-REX_HOOK_RAW(sub_82980B20) {
-  if (!rex::glue::native_frontend::Enabled()) {
-    __imp__sub_82980B20(ctx, base);
-    return;
-  }
-  const uint32_t device = ctx.r3.u32;
-  const uint32_t before = rex::glue::guest::LoadU32(base, device + rex::glue::native_frontend::kDevWritePointer);
-  __imp__sub_82980B20(ctx, base);
-  rex::glue::native_frontend::OnDrawIndexed(base, device, before);
-}
+// The four draw functions; all take the device in r3 (mr r31,r3: 183.cpp for sub_82980B20, 1.cpp:18869 for
+// sub_82980210, 78.cpp:19922 for sub_8297FD30, 57.cpp:20245 for sub_829813F0). The first three flush through
+// sub_8298F600, so shaders A/B are the bound ones; sub_829813F0 never calls it (tools/native/S1D_FINDINGS.md).
+#define GOW2_NATIVE_FRONTEND_DRAW_HOOK(name, function, shaders)                                                    REX_EXTERN(__imp__##name);                                                                                       REX_HOOK_RAW(name) {                                                                                               if (!rex::glue::native_frontend::Enabled()) {                                                                      __imp__##name(ctx, base);                                                                                        return;                                                                                                        }                                                                                                                const uint32_t device = ctx.r3.u32;                                                                              const uint32_t before =                                                                                              rex::glue::guest::LoadU32(base, device + rex::glue::native_frontend::kDevWritePointer);                      __imp__##name(ctx, base);                                                                                        rex::glue::native_frontend::OnDraw(base, device, before, rex::glue::native_frontend::DrawFunction::function,                                        shaders);                                                                   }
+
+GOW2_NATIVE_FRONTEND_DRAW_HOOK(sub_82980B20, k82980B20, true)  // DrawIndexed
+GOW2_NATIVE_FRONTEND_DRAW_HOOK(sub_82980210, k82980210, true)
+GOW2_NATIVE_FRONTEND_DRAW_HOOK(sub_8297FD30, k8297FD30, true)
+// sub_829813F0 (Clear's rectangle list) stays on the console path until Clear itself moves: it draws with the
+// constants, viewport and shader Clear writes in its own packets, which the device snapshot does not hold.
+
+#undef GOW2_NATIVE_FRONTEND_DRAW_HOOK
 
 #endif  // !defined(GOW2_NATIVE_PROBE_BUILD)

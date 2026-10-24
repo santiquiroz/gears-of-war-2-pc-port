@@ -170,6 +170,25 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
           C("off", "Emulated (EDRAM)", "Emulado (EDRAM)"),
       }});
   out.push_back(Setting{
+      .id = "gow2_native_frontend",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Draw source",
+      .label_es = "Origen de los draws",
+      .help_en = "Direct3D takes every draw, its state and its shaders straight from the game's Direct3D calls "
+                 "(the full native renderer); console commands replays them from the emulated GPU command "
+                 "stream. Automatic picks Direct3D.",
+      .help_es = "Direct3D toma cada draw, su estado y sus shaders directamente de las llamadas Direct3D del "
+                 "juego (el renderizador nativo completo); comandos de consola los reproduce desde el flujo "
+                 "de comandos de la GPU emulada. Automático elige Direct3D.",
+      .choices = {
+          C("auto", "Automatic", "Automático"),
+          C("on", "Direct3D calls (full native)", "Llamadas Direct3D (nativo completo)"),
+          C("off", "Console commands", "Comandos de consola"),
+      }});
+  out.push_back(Setting{
       .id = "resolution_scale",
       .tab = Tab::kGraphics,
       .kind = Kind::kChoice,

@@ -15,15 +15,18 @@
 namespace rex::glue::native_frontend {
 
 constexpr uint32_t kPacketMagic = 0x5654414E;    // 'NATV'
-constexpr uint32_t kSnapshotMagic = 0x3253444E;  // 'NDS2'
+constexpr uint32_t kSnapshotMagic = 0x3353444E;  // 'NDS3'
 
 constexpr uint32_t kDrawIndxHeader = 0xC0032201;  // type 3, DRAW_INDX (0x22), 4 payload dwords
 constexpr uint32_t kNopHeader = 0xC0031000;       // type 3, NOP (0x10), 4 payload dwords
-constexpr uint32_t kDrawIndxDwords = 5;           // header + payload
-constexpr uint32_t kMaxScanDwords = 32;
+constexpr uint32_t kOpcodeDrawIndx = 0x22;
+constexpr uint32_t kOpcodeDrawIndx2 = 0x36;
+constexpr uint32_t kMaxDrawPayload = 4;           // draw_words; longer draws (inline indices) are left alone
+constexpr uint32_t kMarkerDwords = 5;             // NOP header, 'NATV', pointer low, pointer high, 0
 constexpr uint32_t kMaxSuppressDwords = 16384;    // longer regions are left alone
 
-constexpr uint32_t kSnapshotFlagSuppressed = 1u;  // this draw's library packets were turned into NOPs
+constexpr uint32_t kSnapshotFlagSuppressed = 1u << 0;  // this draw's library packets were turned into NOPs
+constexpr uint32_t kSnapshotFlagShaders = 1u << 1;     // vs/ps are the shaders bound for this draw
 
 struct NativeDrawSnapshot {
   uint32_t magic;
@@ -48,8 +51,11 @@ struct NativeDrawSnapshot {
                                    // 0xFFFFFFFFFF000000, 40 bits (183.cpp:22489-22507)
   uint32_t vs_address, vs_dwords;  // vertex shader = object B (dev+12696), 0 when B is 0
   uint32_t ps_address, ps_dwords;  // pixel shader = object A (dev+12692), 0 when A is 0
-  uint32_t flags;                  // kSnapshotFlagSuppressed
+  uint32_t flags;                  // kSnapshotFlagSuppressed, kSnapshotFlagShaders
   uint32_t reserved;
+  // NDS3 (S3).
+  uint32_t draw_opcode;            // kOpcodeDrawIndx or kOpcodeDrawIndx2
+  uint32_t draw_word_count;        // payload dwords 1-4 in draw_words, the rest 0
 };
 
 #if INTPTR_MAX == INT64_MAX
@@ -58,22 +64,56 @@ static_assert(offsetof(NativeDrawSnapshot, window_offset) == 2000);
 static_assert(offsetof(NativeDrawSnapshot, g2388) == 2272);
 static_assert(offsetof(NativeDrawSnapshot, bool_consts) == 2368);
 static_assert(offsetof(NativeDrawSnapshot, flags) == 2544);
-static_assert(sizeof(NativeDrawSnapshot) == 2552);
+static_assert(offsetof(NativeDrawSnapshot, draw_opcode) == 2552);
+static_assert(sizeof(NativeDrawSnapshot) == 2560);
 #endif
 
-// tail holds the last ring dwords up to and including the one at the device's write pointer (dev+48), host order.
-// The library writes the ring with stwu, so dev+48 points at the last dword written, not past it. Returns the index
-// in tail of the DRAW_INDX header when that packet is the last one written (its last payload dword is tail.back()),
-// nullopt otherwise. Looks back at most kMaxScanDwords for the nearest header.
-inline std::optional<size_t> FindTrailingDrawIndx(std::span<const uint32_t> tail) {
-  const size_t n = tail.size();
-  const size_t limit = n < kMaxScanDwords ? n : kMaxScanDwords;
-  for (size_t back = kDrawIndxDwords; back <= limit; ++back) {
-    if (tail[n - back] != kDrawIndxHeader) continue;
-    if (back == kDrawIndxDwords) return n - back;
-    return std::nullopt;  // nearest DRAW_INDX is followed by other packets
+inline bool IsDrawOpcode(uint32_t opcode) {
+  // DRAW_INDX, DRAW_INDX_BIN, DRAW_INDX_2_BIN, DRAW_INDX_2 (xenos.h PM4_DRAW_*).
+  return opcode == kOpcodeDrawIndx || opcode == 0x34 || opcode == 0x35 || opcode == kOpcodeDrawIndx2;
+}
+
+struct LastDraw {
+  size_t index;          // header index in emitted
+  uint32_t opcode;       // kOpcodeDrawIndx or kOpcodeDrawIndx2
+  uint32_t payload;      // payload dwords; over kMaxDrawPayload means unsupported
+  uint32_t draws_seen;   // draw packets of any kind in emitted, this one included
+  uint32_t other_draws;  // DRAW_INDX_BIN / DRAW_INDX_2_BIN packets among them
+};
+
+// emitted holds every dword one draw call wrote, from the write pointer at the call + 4 through the write pointer
+// after it (dev+48 points at the last dword written: the library writes the ring with stwu), host order. Walks the
+// PM4 packets from the start and returns the last DRAW_INDX or DRAW_INDX_2 packet; packets after it (state restores,
+// bin masks) are allowed. nullopt when a packet runs past the end or there is no such draw.
+inline std::optional<LastDraw> FindLastDraw(std::span<const uint32_t> emitted) {
+  std::optional<LastDraw> last;
+  uint32_t draws_seen = 0;
+  uint32_t other_draws = 0;
+  size_t i = 0;
+  while (i < emitted.size()) {
+    const uint32_t h = emitted[i];
+    size_t length = 2 + ((h >> 16) & 0x3FFFu);  // types 0 and 3: header + count + 1 payload dwords
+    if ((h >> 30) == 1) length = 3;
+    if ((h >> 30) == 2) length = 1;
+    if (length > emitted.size() - i) return std::nullopt;
+    if ((h >> 30) == 3) {
+      const uint32_t opcode = (h >> 8) & 0xFFu;
+      if (IsDrawOpcode(opcode)) {
+        ++draws_seen;
+        if (opcode == kOpcodeDrawIndx || opcode == kOpcodeDrawIndx2) {
+          last = LastDraw{i, opcode, uint32_t(length - 1), 0, 0};
+        } else {
+          ++other_draws;
+        }
+      }
+    }
+    i += length;
   }
-  return std::nullopt;
+  if (last) {
+    last->draws_seen = draws_seen;
+    last->other_draws = other_draws;
+  }
+  return last;
 }
 
 // Registers the snapshot carries; a library packet that only writes these can become a NOP.
@@ -95,31 +135,52 @@ inline bool SnapshotCoversRange(uint32_t first, uint32_t count) {
 // and 3).
 inline uint32_t NopHeaderFor(uint32_t h) { return 0xC0001000u | (h & 0x3FFF0000u); }
 
-struct SuppressPlan {
-  bool ok = false;             // false: the region did not parse, NOP nothing
-  uint32_t kept = 0;           // type-0/1/3 packets left in place (type-2 padding not counted)
-  std::vector<uint32_t> nops;  // indices of the packet headers to turn into NOPs
+struct RegisterWrite {
+  uint32_t reg;
+  uint32_t value;
 };
 
-// region: the dwords one DrawIndexed call wrote before its DRAW_INDX header, host order. Walks the PM4 packets and
+struct SuppressPlan {
+  bool ok = false;                    // false: the region did not parse or holds another draw, NOP nothing
+  uint32_t kept = 0;                  // type-0/1/3 packets left in place (type-2 padding not counted)
+  std::vector<uint32_t> nops;         // indices of the packet headers to turn into NOPs, ascending
+  std::vector<RegisterWrite> writes;  // what the NOPed type-0 and SET_CONSTANT packets wrote, in ring order
+};
+
+// region: the dwords one draw call wrote before its draw packet header, host order. Walks the PM4 packets and
 // lists those whose effect the snapshot replaces: type-0 writes to covered registers only, LOAD_ALU_CONSTANT,
-// IM_LOAD, IM_LOAD_IMMEDIATE, and SET_CONSTANT into covered registers. The last packet must end exactly at the
-// region's end.
+// IM_LOAD, IM_LOAD_IMMEDIATE, and SET_CONSTANT into covered registers. The register values of the type-0 and
+// SET_CONSTANT ones go to plan.writes, to be folded into the snapshot (the shadows may not hold them). The last
+// packet must end exactly at the region's end; another draw packet in the region aborts.
 inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan) {
   plan.ok = false;
   plan.kept = 0;
   plan.nops.clear();
+  plan.writes.clear();
+  auto fail = [&plan] {
+    plan.kept = 0;
+    plan.nops.clear();
+    plan.writes.clear();
+  };
   if (region.size() > kMaxSuppressDwords) return;
   size_t i = 0;
   while (i < region.size()) {
     const uint32_t h = region[i];
     const uint32_t count = ((h >> 16) & 0x3FFFu) + 1;  // payload dwords for types 0 and 3
     size_t length = 1 + count;
+    // Types 0 and 3 read their payload below: check it fits first.
+    if ((h >> 30) != 1 && (h >> 30) != 2 && length > region.size() - i) return fail();
     bool nop = false;
     switch (h >> 30) {
       case 0: {
         const uint32_t base = h & 0x7FFFu;
-        nop = (h & 0x8000u) != 0 ? SnapshotCoversRegister(base) : SnapshotCoversRange(base, count);
+        const bool one_register = (h & 0x8000u) != 0;
+        nop = one_register ? SnapshotCoversRegister(base) : SnapshotCoversRange(base, count);
+        if (nop) {
+          for (uint32_t k = 0; k < count; ++k) {
+            plan.writes.push_back({one_register ? base : base + k, region[i + 1 + k]});
+          }
+        }
         break;
       }
       case 1:  // two registers, header + 2 dwords
@@ -130,24 +191,27 @@ inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan
         break;
       default: {
         const uint32_t opcode = (h >> 8) & 0xFFu;
+        if (IsDrawOpcode(opcode)) return fail();  // the snapshot is the state of the last draw only
         if (opcode == 0x2F || opcode == 0x27 || opcode == 0x2B) {  // LOAD_ALU_CONSTANT, IM_LOAD, IM_LOAD_IMMEDIATE
-          nop = true;
-        } else if (opcode == 0x2D && count >= 2 && i + 1 < region.size()) {
+          nop = true;  // LOAD_ALU_CONSTANT: the mirror already follows sub_8298F378
+        } else if (opcode == 0x2D && count >= 2) {
           // SET_CONSTANT (SDK ExecutePacketType3_SET_CONSTANT): word 1 index in bits 0-10, type in bits 16-23;
           // count - 1 registers from the type's base.
           static constexpr uint32_t kSetConstantBase[5] = {0x4000, 0x4800, 0x4900, 0x4908, 0x2000};
           const uint32_t offset_type = region[i + 1];
           const uint32_t type = (offset_type >> 16) & 0xFFu;
-          if (type < 5) nop = SnapshotCoversRange(kSetConstantBase[type] + (offset_type & 0x7FFu), count - 1);
+          if (type < 5) {
+            const uint32_t first = kSetConstantBase[type] + (offset_type & 0x7FFu);
+            nop = SnapshotCoversRange(first, count - 1);
+            if (nop) {
+              for (uint32_t k = 0; k + 1 < count; ++k) plan.writes.push_back({first + k, region[i + 2 + k]});
+            }
+          }
         }
         break;
       }
     }
-    if (length > region.size() - i) {
-      plan.kept = 0;
-      plan.nops.clear();
-      return;
-    }
+    if (length > region.size() - i) return fail();
     if (nop) {
       plan.nops.push_back(uint32_t(i));
     } else if ((h >> 30) != 2) {
@@ -157,5 +221,50 @@ inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan
   }
   plan.ok = true;
 }
+
+// The snapshot dword holding register r, nullptr for 0x4000-0x47FF (the ALU blocks, folded through the mirror) and
+// registers the snapshot does not carry. Same register ranges as SnapshotCoversRegister.
+inline uint32_t* SnapshotRegisterSlot(NativeDrawSnapshot& s, uint32_t r) {
+  if (r >= 0x2000 && r <= 0x2005) return &s.surf[r - 0x2000];
+  if (r == 0x2080) return &s.window_offset;
+  if (r >= 0x2081 && r <= 0x2082) return &s.scissor[r - 0x2081];
+  if (r >= 0x2100 && r <= 0x2114) return &s.vp[r - 0x2100];
+  if (r >= 0x2180 && r <= 0x2181) return &s.prog[r - 0x2180];
+  if (r >= 0x2200 && r <= 0x220B) return &s.rs[r - 0x2200];
+  if (r >= 0x2280 && r <= 0x2294) return &s.g2280[r - 0x2280];
+  if (r >= 0x2300 && r <= 0x2325) return &s.g2300[r - 0x2300];
+  if (r >= 0x2380 && r <= 0x2387) return &s.g2380[r - 0x2380];
+  if (r >= 0x2388 && r <= 0x239F) return &s.g2388[r - 0x2388];
+  if (r >= 0x4800 && r <= 0x48BF) return &s.fetch[r - 0x4800];
+  if (r >= 0x4900 && r <= 0x4927) return &s.bool_consts[r - 0x4900];
+  return nullptr;
+}
+
+// Applies the non-ALU writes, in order, over a snapshot already filled from the shadows.
+inline void FoldRegisterWrites(std::span<const RegisterWrite> writes, NativeDrawSnapshot& s) {
+  for (const RegisterWrite& w : writes) {
+    if (uint32_t* slot = SnapshotRegisterSlot(s, w.reg)) *slot = w.value;
+  }
+}
+
+// Where the NATV marker starts, as an index into region (region.size() = the draw header itself). A draw of at least
+// kMarkerDwords is rewritten in place. A shorter one takes over the NOPed packets right before it (they end where the
+// next begins, no filler between) until the span has kMarkerDwords; nullopt when there are not enough of them.
+inline std::optional<size_t> MarkerSpanStart(std::span<const uint32_t> region, const SuppressPlan& plan,
+                                             uint32_t draw_dwords) {
+  size_t start = region.size();
+  if (draw_dwords >= kMarkerDwords) return start;
+  if (!plan.ok) return std::nullopt;
+  for (size_t k = plan.nops.size(); k-- > 0;) {
+    const size_t header = plan.nops[k];
+    if (header + 2 + ((region[header] >> 16) & 0x3FFFu) != start) break;
+    start = header;
+    if (region.size() - start + draw_dwords >= kMarkerDwords) return start;
+  }
+  return std::nullopt;
+}
+
+// Header of a NOP covering span_dwords dwords (header included).
+inline uint32_t NopHeaderForSpan(uint32_t span_dwords) { return 0xC0001000u | ((span_dwords - 2) << 16); }
 
 }  // namespace rex::glue::native_frontend
