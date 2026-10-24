@@ -24,7 +24,7 @@ index d1b720a..50a5ecd 100644
  
  }  // namespace rex::graphics
 diff --git a/src/graphics/shared_memory.cpp b/src/graphics/shared_memory.cpp
-index 7a05090..9911fc1 100644
+index 7a05090..aecd2eb 100644
 --- a/src/graphics/shared_memory.cpp
 +++ b/src/graphics/shared_memory.cpp
 @@ -9,6 +9,7 @@
@@ -35,19 +35,29 @@ index 7a05090..9911fc1 100644
  #include <algorithm>
  #include <cstring>
  #include <utility>
-@@ -20,6 +21,11 @@
+@@ -19,6 +20,21 @@
+ #include <rex/graphics/shared_memory.h>
  #include <rex/math.h>
  #include <rex/memory.h>
- 
++#include <rex/platform.h>
++
++// Each upload is a copy that ends the render pass on a tiling GPU: on the Adreno 830 this halves the passes
++// (55 to 26 a frame) and saves 7 % of the GPU megacycles per frame in the hospital.
++#if REX_PLATFORM_ANDROID
++REXCVAR_DEFINE_BOOL(gpu_upload_whole_blocks, true, "GPU",
++                    "When a draw needs guest memory copied to the GPU, also copy the rest of each 256 KB block "
++                    "it touches that the GPU used before and the CPU has written since, so the draws that "
++                    "follow need no copy (and on tiling GPUs no render pass break) of their own");
++#else
 +REXCVAR_DEFINE_BOOL(gpu_upload_whole_blocks, false, "GPU",
 +                    "When a draw needs guest memory copied to the GPU, also copy the rest of each 256 KB block "
 +                    "it touches that the GPU used before and the CPU has written since, so the draws that "
 +                    "follow need no copy (and on tiling GPUs no render pass break) of their own");
-+
++#endif
+ 
  namespace rex::graphics {
  
- SharedMemory::SharedMemory(memory::Memory& memory) : memory_(memory) {
-@@ -34,6 +40,7 @@ void SharedMemory::InitializeCommon() {
+@@ -34,6 +50,7 @@ void SharedMemory::InitializeCommon() {
    num_system_page_flags_ = ((kBufferSize >> page_size_log2_) + 63) / 64;
    system_page_flags_valid_.assign(num_system_page_flags_, 0);
    system_page_flags_valid_and_gpu_written_.assign(num_system_page_flags_, 0);
@@ -55,7 +65,7 @@ index 7a05090..9911fc1 100644
  
    memory_invalidation_callback_handle_ =
        memory_.RegisterPhysicalMemoryInvalidationCallback(MemoryInvalidationCallbackThunk, this);
-@@ -331,6 +338,9 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length, bool written_
+@@ -331,6 +348,9 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length, bool written_
          valid_bits &= (uint64_t(1) << ((valid_page_last & 63) + 1)) - 1;
        }
        system_page_flags_valid_[i] |= valid_bits;
@@ -65,7 +75,7 @@ index 7a05090..9911fc1 100644
        uint64_t& gpu_written = system_page_flags_valid_and_gpu_written_[i];
        gpu_written = written_by_gpu ? (gpu_written | valid_bits) : (gpu_written & ~valid_bits);
      }
-@@ -493,9 +503,50 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+@@ -493,9 +513,50 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
      return true;
    }
  

@@ -212,3 +212,18 @@ pushed per frame by source: upload 90, rt 48, texture 33, other 6. **About 30 of
 memory was uploaded in the middle of the frame** (each upload is a copy, which cannot run inside a render pass). The
 render-target ones are real dependencies (the next pass samples what was drawn). First fix to measure: patch 0054
 (`gpu_upload_whole_blocks`), which batches the uploads of a block into one copy.
+
+Round 5: patch 0054 `gpu_upload_whole_blocks`, A/B/B/A from cool starts:
+
+| Run | Mcycles/frame | Passes/frame | Buffer copies/frame |
+|---|---|---|---|
+| A (off) | 14.3, 14.3 | 55, 54 | 36 |
+| B (on) | 13.3, 13.4 | 26, 26 | 2.7 |
+
+7 % fewer GPU megacycles per frame, both B runs below both A runs; the picture matches the earlier capture of the
+same view (the black lines on the floor are there with and without it). Now on by default on Android.
+
+Round 6 (0054 on): 13.2 Mcycles/frame at native resolution, 29.4 at `draw_resolution_scale` 2x2 (four times the
+pixels). Cost ≈ 7.8 + 5.4 × (pixels / native), so about 40 % of today's frame grows with the pixels and 60 % does not
+(per-draw and per-pass work, vertex shaders). Empty fragment shaders saved nothing, so the pixel part is render
+target bandwidth (tile loads and stores, blending), not shading.
