@@ -1,0 +1,208 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index f2774c1..2de5b2c 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -358,6 +358,14 @@ struct NativeFrontendStats {
+   uint64_t mismatch_scis = 0;
+   uint64_t mismatch_fetch = 0;
+   uint64_t mismatch_alu = 0;
++  uint64_t mismatch_g2280 = 0;
++  uint64_t mismatch_g2300 = 0;
++  uint64_t mismatch_g2380 = 0;
++  uint64_t mismatch_g2388 = 0;
++  uint64_t mismatch_bool = 0;
++  uint64_t mismatch_wofs = 0;
++  uint64_t shader_loads = 0;
++  uint64_t shader_load_skipped = 0;
+   uint64_t bad_snapshot = 0;
+   uint32_t swaps = 0;
+ };
+@@ -370,12 +378,54 @@ void ReportNativeFrontendOnSwap() {
+   }
+   REXGPU_INFO(
+       "NATIVEFRONT draws {} verified {} mismatches surf {} prog {} rs {} vp {} scis {} fetch {} "
+-      "alu {} bad_snapshot {}",
++      "alu {} g2280 {} g2300 {} g2380 {} g2388 {} bool {} wofs {} shader_loads {} "
++      "shader_load_skipped {} bad_snapshot {}",
+       s.draws, s.verified, s.mismatch_surf, s.mismatch_prog, s.mismatch_rs, s.mismatch_vp,
+-      s.mismatch_scis, s.mismatch_fetch, s.mismatch_alu, s.bad_snapshot);
++      s.mismatch_scis, s.mismatch_fetch, s.mismatch_alu, s.mismatch_g2280, s.mismatch_g2300,
++      s.mismatch_g2380, s.mismatch_g2388, s.mismatch_bool, s.mismatch_wofs, s.shader_loads,
++      s.shader_load_skipped, s.bad_snapshot);
+   s = NativeFrontendStats();
+ }
+ 
++// The last shader of each type (0 vertex, 1 pixel) LoadShaderFromMemory bound for a native draw, so
++// a draw with the same microcode as the one before doesn't load it again. Reset whenever a packet
++// binds a shader, since that replaces the active shader behind this cache's back.
++struct NativeShaderLoad {
++  bool valid = false;
++  uint32_t guest_address = 0;
++  uint32_t size_dwords = 0;
++};
++NativeShaderLoad g_native_shader_loads[2];
++
++void ResetNativeShaderLoads() {
++  g_native_shader_loads[0] = NativeShaderLoad();
++  g_native_shader_loads[1] = NativeShaderLoad();
++}
++
++// Binds the shader of the given type whose microcode is at a physical guest address, like the PM4
++// IM_LOAD packet. load is the command processor's LoadShader with the host address translated
++// (a protected member, so it comes in as a callable); the active shader pointers are updated.
++template <typename LoadFn>
++bool LoadShaderFromMemory(LoadFn&& load, Shader*& active_vertex_shader,
++                          Shader*& active_pixel_shader, xenos::ShaderType shader_type,
++                          uint32_t guest_address, uint32_t size_dwords) {
++  auto shader = load(shader_type, guest_address, size_dwords);
++  switch (shader_type) {
++    case xenos::ShaderType::kVertex:
++      active_vertex_shader = shader;
++      g_vertex_shader_embedded = false;
++      break;
++    case xenos::ShaderType::kPixel:
++      active_pixel_shader = shader;
++      g_pixel_shader_embedded = false;
++      break;
++    default:
++      assert_unhandled_case(shader_type);
++      return false;
++  }
++  return true;
++}
++
+ }  // namespace
+ 
+ namespace {
+@@ -1266,6 +1316,12 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+         alu_differs = !snapshot->alu[i] || differs(0x4000 + 16 * i, snapshot->alu[i], 16);
+       }
+       stats.mismatch_alu += alu_differs;
++      stats.mismatch_g2280 += differs(0x2280, snapshot->g2280, 21);
++      stats.mismatch_g2300 += differs(0x2300, snapshot->g2300, 38);
++      stats.mismatch_g2380 += differs(0x2380, snapshot->g2380, 8);
++      stats.mismatch_g2388 += differs(0x2388, snapshot->g2388, 24);
++      stats.mismatch_bool += differs(0x4900, snapshot->bool_consts, 40);
++      stats.mismatch_wofs += differs(0x2080, &snapshot->window_offset, 1);
+       ++stats.verified;
+     }
+ 
+@@ -1289,6 +1345,37 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+         write(0x4000 + 16 * i, snapshot->alu[i], 16);
+       }
+     }
++    write(0x2080, &snapshot->window_offset, 1);
++    write(0x2280, snapshot->g2280, 21);
++    write(0x2300, snapshot->g2300, 38);
++    write(0x2380, snapshot->g2380, 8);
++    write(0x2388, snapshot->g2388, 24);
++    write(0x4900, snapshot->bool_consts, 40);
++
++    // With the library's shader packets turned into NOPs, the snapshot names the shaders; otherwise
++    // those packets already loaded them.
++    if (snapshot->flags & native_frontend::kSnapshotFlagShaders) {
++      auto load = [this](xenos::ShaderType type, uint32_t guest_address, uint32_t dwords) {
++        return LoadShader(type, guest_address,
++                          memory_->TranslatePhysical<uint32_t*>(guest_address), dwords);
++      };
++      auto load_cached = [&](xenos::ShaderType type, uint32_t guest_address, uint32_t dwords) {
++        NativeShaderLoad& last = g_native_shader_loads[uint32_t(type)];
++        if (last.valid && last.guest_address == guest_address && last.size_dwords == dwords) {
++          ++stats.shader_load_skipped;
++          return;
++        }
++        ++stats.shader_loads;
++        last.valid = LoadShaderFromMemory(load, active_vertex_shader_, active_pixel_shader_, type,
++                                          guest_address, dwords);
++        last.guest_address = guest_address;
++        last.size_dwords = dwords;
++      };
++      load_cached(xenos::ShaderType::kVertex, snapshot->vs_address, snapshot->vs_dwords);
++      if (snapshot->ps_dwords) {
++        load_cached(xenos::ShaderType::kPixel, snapshot->ps_address, snapshot->ps_dwords);
++      }
++    }
+ 
+     ++stats.draws;
+     g_decoded_draw_words = snapshot->draw_words;
+@@ -1928,22 +2015,13 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD(memory::RingBuffer* reader, ui
+   uint32_t size_dwords = start_size & 0xFFFF;  // dwords
+   assert_true(start == 0);
+ 
+-  auto shader =
+-      LoadShader(shader_type, addr, memory_->TranslatePhysical<uint32_t*>(addr), size_dwords);
+-  switch (shader_type) {
+-    case xenos::ShaderType::kVertex:
+-      active_vertex_shader_ = shader;
+-      g_vertex_shader_embedded = false;
+-      break;
+-    case xenos::ShaderType::kPixel:
+-      active_pixel_shader_ = shader;
+-      g_pixel_shader_embedded = false;
+-      break;
+-    default:
+-      assert_unhandled_case(shader_type);
+-      return false;
+-  }
+-  return true;
++  ResetNativeShaderLoads();
++  return LoadShaderFromMemory(
++      [this](xenos::ShaderType type, uint32_t guest_address, uint32_t dwords) {
++        return LoadShader(type, guest_address,
++                          memory_->TranslatePhysical<uint32_t*>(guest_address), dwords);
++      },
++      active_vertex_shader_, active_pixel_shader_, shader_type, addr, size_dwords);
+ }
+ 
+ bool CommandProcessor::ExecutePacketType3_IM_LOAD_IMMEDIATE(memory::RingBuffer* reader,
+@@ -1960,6 +2038,7 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD_IMMEDIATE(memory::RingBuffer*
+   assert_true(start == 0);
+   assert_true(reader->read_count() >= size_dwords * 4);
+   assert_true(count - 2 >= size_dwords);
++  ResetNativeShaderLoads();
+   auto shader = LoadShader(shader_type, uint32_t(reader->read_ptr()),
+                            reinterpret_cast<uint32_t*>(reader->read_ptr()), size_dwords);
+   switch (shader_type) {
+diff --git a/src/graphics/native_frontend_snapshot.h b/src/graphics/native_frontend_snapshot.h
+index 3de5e14..94bed0d 100644
+--- a/src/graphics/native_frontend_snapshot.h
++++ b/src/graphics/native_frontend_snapshot.h
+@@ -16,7 +16,7 @@ namespace rex::graphics::native_frontend {
+ // The game rewrites a DRAW_INDX packet in place into a type-3 NOP of the same length (4 payload
+ // words): kPacketMagic, the low and high halves of a host pointer to a NativeDrawSnapshot, and 0.
+ constexpr uint32_t kPacketMagic = 0x5654414E;    // 'NATV' as the guest dword value
+-constexpr uint32_t kSnapshotMagic = 0x3153444E;  // 'NDS1'
++constexpr uint32_t kSnapshotMagic = 0x3253444E;  // 'NDS2'
+ 
+ // Host memory, host byte order. The game defines the identical struct; keep the layout in sync.
+ struct NativeDrawSnapshot {
+@@ -31,11 +31,28 @@ struct NativeDrawSnapshot {
+   uint32_t scissor[2];       // 0x2081-0x2082
+   uint32_t fetch[192];       // 0x4800-0x48BF
+   const uint32_t* alu[128];  // each 16 dwords: registers 0x4000 + 16*i .. +15
++  uint32_t window_offset;    // register 0x2080
++  uint32_t g2280[21];        // 0x2280-0x2294
++  uint32_t g2300[38];        // 0x2300-0x2325
++  uint32_t g2380[8];         // 0x2380-0x2387
++  uint32_t g2388[24];        // 0x2388-0x239F
++  uint32_t bool_consts[40];  // 0x4900-0x4927: 8 BOOL and 32 LOOP constants
++  uint32_t vs_address;       // physical guest address of the vertex shader microcode (B)
++  uint32_t vs_dwords;
++  uint32_t ps_address;  // pixel shader microcode (A); ps_dwords == 0: no pixel shader for this draw
++  uint32_t ps_dwords;
++  uint32_t flags;  // bit 0: the game turned the library's state/shader packets of this draw into NOPs
++  uint32_t reserved;
+ };
+ 
++// flags
++constexpr uint32_t kSnapshotFlagShaders = 1u << 0;
++
+ static_assert(sizeof(void*) != 8 || offsetof(NativeDrawSnapshot, alu) == 976,
+               "NativeDrawSnapshot layout must match the game's");
+-static_assert(sizeof(void*) != 8 || sizeof(NativeDrawSnapshot) == 2000,
++static_assert(sizeof(void*) != 8 || offsetof(NativeDrawSnapshot, window_offset) == 2000,
++              "NativeDrawSnapshot layout must match the game's");
++static_assert(sizeof(void*) != 8 || sizeof(NativeDrawSnapshot) == 2552,
+               "NativeDrawSnapshot layout must match the game's");
+ 
+ }  // namespace rex::graphics::native_frontend

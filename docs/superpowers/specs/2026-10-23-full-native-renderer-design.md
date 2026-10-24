@@ -278,3 +278,31 @@ a frame) rewritten by the game and drawn by the command processor from their sna
 (surf, prog, rs, vp, scissor, fetch, ALU constants), 0 bad snapshots, 0 draws off the inline path, 13 MB of arenas.
 The picture is the same as the emulated path. Note from the implementation: `dev+48` holds the address of the last
 dword written (`stwu`), so the DRAW_INDX header sits at write pointer − 16.
+
+### S2b+c, game side (2026-10-24, not run in game yet)
+
+**Snapshot `'NDS2'`** (2552 bytes on 64-bit) appends after `alu[128]`: `window_offset` (0x2080, always 0),
+`g2280[21]` (shadow 10596), `g2300[38]` (10680), `g2380[8]` (10832), `g2388[24]` (0x2388-0x239F, 10272),
+`bool_consts[40]` (0x4900-0x4927: BOOL and LOOP, 10112), `vs_address/vs_dwords` (B, `MicrocodeOfB`),
+`ps_address/ps_dwords` (A, `MicrocodeOfA`; 0 when the object is 0), `flags`, `reserved`. Two counts differ from the
+first plan, both read in the generated code: `sub_8298E2E0` writes 4 registers per mask bit (6 bits → 24 registers,
+not 6), and the BOOL write's mask `lis r4,-256` is 64-bit 0xFFFFFFFFFF000000, so it writes 40 registers (BOOL and the
+32 LOOP constants), not 8. The SDK's copy of the struct must follow.
+
+**Suppression** (`gow2_native_frontend_suppress`, default true, read once). The hook keeps `dev+48` from before the
+call; after it, `PlanSuppression` walks the packets from there to the DRAW_INDX header and NOPs (header only,
+`0xC0001000 | (count−1) << 16`) the type-0 writes that touch only snapshot registers, LOAD_ALU_CONSTANT, IM_LOAD,
+IM_LOAD_IMMEDIATE and SET_CONSTANT into covered registers. Everything else stays (the scissor packet's own registers
+are covered; WAIT_REG_MEM, INVALIDATE_STATE, `sub_8298E2E0`'s writes to 0x2007 and 0x0A2F-0x0A31 stay). A packet
+that runs past the header, a region over 16384 dwords, or a write pointer that went backwards aborts: nothing is
+NOPed and `flags` bit 0 stays clear. Bit 0 set means the command processor must load the shaders and all covered
+registers from the snapshot. Counters in `NATIVEFRONT game ... suppressed_packets N kept_packets N aborted N`.
+
+### S2b+c result (2026-10-24, RX 7800 XT, chapter 2 hospital)
+
+With `gow2_native_frontend_suppress = false` and verification, every group of the NDS2 snapshot (including 0x2280,
+0x2300, 0x2380-0x239F, BOOL/LOOP 0x4900-0x4927 and the window offset) matches the register file on all 270,028 draws
+per 300 frames. With suppression on (default), per frame about 8,700 library packets (register groups, ALU constant
+loads, shader loads) are turned into NOPs and DrawIndexed state and shaders reach the GPU only from the device;
+about 1,070 packets a frame are outside the snapshot and kept, and about 7 draws a frame keep their packets because
+the region could not be walked (`aborted`). The picture is the same as the emulated path.

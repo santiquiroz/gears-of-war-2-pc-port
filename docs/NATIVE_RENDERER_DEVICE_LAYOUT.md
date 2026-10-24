@@ -58,8 +58,14 @@ The device holds **shadow copies of register values and 64-bit dirty masks**. Ea
 | 24 | 34-54 | `E220`, 0x2280 | 10596 | names unknown |
 | 32 | 0-37 | `E220`, 0x2300 | 10680 | includes RB_COPY_* (section 6) |
 | 32 | 38-45 | `E220`, 0x2380 | 10832 | names unknown |
-| 32 | 49-54 | `E2E0`, 0x2388 | 10272 | names unknown |
-| 32 | 56 | `E220`, 0x4900 | 10112 | 8 dwords of BOOL constants |
+| 32 | 49-54 | `E2E0`, 0x2388 | 10272 | 0x2388-0x239F: **4 registers (16 bytes) per bit**, 24 dwords (`56.cpp:20414-20641`, see below) |
+| 32 | 56 | `E220`, 0x4900 | 10112 | 0x4900-0x4927: 8 BOOL + 32 LOOP constants. The mask is `lis r4,-256` = 0xFFFFFFFFFF000000 (40 bits), 183.cpp:22503 |
+
+- **`sub_8298E2E0(dev, mask)`** (`56.cpp:20414`) has its base (r27 = 9096 = 0x2388) and shadow (r31 = dev+10272) built
+  in. Each set bit copies 16 bytes with two `ld`/`std` (20616-20634) and advances the register by 4 (`rlwinm r10,r10,2`)
+  and the shadow by 16 (`rlwinm r11,r10,4`). Before the writes it emits type-0 0x2007 (value 10396), 0x0A31 = 0x10000,
+  0x0A2F-0x0A30 = {0, 0x1000} and a WAIT_REG_MEM `0xC0043C00` {3, 0xA31, 0, 0x80000000, 8}; it pads each register
+  packet to 8 bytes with a type-2 filler (20597-20611). High.
 
 - **Not in any mask: scissor.** `sub_8297CA20` (`173.cpp:20082`) writes a type-0 packet `0x00022080` (3 registers
   from 0x2080: PA_SC_WINDOW_OFFSET = 0, PA_SC_WINDOW_SCISSOR_TL, _BR) straight into the ring, from shadow dwords

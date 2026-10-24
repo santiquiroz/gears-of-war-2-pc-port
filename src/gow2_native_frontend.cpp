@@ -5,6 +5,8 @@
 // packet, the packet is rewritten in place into a NOP of the same length carrying 'NATV' and a host pointer to a
 // NativeDrawSnapshot of the device state, so the command processor sees the draw in ring order. The ALU constants
 // come from a mirror fed by the two functions that emit them, kept as 128 copy-on-write blocks of 16 dwords.
+// S2b+c: with gow2_native_frontend_suppress, the state, constant and shader packets the same call wrote before the
+// DRAW_INDX become NOPs too (PlanSuppression), and the snapshot carries the shaders and the remaining groups.
 
 #include "gow2_native_frontend_snapshot.h"
 
@@ -30,6 +32,9 @@
 REXCVAR_DEFINE_STRING(gow2_native_frontend, "off", "Display",
                       "Native frontend: DrawIndexed draws reach the GPU from the device state instead of the "
                       "library's packets. auto (off for now), on or off. Read once at start.");
+REXCVAR_DEFINE_BOOL(gow2_native_frontend_suppress, true, "Display",
+                    "Native frontend: turn the library's state, constant and shader packets of each rewritten "
+                    "draw into NOPs, so they reach the GPU only from the snapshot. Read once at start.");
 
 // tools/native/native_probe.cpp hooks the same functions; CMake defines GOW2_NATIVE_PROBE_BUILD when it adds it.
 #if !defined(GOW2_NATIVE_PROBE_BUILD)
@@ -59,6 +64,13 @@ constexpr uint32_t kDevScissorBr = 10440;
 constexpr uint32_t kDevVp = 10444;
 constexpr uint32_t kDevProg = 10528;
 constexpr uint32_t kDevRs = 10548;
+constexpr uint32_t kDevG2280 = 10596;
+constexpr uint32_t kDevG2300 = 10680;
+constexpr uint32_t kDevG2380 = 10832;
+constexpr uint32_t kDevG2388 = 10272;
+constexpr uint32_t kDevBoolConsts = 10112;
+constexpr uint32_t kDevShaderA = 12692;  // pixel shader object
+constexpr uint32_t kDevShaderB = 12696;  // vertex shader object
 
 bool Enabled() {
   // Read once: the mirror only stays right if it sees every constant write from the start.
@@ -69,6 +81,40 @@ bool Enabled() {
     return on;
   }();
   return enabled;
+}
+
+bool Suppress() {
+  static const bool suppress = [] {
+    const bool on = REXCVAR_GET(gow2_native_frontend_suppress);
+    REXLOG_INFO("NATIVEFRONT game gow2_native_frontend_suppress -> {}", on ? "on" : "off");
+    return on;
+  }();
+  return suppress;
+}
+
+// The shader formulas below are copies of the ones verified in tools/native/native_probe.cpp.
+
+// The physical-address fixup the library applies before putting an address in a packet (120.cpp:20504-20510):
+// clrlwi 3, plus 0x1000 when the top 12 bits are >= 0xE00.
+uint32_t PhysicalAddress(uint32_t address) {
+  return (address & 0x1FFFFFFFu) + ((((address >> 20) + 512u) & 0x1000u));
+}
+
+// A (dev+12692), IM_LOAD in sub_8298F600 (120.cpp:20489-20530): [Phys(*(S_A+40) + *(A+24)), *(S_A+44) >> 2] with
+// S_A = A + *(A+64).
+void MicrocodeOfA(const uint8_t* base, uint32_t a, uint32_t& address, uint32_t& dwords) {
+  const uint32_t s = a + LoadU32(base, a + 64);
+  address = PhysicalAddress(LoadU32(base, s + 40) + LoadU32(base, a + 24)) & ~3u;
+  dwords = LoadU32(base, s + 44) >> 2;
+}
+
+// B (dev+12696), IM_LOAD_IMMEDIATE through sub_8298F210 (18.cpp:19104-19160, 120.cpp:20327-20336, 20785-20795):
+// [Phys(*(S+872) + *(B+32)), *(S+876) >> 2] with S = B + *(B + 896 + 8·variant), variant = (*(B+872) & 0x20) != 0.
+void MicrocodeOfB(const uint8_t* base, uint32_t b, uint32_t& address, uint32_t& dwords) {
+  const uint32_t variant = (LoadU32(base, b + 872) & 0x20u) != 0 ? 1u : 0u;
+  const uint32_t s = b + LoadU32(base, b + 896 + 8 * variant);
+  address = PhysicalAddress(LoadU32(base, s + 872) + LoadU32(base, b + 32)) & ~3u;
+  dwords = LoadU32(base, s + 876) >> 2;
 }
 
 struct Arena {
@@ -112,6 +158,9 @@ bool g_mirror_initialized = false;
 std::atomic<uint64_t> g_rewritten{0};
 std::atomic<uint64_t> g_not_inline{0};
 std::atomic<uint64_t> g_arena_full{0};
+std::atomic<uint64_t> g_suppressed_packets{0};
+std::atomic<uint64_t> g_kept_packets{0};
+std::atomic<uint64_t> g_aborted{0};
 uint32_t g_frames = 0;
 
 void InitializeMirrorLocked() {
@@ -198,8 +247,8 @@ void ReadDwords(const uint8_t* base, uint32_t address, uint32_t* out, uint32_t c
 
 // After sub_82980B20 returned. Its inline path writes the header and the 4 payload dwords with stwu (pre-increment)
 // and stores the pointer to the last one at dev+48 (183.cpp:22656-22681, 22817-22818), so the header sits 16 bytes
-// before the write pointer.
-void OnDrawIndexed(uint8_t* base, uint32_t device) {
+// before the write pointer. before is dev+48 at the call, so this call's packets start at before + 4.
+void OnDrawIndexed(uint8_t* base, uint32_t device, uint32_t before) {
   const uint32_t write = LoadU32(base, device + kDevWritePointer);
   if (write < 4 * kMaxScanDwords) {
     g_not_inline.fetch_add(1, std::memory_order_relaxed);
@@ -214,6 +263,22 @@ void OnDrawIndexed(uint8_t* base, uint32_t device) {
     return;
   }
   const uint32_t header = first + 4 * uint32_t(*index);
+
+  // S2b+c: plan the NOPs before touching the ring; nothing is written unless the snapshot exists.
+  thread_local std::vector<uint32_t> region;
+  thread_local SuppressPlan plan;
+  bool suppress = false;
+  if (Suppress()) {
+    const uint32_t start = before + 4;
+    // write < before: the ring wrapped (sub_8298C1A0) during the call.
+    if (write >= before && header >= start && (header - start) / 4 <= kMaxSuppressDwords) {
+      region.resize((header - start) / 4);
+      ReadDwords(base, start, region.data(), uint32_t(region.size()));
+      PlanSuppression(region, plan);
+      suppress = plan.ok;
+    }
+    if (!suppress) g_aborted.fetch_add(1, std::memory_order_relaxed);
+  }
 
   NativeDrawSnapshot* snapshot = nullptr;
   {
@@ -236,6 +301,30 @@ void OnDrawIndexed(uint8_t* base, uint32_t device) {
   snapshot->scissor[0] = LoadU32(base, device + kDevScissorTl);
   snapshot->scissor[1] = LoadU32(base, device + kDevScissorBr);
   ReadDwords(base, device + kDevFetch, snapshot->fetch, 192);
+  snapshot->window_offset = 0;
+  ReadDwords(base, device + kDevG2280, snapshot->g2280, 21);
+  ReadDwords(base, device + kDevG2300, snapshot->g2300, 38);
+  ReadDwords(base, device + kDevG2380, snapshot->g2380, 8);
+  ReadDwords(base, device + kDevG2388, snapshot->g2388, 24);
+  ReadDwords(base, device + kDevBoolConsts, snapshot->bool_consts, 40);
+  snapshot->vs_address = snapshot->vs_dwords = 0;
+  snapshot->ps_address = snapshot->ps_dwords = 0;
+  if (const uint32_t b = LoadU32(base, device + kDevShaderB); b != 0) {
+    MicrocodeOfB(base, b, snapshot->vs_address, snapshot->vs_dwords);
+  }
+  if (const uint32_t a = LoadU32(base, device + kDevShaderA); a != 0) {
+    MicrocodeOfA(base, a, snapshot->ps_address, snapshot->ps_dwords);
+  }
+  snapshot->flags = 0;
+  snapshot->reserved = 0;
+
+  if (suppress) {
+    const uint32_t start = before + 4;
+    for (uint32_t i : plan.nops) StoreU32(base, start + 4 * i, NopHeaderFor(region[i]));
+    snapshot->flags |= kSnapshotFlagSuppressed;
+    g_suppressed_packets.fetch_add(plan.nops.size(), std::memory_order_relaxed);
+    g_kept_packets.fetch_add(plan.kept, std::memory_order_relaxed);
+  }
 
   const uint64_t pointer = uint64_t(reinterpret_cast<uintptr_t>(snapshot));
   StoreU32(base, header, kNopHeader);
@@ -262,9 +351,13 @@ void OnEngineTick(const PPCContext&, uint8_t*) {
     std::lock_guard<std::mutex> hold(g_lock);
     for (const Arena& arena : g_arenas) arena_bytes += arena.chunks.size() * kChunkBytes;
   }
-  REXLOG_INFO("NATIVEFRONT game rewritten {} not_inline {} arena_kb {}",
+  REXLOG_INFO("NATIVEFRONT game rewritten {} not_inline {} arena_kb {} suppressed_packets {} kept_packets {} "
+              "aborted {}",
               g_rewritten.exchange(0, std::memory_order_relaxed),
-              g_not_inline.exchange(0, std::memory_order_relaxed), arena_bytes / 1024);
+              g_not_inline.exchange(0, std::memory_order_relaxed), arena_bytes / 1024,
+              g_suppressed_packets.exchange(0, std::memory_order_relaxed),
+              g_kept_packets.exchange(0, std::memory_order_relaxed),
+              g_aborted.exchange(0, std::memory_order_relaxed));
   const uint64_t full = g_arena_full.exchange(0, std::memory_order_relaxed);
   if (full != 0) REXLOG_INFO("NATIVEFRONT game arena_full {}", full);
 }
@@ -311,8 +404,9 @@ REX_HOOK_RAW(sub_82980B20) {
     return;
   }
   const uint32_t device = ctx.r3.u32;
+  const uint32_t before = rex::glue::guest::LoadU32(base, device + rex::glue::native_frontend::kDevWritePointer);
   __imp__sub_82980B20(ctx, base);
-  rex::glue::native_frontend::OnDrawIndexed(base, device);
+  rex::glue::native_frontend::OnDrawIndexed(base, device, before);
 }
 
 #endif  // !defined(GOW2_NATIVE_PROBE_BUILD)
