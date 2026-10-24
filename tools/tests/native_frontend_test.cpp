@@ -152,6 +152,56 @@ int main() {
   PlanSuppression(second, plan);
   Expect(!MarkerSpanStart(second, plan, 2), "aborted suppression with a short draw: short_draw");
 
+  // S3: every draw of a call.
+  using rex::glue::native_frontend::FindAllDraws;
+  using rex::glue::native_frontend::PlanSegment;
+  const std::vector<uint32_t> two_draws = {0x00002200, 7, kDrawIndxHeader, 1, 2, 3, 4, 0x00002201, 5, 0xC0003601, 0x88};
+  const auto all_two = FindAllDraws(two_draws);
+  Expect(all_two.walk_ok && !all_two.other_draws && all_two.draws.size() == 2 && all_two.draws[0].index == 2 &&
+             all_two.draws[0].opcode == 0x22 && all_two.draws[0].payload == 4 && all_two.draws[1].index == 9 &&
+             all_two.draws[1].opcode == 0x36 && all_two.draws[1].payload == 1,
+         "FindAllDraws lists both draws in order");
+  const std::vector<uint32_t> with_bin = {0xC0003400, 1, kDrawIndxHeader, 1, 2, 3, 4};
+  const auto all_bin = FindAllDraws(with_bin);
+  Expect(all_bin.walk_ok && all_bin.other_draws && all_bin.draws.size() == 1, "FindAllDraws flags a bin draw");
+  const auto all_truncated = FindAllDraws(truncated_draw);
+  Expect(!all_truncated.walk_ok && all_truncated.draws.empty(), "FindAllDraws: truncated packet, walk fails");
+
+  // Two DRAW_INDX_2 (2 dwords each), each after two covered type-0 packets: both spans merge the NOPs before them.
+  const std::vector<uint32_t> rects = {0x00002200, 5, 0x00002208, 6, 0xC0003601, 0x88,
+                                       0x00002201, 7, 0x00002209, 8, 0xC0003601, 0x89};
+  const auto all_rects = FindAllDraws(rects);
+  Expect(all_rects.walk_ok && all_rects.draws.size() == 2 && all_rects.draws[1].index == 10, "two rect draws found");
+  const auto seg0 = PlanSegment(rects, all_rects, 0, false, plan);
+  Expect(seg0.size() == 4 && plan.ok && plan.nops == std::vector<uint32_t>({0, 2}), "segment 0 NOPs both packets");
+  const auto span0 = MarkerSpanStart(seg0, plan, 2);
+  Expect(span0 && *span0 == 0, "segment 0 draw gets a marker over its NOPs");
+  const auto seg1 = PlanSegment(rects, all_rects, 1, false, plan);
+  Expect(seg1.data() == rects.data() + 6 && seg1.size() == 4 && plan.ok && plan.nops == std::vector<uint32_t>({0, 2}),
+         "segment 1 starts after draw 0, indices relative to it");
+  Expect(plan.writes.size() == 2 && plan.writes[0].reg == 0x2201 && plan.writes[0].value == 7 &&
+             plan.writes[1].reg == 0x2209 && plan.writes[1].value == 8,
+         "segment 1 writes only its own registers");
+  const auto span1 = MarkerSpanStart(seg1, plan, 2);
+  Expect(span1 && *span1 == 0, "segment 1 draw gets a marker over its NOPs");
+
+  // A short draw whose segment has no NOPable packet before it is kept.
+  const std::vector<uint32_t> kept_rect = {0xC0003601, 0x88, 0x00025000, 0, 0, 0, 0xC0003601, 0x89};
+  const auto all_kept = FindAllDraws(kept_rect);
+  Expect(all_kept.walk_ok && all_kept.draws.size() == 2, "kept-rect draws found");
+  const auto kept_seg0 = PlanSegment(kept_rect, all_kept, 0, false, plan);
+  Expect(kept_seg0.empty() && plan.ok && !MarkerSpanStart(kept_seg0, plan, 2), "first short draw, empty segment: kept");
+  const auto kept_seg1 = PlanSegment(kept_rect, all_kept, 1, false, plan);
+  Expect(plan.ok && plan.nops.empty() && plan.kept == 1 && !MarkerSpanStart(kept_seg1, plan, 2),
+         "short draw after a kept packet: kept");
+
+  // IM_LOAD / IM_LOAD_IMMEDIATE: kept unless the snapshot carries the shaders.
+  const std::vector<uint32_t> shader_loads = {0xC0012700, 0x2001, 16, 0xC0032B00, 0, 2, 0xAA, 0xBB};
+  PlanSuppression(shader_loads, plan, false);
+  Expect(plan.ok && plan.nops.empty() && plan.kept == 2, "shader loads kept without snapshot shaders");
+  PlanSuppression(shader_loads, plan, true);
+  Expect(plan.ok && plan.nops == std::vector<uint32_t>({0, 3}) && plan.kept == 0, "shader loads NOPed with them");
+
   std::printf("native_frontend_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }

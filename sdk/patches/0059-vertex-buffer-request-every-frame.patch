@@ -1,0 +1,67 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 2291e61..27eb041 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -118,6 +118,11 @@ REXCVAR_DEFINE_BOOL(readback_memexport_fast, true, "GPU",
+                     "automatic fallback to full synchronous readback")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_BOOL(gpu_vertex_buffer_state_skip, false, "GPU",
++                    "Old behaviour: skip requesting a vertex buffer whose address and size match the last "
++                    "draw on that slot, even in a new frame (stale CPU-written data)")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ REXCVAR_DEFINE_INT32(query_occlusion_fake_sample_count, 1000, "GPU",
+                      "Fake sample count for occlusion queries")
+     .range(1, 100000)
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 3f6c5f4..199dc75 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -56,6 +56,8 @@ REXCVAR_DEFINE_BOOL(d3d12_submit_on_primary_buffer_end, true, "GPU/D3D12",
+                     "Submit command list when PM4 primary buffer ends")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DECLARE(bool, gpu_vertex_buffer_state_skip);
++
+ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+@@ -2629,7 +2631,11 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+           return false;
+       }
+       VertexBufferState& state = vertex_buffer_states_[vfetch_index];
+-      if (state.address == vfetch_constant.address && state.size == vfetch_constant.size) {
++      // The in-sync bit is cleared at every swap so each buffer is requested again in a new frame
++      // (the CPU may have rewritten it in place). Skipping the request because the address and size
++      // are unchanged defeated that: the first draw of a frame then used the previous frame's data.
++      // Reported by Flippage (issue #20); Xenia requests every vertex buffer of every draw.
++      if (REXCVAR_GET(gpu_vertex_buffer_state_skip) && state.address == vfetch_constant.address && state.size == vfetch_constant.size) {
+         vertex_buffers_in_sync_[vfetch_index >> 6] |= vfetch_bit;
+         continue;
+       }
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 3cd872c..4575c89 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -94,6 +94,7 @@ REXCVAR_DEFINE_BOOL(vulkan_occlusion_query_precise, false, "GPU/Vulkan",
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
+ REXCVAR_DECLARE(int32_t, vulkan_android_depth_experiment);
++REXCVAR_DECLARE(bool, gpu_vertex_buffer_state_skip);
+ 
+ REXCVAR_DEFINE_INT32(vulkan_android_trace_frame_after_seconds, 0, "GPU/Vulkan",
+                      "Log every draw of one frame (FRAMETRACE lines: shaders, vertex formats, the "
+@@ -4603,7 +4604,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+           return false;
+       }
+       VertexBufferState& state = vertex_buffer_states_[vfetch_index];
+-      if (state.address == vfetch_constant.address && state.size == vfetch_constant.size) {
++      // The in-sync bit is cleared at every swap so each buffer is requested again in a new frame
++      // (the CPU may have rewritten it in place). Skipping the request because the address and size
++      // are unchanged defeated that: the first draw of a frame then used the previous frame's data.
++      // Reported by Flippage (issue #20); Xenia requests every vertex buffer of every draw.
++      if (REXCVAR_GET(gpu_vertex_buffer_state_skip) && state.address == vfetch_constant.address && state.size == vfetch_constant.size) {
+         vertex_buffers_in_sync_[vfetch_index >> 6] |= vfetch_bit;
+         continue;
+       }

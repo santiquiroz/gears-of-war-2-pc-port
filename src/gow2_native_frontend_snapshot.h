@@ -116,6 +116,60 @@ inline std::optional<LastDraw> FindLastDraw(std::span<const uint32_t> emitted) {
   return last;
 }
 
+struct DrawPacket {
+  size_t index;      // header index in emitted
+  uint32_t opcode;   // kOpcodeDrawIndx or kOpcodeDrawIndx2
+  uint32_t payload;  // payload dwords; over kMaxDrawPayload means unsupported
+};
+
+struct AllDraws {
+  bool walk_ok = false;          // every packet fits in emitted
+  bool other_draws = false;      // a DRAW_INDX_BIN / DRAW_INDX_2_BIN is present: the caller leaves everything alone
+  std::vector<DrawPacket> draws;  // the DRAW_INDX / DRAW_INDX_2 packets, in ring order; empty when !walk_ok
+};
+
+// Same walk as FindLastDraw, listing every DRAW_INDX and DRAW_INDX_2 packet one hooked call wrote (Clear writes
+// several through sub_829813F0).
+inline void FindAllDraws(std::span<const uint32_t> emitted, AllDraws& out) {
+  out.walk_ok = false;
+  out.other_draws = false;
+  out.draws.clear();
+  size_t i = 0;
+  while (i < emitted.size()) {
+    const uint32_t h = emitted[i];
+    size_t length = 2 + ((h >> 16) & 0x3FFFu);  // types 0 and 3: header + count + 1 payload dwords
+    if ((h >> 30) == 1) length = 3;
+    if ((h >> 30) == 2) length = 1;
+    if (length > emitted.size() - i) {
+      out.draws.clear();
+      return;
+    }
+    if ((h >> 30) == 3) {
+      const uint32_t opcode = (h >> 8) & 0xFFu;
+      if (opcode == kOpcodeDrawIndx || opcode == kOpcodeDrawIndx2) {
+        out.draws.push_back(DrawPacket{i, opcode, uint32_t(length - 1)});
+      } else if (IsDrawOpcode(opcode)) {
+        out.other_draws = true;
+      }
+    }
+    i += length;
+  }
+  out.walk_ok = true;
+}
+
+inline AllDraws FindAllDraws(std::span<const uint32_t> emitted) {
+  AllDraws out;
+  FindAllDraws(emitted, out);
+  return out;
+}
+
+// Segment k: the packets after draw k-1 (from 0 for the first draw) up to draw k's header. Packets after the last
+// draw belong to no segment.
+inline std::span<const uint32_t> DrawSegment(std::span<const uint32_t> emitted, const AllDraws& all, size_t k) {
+  const size_t first = k == 0 ? 0 : all.draws[k - 1].index + all.draws[k - 1].payload + 1;
+  return emitted.subspan(first, all.draws[k].index - first);
+}
+
 // Registers the snapshot carries; a library packet that only writes these can become a NOP.
 inline bool SnapshotCoversRegister(uint32_t r) {
   return (r >= 0x2000 && r <= 0x2005) || (r >= 0x2080 && r <= 0x2082) || (r >= 0x2100 && r <= 0x2114) ||
@@ -151,8 +205,9 @@ struct SuppressPlan {
 // lists those whose effect the snapshot replaces: type-0 writes to covered registers only, LOAD_ALU_CONSTANT,
 // IM_LOAD, IM_LOAD_IMMEDIATE, and SET_CONSTANT into covered registers. The register values of the type-0 and
 // SET_CONSTANT ones go to plan.writes, to be folded into the snapshot (the shadows may not hold them). The last
-// packet must end exactly at the region's end; another draw packet in the region aborts.
-inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan) {
+// packet must end exactly at the region's end; another draw packet in the region aborts. nop_shaders false keeps
+// IM_LOAD and IM_LOAD_IMMEDIATE (the snapshot does not carry the shaders, as for Clear's own two).
+inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan, bool nop_shaders = true) {
   plan.ok = false;
   plan.kept = 0;
   plan.nops.clear();
@@ -192,8 +247,10 @@ inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan
       default: {
         const uint32_t opcode = (h >> 8) & 0xFFu;
         if (IsDrawOpcode(opcode)) return fail();  // the snapshot is the state of the last draw only
-        if (opcode == 0x2F || opcode == 0x27 || opcode == 0x2B) {  // LOAD_ALU_CONSTANT, IM_LOAD, IM_LOAD_IMMEDIATE
-          nop = true;  // LOAD_ALU_CONSTANT: the mirror already follows sub_8298F378
+        if (opcode == 0x2F) {  // LOAD_ALU_CONSTANT
+          nop = true;          // the mirror already follows sub_8298F378
+        } else if (opcode == 0x27 || opcode == 0x2B) {  // IM_LOAD, IM_LOAD_IMMEDIATE
+          nop = nop_shaders;
         } else if (opcode == 0x2D && count >= 2) {
           // SET_CONSTANT (SDK ExecutePacketType3_SET_CONSTANT): word 1 index in bits 0-10, type in bits 16-23;
           // count - 1 registers from the type's base.
@@ -220,6 +277,15 @@ inline void PlanSuppression(std::span<const uint32_t> region, SuppressPlan& plan
     i += length;
   }
   plan.ok = true;
+}
+
+// Plans segment k (DrawSegment) with PlanSuppression's rules and returns it; plan.nops index into the returned span,
+// whose end is draw k's header (the region MarkerSpanStart takes).
+inline std::span<const uint32_t> PlanSegment(std::span<const uint32_t> emitted, const AllDraws& all, size_t k,
+                                             bool nop_shaders, SuppressPlan& plan) {
+  const std::span<const uint32_t> region = DrawSegment(emitted, all, k);
+  PlanSuppression(region, plan, nop_shaders);
+  return region;
 }
 
 // The snapshot dword holding register r, nullptr for 0x4000-0x47FF (the ALU blocks, folded through the mirror) and

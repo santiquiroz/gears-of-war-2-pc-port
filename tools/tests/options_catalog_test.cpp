@@ -194,7 +194,7 @@ int CountPage(options::Page page) {
 
 void TestCounts() {
   Expect(CountTab(options::Tab::kDisplay) == 8, "display has 8 rows");
-  Expect(CountTab(options::Tab::kGraphics) == 48, "graphics has 48 rows including the renderer, draw source, quality heading, preset and 24 settings");
+  Expect(CountTab(options::Tab::kGraphics) == 49, "graphics has 49 rows including the renderer, draw source, anti-aliasing, quality heading, preset and 24 settings");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");

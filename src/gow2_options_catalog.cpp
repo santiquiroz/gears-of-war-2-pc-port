@@ -179,16 +179,32 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .label_es = "Origen de los draws",
       .help_en = "Direct3D takes the indexed draws (about 90 % of them), their state and their shaders straight "
                  "from the game's Direct3D calls; the rest still go through the emulated GPU commands. Console "
-                 "commands replays every draw from the emulated GPU command stream. Automatic picks Direct3D "
-                 "on PC and console commands on Android until it is checked on phones.",
+                 "commands replays every draw from the emulated GPU command stream. Automatic picks Direct3D.",
       .help_es = "Direct3D toma los draws indexados (cerca del 90 %), su estado y sus shaders directamente de las "
                  "llamadas Direct3D del juego; el resto aún pasa por los comandos de la GPU emulada. Comandos de "
                  "consola reproduce todos los draws desde el flujo de comandos de la GPU emulada. Automático elige "
-                 "Direct3D en PC y comandos de consola en Android hasta probarlo en teléfonos.",
+                 "Direct3D.",
       .choices = {
           C("auto", "Automatic", "Automático"),
           C("on", "Direct3D calls (native)", "Llamadas Direct3D (nativo)"),
           C("off", "Console commands", "Comandos de consola"),
+      }});
+  out.push_back(Setting{
+      .id = "swap_post_effect",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Anti-aliasing",
+      .label_es = "Antialiasing",
+      .help_en = "Smooths jagged edges on the finished image. FXAA is cheap; Extreme smooths more and blurs a "
+                 "little more.",
+      .help_es = "Suaviza los bordes dentados de la imagen terminada. FXAA cuesta poco; Extremo suaviza más y "
+                 "desenfoca un poco más.",
+      .choices = {
+          C("none", "Off", "Apagado"),
+          C("fxaa", "FXAA"),
+          C("fxaa_extreme", "FXAA Extreme", "FXAA extremo"),
       }});
   out.push_back(Setting{
       .id = "resolution_scale",
