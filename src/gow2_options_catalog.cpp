@@ -177,15 +177,17 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .platforms = kAllPlatforms,
       .label_en = "Draw source",
       .label_es = "Origen de los draws",
-      .help_en = "Direct3D takes every draw, its state and its shaders straight from the game's Direct3D calls "
-                 "(the full native renderer); console commands replays them from the emulated GPU command "
-                 "stream. Automatic picks Direct3D.",
-      .help_es = "Direct3D toma cada draw, su estado y sus shaders directamente de las llamadas Direct3D del "
-                 "juego (el renderizador nativo completo); comandos de consola los reproduce desde el flujo "
-                 "de comandos de la GPU emulada. Automático elige Direct3D.",
+      .help_en = "Direct3D takes the indexed draws (about 90 % of them), their state and their shaders straight "
+                 "from the game's Direct3D calls; the rest still go through the emulated GPU commands. Console "
+                 "commands replays every draw from the emulated GPU command stream. Automatic picks Direct3D "
+                 "on PC and console commands on Android until it is checked on phones.",
+      .help_es = "Direct3D toma los draws indexados (cerca del 90 %), su estado y sus shaders directamente de las "
+                 "llamadas Direct3D del juego; el resto aún pasa por los comandos de la GPU emulada. Comandos de "
+                 "consola reproduce todos los draws desde el flujo de comandos de la GPU emulada. Automático elige "
+                 "Direct3D en PC y comandos de consola en Android hasta probarlo en teléfonos.",
       .choices = {
           C("auto", "Automatic", "Automático"),
-          C("on", "Direct3D calls (full native)", "Llamadas Direct3D (nativo completo)"),
+          C("on", "Direct3D calls (native)", "Llamadas Direct3D (nativo)"),
           C("off", "Console commands", "Comandos de consola"),
       }});
   out.push_back(Setting{

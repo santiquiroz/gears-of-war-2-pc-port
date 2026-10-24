@@ -30,9 +30,9 @@
 #include "gow2_engine_tick.h"
 #include "gow2_guest.h"
 
-REXCVAR_DEFINE_STRING(gow2_native_frontend, "off", "Display",
+REXCVAR_DEFINE_STRING(gow2_native_frontend, "auto", "Display",
                       "Native frontend: DrawIndexed draws reach the GPU from the device state instead of the "
-                      "library's packets. auto (off for now), on or off. Read once at start.");
+                      "library's packets. auto (on on Windows, off on Android), on or off. Read once at start.");
 REXCVAR_DEFINE_BOOL(gow2_native_frontend_suppress, true, "Display",
                     "Native frontend: turn the library's state, constant and shader packets of each rewritten "
                     "draw into NOPs, so they reach the GPU only from the snapshot. Read once at start.");
@@ -77,7 +77,12 @@ bool Enabled() {
   // Read once: the mirror only stays right if it sees every constant write from the start.
   static const bool enabled = [] {
     const std::string mode = REXCVAR_GET(gow2_native_frontend);
-    const bool on = mode == "on";  // auto = off until S3 passes
+#if defined(__ANDROID__)
+    constexpr bool kAutoOn = false;  // not yet checked on a phone
+#else
+    constexpr bool kAutoOn = true;  // DrawIndexed verified on every draw on PC
+#endif
+    const bool on = mode == "on" || (mode != "off" && kAutoOn);
     REXLOG_INFO("NATIVEFRONT game gow2_native_frontend '{}' -> {}", mode, on ? "on" : "off");
     return on;
   }();
@@ -163,6 +168,7 @@ std::array<std::atomic<uint64_t>, uint32_t(DrawFunction::kCount)> g_rewritten{};
 std::atomic<uint64_t> g_unsupported{0};
 std::atomic<uint64_t> g_short_draw{0};
 std::atomic<uint64_t> g_not_inline{0};
+std::atomic<uint64_t> g_ring_moved{0};
 std::atomic<uint64_t> g_arena_full{0};
 std::atomic<uint64_t> g_suppressed_packets{0};
 std::atomic<uint64_t> g_kept_packets{0};
@@ -267,7 +273,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
   const uint32_t write = LoadU32(base, device + kDevWritePointer);
   // write < before: the ring wrapped (sub_8298C1A0) during the call.
   if (write <= before || (write - before) / 4 > kMaxSuppressDwords + 64) {
-    g_not_inline.fetch_add(1, std::memory_order_relaxed);
+    g_ring_moved.fetch_add(1, std::memory_order_relaxed);
     return;
   }
   const uint32_t start = before + 4;
@@ -397,9 +403,10 @@ void OnEngineTick(const PPCContext&, uint8_t*) {
   std::array<uint64_t, uint32_t(DrawFunction::kCount)> rewritten{};
   for (uint32_t f = 0; f < rewritten.size(); ++f) rewritten[f] = g_rewritten[f].exchange(0, std::memory_order_relaxed);
   REXLOG_INFO("NATIVEFRONT game rewritten {} (82980B20 {} 82980210 {} 8297FD30 {} 829813F0 {}) not_inline {} "
-              "unsupported {} short_draw {} arena_kb {} suppressed_packets {} kept_packets {} aborted {}",
+              "ring_moved {} unsupported {} short_draw {} arena_kb {} suppressed_packets {} kept_packets {} aborted {}",
               rewritten[0] + rewritten[1] + rewritten[2] + rewritten[3], rewritten[0], rewritten[1], rewritten[2],
               rewritten[3], g_not_inline.exchange(0, std::memory_order_relaxed),
+              g_ring_moved.exchange(0, std::memory_order_relaxed),
               g_unsupported.exchange(0, std::memory_order_relaxed),
               g_short_draw.exchange(0, std::memory_order_relaxed), arena_bytes / 1024,
               g_suppressed_packets.exchange(0, std::memory_order_relaxed),
