@@ -1,0 +1,250 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index e8015c3..3cd872c 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -136,6 +136,7 @@ constexpr uint32_t kDeferredWriteTimestampQueryCount = UINT32_MAX;
+ void SetDeferredWriteTimestampFunction(PFN_vkCmdWriteTimestamp function);
+ 
+ BarrierSource pass_timing_barrier_source = BarrierSource::kOther;
++DispatchSource pass_timing_dispatch_source = DispatchSource::kOther;
+ 
+ namespace {
+ 
+@@ -148,6 +149,8 @@ constexpr const char* kPassEndReasonNames[] = {"other", "barrier", "forced",
+ constexpr const char* kBarrierSourceNames[] = {"upload", "index", "texture",
+                                                "rt",     "resolve", "other"};
+ static_assert(std::size(kBarrierSourceNames) == size_t(BarrierSource::kCount));
++// The PASSTIME gaps/frame dispatch_by_source fields.
++static_assert(size_t(DispatchSource::kCount) == 8);
+ 
+ struct PassTimingKey {
+   uint32_t render_pass_key = 0;
+@@ -212,6 +215,7 @@ struct PassTimingState {
+   std::map<PassTimingKey, PassTimingAggregate> window_keys;
+   DeferredGapCounts window_gaps;
+   uint64_t window_barriers[size_t(BarrierSource::kCount)] = {};
++  uint64_t window_dispatches[size_t(DispatchSource::kCount)] = {};
+   std::vector<uint64_t> results_temp;
+ };
+ 
+@@ -490,7 +494,9 @@ void PassTimingSwap() {
+     REXGPU_INFO(
+         "PASSTIME gaps/frame copies {:.1f} image_copies {:.1f} clears {:.1f} dispatches {:.1f} "
+         "barrier_batches {:.1f} by_source upload {:.1f} index {:.1f} texture {:.1f} rt {:.1f} "
+-        "resolve {:.1f} other {:.1f}",
++        "resolve {:.1f} other {:.1f} dispatch_by_source swap {:.1f} resolve {:.1f} "
++        "texture_load {:.1f} rt_transfer {:.1f} rt_clear {:.1f} depth_store {:.1f} "
++        "native_resolve {:.1f} other {:.1f}",
+         per_frame(s.window_gaps.copies), per_frame(s.window_gaps.image_copies),
+         per_frame(s.window_gaps.clears), per_frame(s.window_gaps.dispatches),
+         per_frame(s.window_gaps.barrier_batches),
+@@ -499,7 +505,15 @@ void PassTimingSwap() {
+         per_frame(s.window_barriers[size_t(BarrierSource::kTexture)]),
+         per_frame(s.window_barriers[size_t(BarrierSource::kRenderTarget)]),
+         per_frame(s.window_barriers[size_t(BarrierSource::kResolve)]),
+-        per_frame(s.window_barriers[size_t(BarrierSource::kOther)]));
++        per_frame(s.window_barriers[size_t(BarrierSource::kOther)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kSwap)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kResolve)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kTextureLoad)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kRtTransfer)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kRtClear)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kDepthStore)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kNativeResolve)]),
++        per_frame(s.window_dispatches[size_t(DispatchSource::kOther)]));
+   }
+   s.window_start = now;
+   s.window_frames = 0;
+@@ -510,6 +524,7 @@ void PassTimingSwap() {
+   s.window_keys.clear();
+   s.window_gaps = DeferredGapCounts();
+   std::fill(std::begin(s.window_barriers), std::end(s.window_barriers), uint64_t(0));
++  std::fill(std::begin(s.window_dispatches), std::end(s.window_dispatches), uint64_t(0));
+ }
+ 
+ // Called by PushBufferMemoryBarrier / PushImageMemoryBarrier when a barrier is added to the
+@@ -523,6 +538,20 @@ void PassTimingBarrierPushed(BarrierSource source) {
+   ++s.window_barriers[size_t(source)];
+ }
+ 
++}  // namespace
++
++void PassTimingDispatchRecorded() {
++  const DispatchSource source = pass_timing_dispatch_source;
++  pass_timing_dispatch_source = DispatchSource::kOther;
++  PassTimingState& s = pass_timing_state;
++  if (s.current_slot < 0) {
++    return;
++  }
++  ++s.window_dispatches[size_t(source)];
++}
++
++namespace {
++
+ void ShutdownPassTiming(const ui::vulkan::VulkanDevice* vulkan_device) {
+   PassTimingState& s = pass_timing_state;
+   for (PassTimingSlot& slot : s.slots) {
+@@ -3155,7 +3184,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+           BindExternalComputePipeline(swap_apply_gamma_compute_pipeline);
+           uint32_t group_count_x = (guest_output_width + 15) / 16;
+           uint32_t group_count_y = (guest_output_height + 7) / 8;
++          SetDispatchSource(DispatchSource::kSwap);
+           deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y, 1);
++          PassTimingDispatchRecorded();
+ 
+           if (use_fxaa) {
+             // Make the FXAA source image readable and bind a separate
+@@ -3227,7 +3258,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+             BindExternalComputePipeline(swap_post_effect == SwapPostEffect::kFxaaExtreme
+                                             ? swap_fxaa_extreme_pipeline_
+                                             : swap_fxaa_pipeline_);
++            SetDispatchSource(DispatchSource::kSwap);
+             deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y, 1);
++            PassTimingDispatchRecorded();
+           }
+ 
+           // Insert the release barrier.
+@@ -5184,7 +5217,9 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+     deferred_command_buffer_.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE,
+                                                      resolve_downscale_pipeline_layout_, 0, 1,
+                                                      &descriptor_set, 0, nullptr);
++    SetDispatchSource(DispatchSource::kResolve);
+     deferred_command_buffer_.CmdVkDispatch(tile_count, 1, 1);
++    PassTimingDispatchRecorded();
+ 
+     VkBufferMemoryBarrier downscale_barrier = {};
+     downscale_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+diff --git a/src/graphics/vulkan/pass_timing.h b/src/graphics/vulkan/pass_timing.h
+index 4aa49d0..fd06f1a 100644
+--- a/src/graphics/vulkan/pass_timing.h
++++ b/src/graphics/vulkan/pass_timing.h
+@@ -32,6 +32,34 @@ extern BarrierSource pass_timing_barrier_source;
+ // vulkan_android_pass_timing is off.
+ inline void SetBarrierSource(BarrierSource source) { pass_timing_barrier_source = source; }
+ 
++// What recorded a compute dispatch. Must match the PASSTIME gaps/frame dispatch_by_source fields in
++// command_processor.cpp.
++enum class DispatchSource : uint8_t {
++  kSwap,
++  kResolve,
++  kTextureLoad,
++  kRtTransfer,
++  kRtClear,
++  kDepthStore,
++  kNativeResolve,
++  kOther,
++
++  kCount,
++};
++
++// Defined in command_processor.cpp. Consumed (and reset to kOther) by the next
++// PassTimingDispatchRecorded.
++extern DispatchSource pass_timing_dispatch_source;
++
++// Tags the dispatch recorded right after this call. Only a store, so it's free when
++// vulkan_android_pass_timing is off.
++inline void SetDispatchSource(DispatchSource source) { pass_timing_dispatch_source = source; }
++
++// Defined in command_processor.cpp. Called right after each CmdVkDispatch: counts the dispatch
++// for pass_timing_dispatch_source if the open submission is timed, and resets the source to
++// kOther.
++void PassTimingDispatchRecorded();
++
+ // Commands executed from a DeferredCommandBuffer that Vulkan only allows outside a render pass
+ // (so they are what fills the gaps between passes).
+ struct DeferredGapCounts {
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 3ec7682..f53590c 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1298,7 +1298,9 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
+                 sizeof(copy_shader_constants), &copy_shader_constants);
+           }
+           command_processor_.SubmitBarriers(true);
++          SetDispatchSource(DispatchSource::kResolve);
+           command_buffer.CmdVkDispatch(copy_group_count_x, copy_group_count_y, 1);
++          PassTimingDispatchRecorded();
+ 
+           // gpu_native_resolves: the textures viewing the destination that are up to date now
+           // stay up to date if the resolved region is also copied into them on the host.
+@@ -1371,7 +1373,9 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
+                                             VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                                             sizeof(depth_clear_constants), &depth_clear_constants);
+           command_processor_.SubmitBarriers(true);
++          SetDispatchSource(DispatchSource::kRtClear);
+           command_buffer.CmdVkDispatch(clear_group_count.first, clear_group_count.second, 1);
++          PassTimingDispatchRecorded();
+         }
+         if (clear_color) {
+           command_processor_.BindExternalComputePipeline(
+@@ -1391,7 +1395,9 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
+                 sizeof(color_clear_constants), &color_clear_constants);
+           }
+           command_processor_.SubmitBarriers(true);
++          SetDispatchSource(DispatchSource::kRtClear);
+           command_buffer.CmdVkDispatch(clear_group_count.first, clear_group_count.second, 1);
++          PassTimingDispatchRecorded();
+         }
+         MarkEdramBufferModified();
+         cleared = true;
+@@ -4765,7 +4771,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+             uint32_t(offsetof(HostDepthStoreConstants, rectangle)),
+             sizeof(host_depth_store_rectangle_constant), &host_depth_store_rectangle_constant);
+         command_processor_.SubmitBarriers(true);
++        SetDispatchSource(DispatchSource::kDepthStore);
+         command_buffer.CmdVkDispatch(group_count_x, group_count_y, 1);
++        PassTimingDispatchRecorded();
+         MarkEdramBufferModified();
+       }
+     }
+@@ -6261,6 +6269,7 @@ bool VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base, uint32_t dum
+                                           sizeof(last_offsets), &last_offsets);
+       }
+       command_processor_.SubmitBarriers(true);
++      SetDispatchSource(DispatchSource::kRtTransfer);
+       command_buffer.CmdVkDispatch(
+           (draw_resolution_scale_x() *
+                (xenos::kEdramTileWidthSamples >> uint32_t(rt_key.Is64bpp())) *
+@@ -6271,6 +6280,7 @@ bool VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base, uint32_t dum
+            (kDumpSamplesPerGroupY - 1)) /
+               kDumpSamplesPerGroupY,
+           1);
++      PassTimingDispatchRecorded();
+     }
+     MarkEdramBufferModified();
+   }
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index bae1bb9..15343f0 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -1700,7 +1700,9 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
+                                           &load_constants.host_offset);
+       }
+       command_processor_.SubmitBarriers(true);
++      SetDispatchSource(DispatchSource::kTextureLoad);
+       command_buffer.CmdVkDispatch(group_count_x, group_count_y, load_constants.size_blocks[2]);
++      PassTimingDispatchRecorded();
+       load_constants.guest_offset += level_array_slice_stride_bytes_scaled;
+       load_constants.host_offset += uint32_t(level_host_layout.slice_size_bytes);
+     }
+@@ -1801,8 +1803,10 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
+                                             &load_constants_float_convert.host_offset);
+         }
+         command_processor_.SubmitBarriers(true);
++        SetDispatchSource(DispatchSource::kTextureLoad);
+         command_buffer.CmdVkDispatch(group_count_x, group_count_y,
+                                      load_constants_float_convert.size_blocks[2]);
++        PassTimingDispatchRecorded();
+         load_constants_float_convert.guest_offset += level_array_slice_stride_bytes;
+         load_constants_float_convert.host_offset += level_array_slice_stride_bytes;
+       }
+@@ -2641,7 +2645,9 @@ void VulkanTextureCache::WriteNativeResolveToTextures(const NativeResolveWrite&
+       command_buffer.CmdVkPushConstants(native_resolve_pipeline_layout_,
+                                         VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants),
+                                         &constants);
++      SetDispatchSource(DispatchSource::kNativeResolve);
+       command_buffer.CmdVkDispatch((constants.size[0] + 7) >> 3, (constants.size[1] + 7) >> 3, 1);
++      PassTimingDispatchRecorded();
+ 
+       MakeTextureUpToDateAndWatch(texture);
+       ++counts.written;

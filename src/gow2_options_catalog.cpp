@@ -151,6 +151,25 @@ void AddDisplay(std::vector<Setting>& out) {
 
 void AddGraphicsUpscaling(std::vector<Setting>& out) {
   out.push_back(Setting{
+      .id = "gow2_native_renderer",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Renderer",
+      .label_es = "Renderizador",
+      .help_en = "Native draws the game's render targets and resolves directly on your GPU; emulated goes "
+                 "through the console's EDRAM like Xenia. Automatic picks the faster one measured for your "
+                 "GPU (native on AMD and Android, emulated elsewhere). Any GPU can use either.",
+      .help_es = "Nativo dibuja los render targets y resolves del juego directamente en tu GPU; emulado pasa "
+                 "por la EDRAM de la consola como Xenia. Automático elige el más rápido medido para tu GPU "
+                 "(nativo en AMD y Android, emulado en el resto). Cualquier GPU puede usar los dos.",
+      .choices = {
+          C("auto", "Automatic (best for this GPU)", "Automático (el mejor para esta GPU)"),
+          C("on", "Native", "Nativo"),
+          C("off", "Emulated (EDRAM)", "Emulado (EDRAM)"),
+      }});
+  out.push_back(Setting{
       .id = "resolution_scale",
       .tab = Tab::kGraphics,
       .kind = Kind::kChoice,
