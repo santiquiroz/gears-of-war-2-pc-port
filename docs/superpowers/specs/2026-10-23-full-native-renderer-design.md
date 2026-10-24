@@ -161,3 +161,18 @@ in `out/native/gpucost`.
 - The game's full-screen effects cost about 20 %. Since their shading is cheap, that is bandwidth and pass overhead
   on the tiler: per frame about 53 render passes (48 ended by a barrier), 180 geometry-shader draws and 35 uploads.
 - A Perfetto trace with `gpu.renderstages` came back empty: this phone exposes no render-stage producer to the shell.
+
+Round 2 (same method, one switch at a time; the three baselines so far span 15.7-16.7 Mcycles/frame):
+
+| Run | Mcycles/frame | Against the 15.7 baseline of the same session |
+|---|---|---|
+| Geometry shaders replaced (`vulkan_force_expand_*`, quad lists as triangles) | 16.1 | none: geometry shaders are not the cost |
+| `AmbientOcclusion=False` | 14.6 | −7 % |
+| `MotionBlur=False` | 15.0 | −4 % |
+| `DepthOfField=False` | 14.3 | −9 % |
+| `UseHighQualityBloom=False` | 15.5 | noise |
+| `Distortion=False` | 15.6 | noise |
+
+Ambient occlusion, depth of field and motion blur together make up the 20 % of round 1; nothing dominates, and
+about 80 % of the frame is the scene passes themselves. Next: GPU time per render pass with timestamps at pass
+boundaries (valid on a tiler, unlike inside a pass), `vulkan_android_pass_timing`.
