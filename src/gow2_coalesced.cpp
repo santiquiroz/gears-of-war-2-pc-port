@@ -35,9 +35,10 @@
   "Menu button prompts: auto (controller glyphs unless a physical keyboard is connected and " \
   "mnk_mode is on), keyboard or controller."
 #else
-#define GOW2_PROMPTS_HELP                                                         \
-  "Menu button prompts: auto (keyboard labels while no controller is connected, switching " \
-  "live when one is plugged in or removed), keyboard or controller (both fixed at launch)."
+#define GOW2_PROMPTS_HELP                                                                      \
+  "Button prompts: auto (the device you used last: keyboard keys, or the buttons of your Xbox or " \
+  "PlayStation controller, switching live), keyboard, controller (Xbox buttons) or playstation "  \
+  "(both fixed at launch)."
 #endif
 REXCVAR_DEFINE_STRING(gow2_prompts, "auto", "input", GOW2_PROMPTS_HELP);
 REXCVAR_DEFINE_BOOL(gow2_keycaps, true, "input",
@@ -808,7 +809,8 @@ CoalescedOptions CoalescedOptionsFromCvars() {
   // The live swap (gow2_prompt_swap.cpp) rewrites the strings in memory: leave the bundles alone.
   if (PromptsFollowController()) return o;
   const std::string mode = REXCVAR_GET(gow2_prompts);
-  const bool keyboard = mode == "keyboard" || (mode != "controller" && AutoPromptsUseKeyboard());
+  const bool keyboard =
+      mode == "keyboard" || (mode != "controller" && mode != "playstation" && AutoPromptsUseKeyboard());
   if (!keyboard) return o;
   o.prompt_labels = KeyboardPromptLabels();
   return o;
@@ -816,7 +818,7 @@ CoalescedOptions CoalescedOptionsFromCvars() {
 
 bool PromptsFollowController() {
 #ifdef _WIN32
-  return REXCVAR_GET(gow2_prompts) != "controller";  // auto follows the pad, keyboard stays put
+  return REXCVAR_GET(gow2_prompts) != "controller";  // auto follows the last device; keyboard and playstation stay put
 #else
   return false;
 #endif

@@ -57,39 +57,46 @@ def _components(alpha: np.ndarray):
     return lab, boxes
 
 
-def build(dump: str, out_dir: str) -> bool:
-    """Writes <out_dir>/<hash>.dds; False (with a message) when the dump lacks the atlas."""
+def erase_buttons(dump: str) -> Image.Image | None:
+    """The atlas from the dump without its button sprites; None (with a message) when it cannot."""
     info = load_info()
     h = info["hash"]
     files = glob.glob(os.path.join(dump, h + "_*.dds"))
     if not files:
         print(f"atlas: no dump of {h} (the tutorial pictograms): the keyboard variant is skipped")
-        return False
+        return None
     size = info["size"]
     img = Image.open(files[0]).convert("RGBA")
     if img.size != (size, size):
         print(f"atlas: unexpected size {img.size}: skipped")
-        return False
+        return None
     px = np.array(img)
     lab, boxes = _components(px[..., 3] > 24)
-    erased = 0
     for sprite in info["sprites"]:
         want = sprite["box"]  # [x0, y0, x1, y1] as found in the retail art
         hits = [n for n, b in boxes.items() if tuple(b) == tuple(want)]
         if len(hits) != 1:
             print(f"atlas: sprite {want} not found (the art differs from the retail texture): skipped")
-            return False
+            return None
         x0, y0, x1, y1 = want
         # The sprite, plus the faint anti-aliasing halo round it that belongs to no other sprite.
         window = np.zeros(lab.shape, dtype=bool)
         window[max(y0 - 3, 0):y1 + 4, max(x0 - 3, 0):x1 + 4] = True
         px[(lab == hits[0]) | (window & (lab == 0))] = (0, 0, 0, 0)
-        erased += 1
+    return Image.fromarray(px, "RGBA")
+
+
+def build(dump: str, out_dir: str) -> bool:
+    """Writes <out_dir>/<hash>.dds; False (with a message) when the dump lacks the atlas."""
+    out = erase_buttons(dump)
+    if out is None:
+        return False
+    info = load_info()
+    h, size = info["hash"], info["size"]
     os.makedirs(out_dir, exist_ok=True)
-    out = Image.fromarray(px, "RGBA")
     texpack.write_dds(os.path.join(out_dir, h + ".dds"), texpack.DXGI_R8G8B8A8_UNORM, size, size,
                       texpack.rgba_mip_chain(out))
-    print(f"atlas: wrote {os.path.join(out_dir, h + '.dds')} ({erased} button sprites erased)")
+    print(f"atlas: wrote {os.path.join(out_dir, h + '.dds')} ({len(info['sprites'])} button sprites erased)")
     return True
 
 

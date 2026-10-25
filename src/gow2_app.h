@@ -27,6 +27,7 @@
 #include "gow2_coop_network.h"
 #include "gow2_crash_watch.h"
 #include "gow2_frame_stats.h"
+#include "gow2_input_activity.h"
 #include "gow2_gpu_pick.h"
 #include "gow2_machine_xuid.h"
 #include "gow2_mouse_aim.h"
@@ -490,6 +491,7 @@ class Gow2App : public rex::ReXApp {
     rex::glue::InstallFrameStats();
 #ifdef _WIN32
     rex::glue::InstallPromptSwap(game_data_root_);
+    rex::glue::InstallInputActivityWatch(window());
 #endif
 #if defined(__ANDROID__)
     rex::glue::ApplySustainedPerformanceMode();

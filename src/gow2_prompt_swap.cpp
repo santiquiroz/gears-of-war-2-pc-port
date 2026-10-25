@@ -10,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -28,14 +29,17 @@
 #include "gow2_coalesced_text.h"
 #include "gow2_engine_tick.h"
 #include "gow2_guest.h"
+#include "gow2_input_activity.h"
 #include "gow2_keycap_layout.inc"
 #include "gow2_keycaps.h"
+#include "gow2_prompt_device.h"
 #include "gow2_prompt_scan.h"
 
 namespace rex::glue {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+using prompt_device::Device;
 
 struct Slot {
   uint32_t header = 0;
@@ -57,9 +61,10 @@ struct State {
   // Game thread only:
   std::map<char16_t, std::vector<uint8_t>> pad_cells;  // original cells of the pad glyphs moved
   Clock::time_point next_poll{};
-  int applied = -1;  // 1 keyboard, 0 controller, -1 nothing written yet
+  std::optional<Device> applied;  // empty: nothing written yet
   std::string applied_signature;
-  int pending = -1;  // a reading seen once, not yet confirmed
+  std::optional<Device> pending;  // a reading seen once, not yet confirmed
+  bool playstation_missing_logged = false;
   int atlas_slot = -1;  // the variant folder the tutorial pictograms were last composed into
 };
 
@@ -227,6 +232,15 @@ void SetVariant(const char* name) {
   (void)rex::cvar::SetFlagByName("texture_replace_variant", name);
 }
 
+// Packs built before 0.3.5 have no replace_ps4 / replace_ps5 font page.
+bool PlayStationVariantPresent(const std::string& name) {
+  std::error_code ec;
+  return KeycapFilesPresent() &&
+         std::filesystem::exists(PackDir().parent_path() / ("replace_" + name) /
+                                     (std::string(keycap::kPageHash[0]) + ".dds"),
+                                 ec);
+}
+
 const keycap::Cell* CellFor(char16_t ch) {
   for (const keycap::Cell& c : keycap::kCells)
     if (c.ch == ch) return &c;
@@ -353,16 +367,56 @@ void Write(uint8_t* base, const Slot& slot, const std::u16string& text) {
   guest::StoreU32(base, slot.header + 4, uint32_t(text.size() + 1));
 }
 
-// Test aid: GOW2_PROMPTS_PAD_FILE names a file whose first character, 1 or 0, stands in for
-// "a controller is connected" and can be changed while the game runs.
-bool PadConnected() {
+// Test aid: GOW2_PROMPTS_PAD_FILE names a file whose first character stands in for the device used
+// last (0 keyboard, 1 Xbox, p PlayStation 4, 5 PlayStation 5) and can be changed while the game runs.
+std::optional<Device> DeviceFromTestFile() {
   static const char* file = std::getenv("GOW2_PROMPTS_PAD_FILE");
-  if (file && *file) {
-    std::ifstream in(file);
-    char c = 0;
-    if (in.get(c) && (c == '1' || c == '0')) return c == '1';
+  if (!file || !*file) return std::nullopt;
+  std::ifstream in(file);
+  char c = 0;
+  if (!in.get(c)) return std::nullopt;
+  switch (c) {
+    case '0': return Device::kKeyboard;
+    case '1': return Device::kXbox;
+    case 'p': return Device::kPlayStation4;
+    case '5': return Device::kPlayStation5;
+    default: return std::nullopt;
   }
-  return PhysicalGamepadConnected();
+}
+
+Device CurrentDevice() {
+  prompt_device::Inputs in;
+  in.mode = rex::cvar::Query<std::string>("gow2_prompts");
+  if (in.mode != "keyboard" && in.mode != "controller" && in.mode != "playstation")
+    if (const auto forced = DeviceFromTestFile()) return *forced;
+  in.pad_ms = LastPadActivityMs(&in.pad_type);
+  in.kbm_ms = LastKeyboardMouseActivityMs();
+  in.pad_connected = in.pad_type != 0 || PhysicalGamepadConnected();
+  return prompt_device::Choose(in);
+}
+
+const char* DeviceLabel(Device d, bool keycaps) {
+  switch (d) {
+    case Device::kKeyboard: return keycaps ? "keycap" : "keyboard text";
+    case Device::kXbox: return "controller";
+    case Device::kPlayStation4: return "PlayStation 4";
+    case Device::kPlayStation5: return "PlayStation 5";
+  }
+  return "controller";
+}
+
+// The font page with these buttons painted in, when the pack has it; else the Xbox ones stay.
+void ShowPlayStationButtons(Device d) {
+  const std::string name = prompt_device::VariantFor(d);
+  if (PlayStationVariantPresent(name)) {
+    SetVariant(name.c_str());
+    return;
+  }
+  SetVariant("");
+  if (S().playstation_missing_logged) return;
+  S().playstation_missing_logged = true;
+  REXLOG_INFO("PROMPTS: PlayStation buttons need a keycap pack built with 0.3.5 or later "
+              "(Build keycap pack.cmd next to gow2.exe); showing Xbox buttons");
 }
 
 // What a slot shows in keyboard mode: keycaps when the font has them and the string has room,
@@ -412,13 +466,19 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
   if (!s.ready) return;
   const auto now = Clock::now();
   if (now < s.next_poll) return;
-  s.next_poll = now + std::chrono::milliseconds(500);
+  s.next_poll = now + std::chrono::milliseconds(250);
 
-  // gow2_prompts = keyboard keeps the keyboard labels whatever is plugged in.
-  const int keyboard = (rex::cvar::Query<std::string>("gow2_prompts") == "keyboard" || !PadConnected()) ? 1 : 0;
+  const Device device = CurrentDevice();
+  const bool keyboard = device == Device::kKeyboard;
   std::map<std::string, keycap::Prompt> caps;
   std::map<std::string, std::string> text;
-  std::string signature = keyboard ? (s.keycaps ? "K|" : "T|") : "C|";
+  std::string signature;
+  switch (device) {
+    case Device::kKeyboard: signature = s.keycaps ? "K|" : "T|"; break;
+    case Device::kXbox: signature = "C|"; break;
+    case Device::kPlayStation4: signature = "P4|"; break;
+    case Device::kPlayStation5: signature = "P5|"; break;
+  }
   if (keyboard) {
     for (const auto& kv : KeyboardPromptLabels()) {
       text[kv.first] = kv.second;
@@ -433,16 +493,16 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
       }
     }
   }
-  if (keyboard == s.applied && signature == s.applied_signature) {
-    s.pending = -1;
+  if (device == s.applied && signature == s.applied_signature) {
+    s.pending.reset();
     return;
   }
   // Two equal readings in a row, so a controller that blinks out for a poll does not flip the text.
-  if (s.pending != keyboard && keyboard != s.applied) {
-    s.pending = keyboard;
+  if (s.pending != device && device != s.applied) {
+    s.pending = device;
     return;
   }
-  s.pending = -1;
+  s.pending.reset();
 
   std::lock_guard<std::mutex> lock(s.mutex);
   int written = 0;
@@ -450,8 +510,8 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
     Write(base, slot, keyboard ? KeyboardText(slot, caps, text) : slot.original);
     ++written;
   }
-  const int glyphs = s.keycaps ? SwapPadGlyphs(base, keyboard != 0, caps) : 0;
-  s.applied = keyboard;
+  const int glyphs = s.keycaps ? SwapPadGlyphs(base, keyboard, caps) : 0;
+  s.applied = device;
   s.applied_signature = signature;
   if (keyboard && s.keycaps && VariantPresent()) {
     const int next = s.atlas_slot == 0 ? 1 : 0;
@@ -459,11 +519,13 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
       s.atlas_slot = next;
       SetVariant(next ? "kbdB" : "kbdA");
     }
+  } else if (prompt_device::IsPlayStation(device)) {
+    ShowPlayStationButtons(device);
   } else {
     SetVariant("");
   }
   REXLOG_INFO("PROMPTS live: {} labels ({} strings written, {} pad glyphs on keycaps)",
-              keyboard ? (s.keycaps ? "keycap" : "keyboard text") : "controller", written, glyphs);
+              DeviceLabel(device, s.keycaps), written, glyphs);
 }
 
 [[maybe_unused]] const bool kPromptSwapRegistered = (AddEngineTickListener(&PromptSwapTick), true);
@@ -483,7 +545,7 @@ void InstallPromptSwap(const std::filesystem::path& game_root) {
   if (!PromptsFollowController()) return;
   S().game_root = game_root;
   S().installed = true;
-  REXLOG_INFO("PROMPTS live: prompts follow the connected controller");
+  REXLOG_INFO("PROMPTS live: prompts follow the last input device");
 }
 
 }  // namespace rex::glue

@@ -642,12 +642,20 @@ void AddControls(std::vector<Setting>& out) {
       .platforms = kAllPlatforms,
       .label_en = "Button prompts",
       .label_es = "Indicaciones de botones",
-      .help_en = "Which buttons the menus show.",
-      .help_es = "Qué botones muestran los menús.",
+      .help_en =
+          "Which buttons the prompts show. Automatic follows the device you used last: keyboard and mouse, "
+          "an Xbox controller or a PlayStation controller. PlayStation buttons need the keycap pack.",
+      .help_es =
+          "Qué botones muestran las indicaciones. Automático sigue el último dispositivo que usaste: teclado "
+          "y mouse, un mando de Xbox o uno de PlayStation. Los botones de PlayStation necesitan el paquete "
+          "de teclas.",
       .choices = {
-          C("auto", "Automatic", "Automático"),
+          C("auto", "Automatic (last device used)", "Automático (último dispositivo usado)"),
           C("keyboard", "Keyboard keys", "Teclas"),
-          C("controller", "Controller buttons", "Botones del mando"),
+          C("controller", "Xbox buttons", "Botones de Xbox"),
+#if !defined(__ANDROID__)
+          C("playstation", "PlayStation buttons", "Botones de PlayStation"),
+#endif
       }});
   out.push_back(Setting{
       .id = "gow2_keycaps",

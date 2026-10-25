@@ -9,6 +9,8 @@ that font, next to the glyphs the game still needs, and writes
   src/gow2_keycap_layout.inc  which character shows which key, and the cell of each (a generated
                               C++ table the port patches into the font at run time)
   assets/keycaps/layout.json  the same, for people
+  <out>/../replace_ps4, replace_ps5  the pages and the pictogram atlas with PlayStation buttons
+                              (playstation.py)
 
 Glyphs the game's own strings use, and the spinner on page 1, keep their cells and art (copied
 from your texture dump of the game, so the pack holds game art: do not share it). All other
@@ -311,7 +313,13 @@ def main() -> int:
     # The tutorial pictograms have buttons painted in: their keyboard variant has none.
     import atlas
 
-    atlas.build(args.dump, os.path.join(os.path.dirname(os.path.abspath(args.out)), "replace_kbd_base"))
+    out_root = os.path.dirname(os.path.abspath(args.out))
+    atlas.build(args.dump, os.path.join(out_root, "replace_kbd_base"))
+    # The same pages with PlayStation buttons, for while a PlayStation controller is in use.
+    import playstation
+
+    playstation.build_variants(info, pages, args.dump, out_root, args.scale, args.png)
+    playstation.build_atlas_variants(args.dump, out_root)
     return 0
 
 

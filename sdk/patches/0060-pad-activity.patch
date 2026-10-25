@@ -1,0 +1,168 @@
+diff --git a/include/rex/input/input_system.h b/include/rex/input/input_system.h
+index 1cb3faa..8adcda6 100644
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -71,4 +71,14 @@ class InputSystem : public system::IInputSystem {
+ /// In tool mode, only the NOP driver is added.
+ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode);
+ 
++// Physical controller activity across the input drivers (SDL, XInput): the host uptime in
++// milliseconds (rex::chrono::Clock::QueryHostUptimeMillis) of the last button press or
++// stick/trigger movement past a threshold, and the SDL_GamepadType of that controller (0 when
++// unknown). Emulated pads (keyboard and mouse, touch) never report here.
++void NotePhysicalPadActivity(int sdl_gamepad_type);
++// A controller connected: sets only the type.
++void NotePhysicalPadType(int sdl_gamepad_type);
++// out_sdl_gamepad_type may be null; time 0 = no activity yet.
++uint64_t LastPhysicalPadActivity(int* out_sdl_gamepad_type);
++
+ }  // namespace rex::input
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index a7d5907..fe81f99 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -10,9 +10,11 @@
+  */
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cmath>
+ #include <mutex>
+ 
++#include <rex/chrono/clock.h>
+ #include <rex/dbg.h>
+ #include <rex/input/device_assignment.h>
+ #include <rex/input/flags.h>
+@@ -389,4 +391,36 @@ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode) {
+   return input;
+ }
+ 
++// File-static rather than InputDriver members: gow2.exe subclasses InputDriver against the
++// unpatched headers, so the class layout and vtable must not change.
++static std::atomic<uint64_t> last_physical_pad_activity_ms{0};
++static std::atomic<int> last_physical_pad_type{0};
++
++void NotePhysicalPadActivity(int sdl_gamepad_type) {
++  last_physical_pad_type.store(sdl_gamepad_type, std::memory_order_relaxed);
++  last_physical_pad_activity_ms.store(rex::chrono::Clock::QueryHostUptimeMillis(),
++                                      std::memory_order_relaxed);
++}
++
++void NotePhysicalPadType(int sdl_gamepad_type) {
++  last_physical_pad_type.store(sdl_gamepad_type, std::memory_order_relaxed);
++}
++
++uint64_t LastPhysicalPadActivity(int* out_sdl_gamepad_type) {
++  if (out_sdl_gamepad_type) {
++    *out_sdl_gamepad_type = last_physical_pad_type.load(std::memory_order_relaxed);
++  }
++  return last_physical_pad_activity_ms.load(std::memory_order_relaxed);
++}
++
+ }  // namespace rex::input
++
++#if defined(_WIN32)
++#define REX_INPUT_EXPORT __declspec(dllexport)
++#else
++#define REX_INPUT_EXPORT __attribute__((visibility("default")))
++#endif
++
++extern "C" REX_INPUT_EXPORT uint64_t rex_input_get_last_physical_activity(int* out_type) {
++  return rex::input::LastPhysicalPadActivity(out_type);
++}
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 6a5b449..c1441ed 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -12,12 +12,14 @@
+ #include "../stick_deadzone.h"
+ 
+ #include <array>
++#include <cstdlib>
+ #include <filesystem>
+ 
+ #include <rex/assert.h>
+ #include <rex/chrono/clock.h>
+ #include <rex/cvar.h>
+ #include <rex/input/flags.h>
++#include <rex/input/input_system.h>
+ #include <rex/input/sdl/sdl_input_driver.h>
+ #include <rex/input/pad_remap.h>
+ #include <rex/logging.h>
+@@ -526,6 +528,7 @@ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
+ 
+   const int ordinal = static_cast<int>(controllers_.size()) - 1;
+   SDL_SetGamepadPlayerIndex(controller, ordinal);
++  NotePhysicalPadType(static_cast<int>(SDL_GetGamepadType(controller)));
+ 
+   REXLOG_INFO("SDL OnControllerDeviceAdded: connection order {}, device {}.", ordinal,
+               static_cast<uint64_t>(state.id));
+@@ -578,6 +581,24 @@ void SDLInputDriver::OnControllerDeviceAxisMotionLocked(const SDL_Event& event)
+       assert_always();
+       break;
+   }
++  bool active = false;
++  switch (event.gaxis.axis) {
++    case SDL_GAMEPAD_AXIS_LEFTX:
++    case SDL_GAMEPAD_AXIS_LEFTY:
++    case SDL_GAMEPAD_AXIS_RIGHTX:
++    case SDL_GAMEPAD_AXIS_RIGHTY:
++      active = std::abs(static_cast<int>(event.gaxis.value)) > 6000;
++      break;
++    case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
++    case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
++      active = event.gaxis.value > 3840;
++      break;
++    default:
++      break;
++  }
++  if (active) {
++    NotePhysicalPadActivity(static_cast<int>(SDL_GetGamepadType(controllers_.at(*idx).sdl)));
++  }
+   controllers_.at(*idx).state_changed = true;
+ }
+ 
+@@ -623,6 +644,9 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+     return;
+   }
+   auto& controller = controllers_.at(*idx);
++  if (event.gbutton.down) {
++    NotePhysicalPadActivity(static_cast<int>(SDL_GetGamepadType(controller.sdl)));
++  }
+ 
+   // Lookup the XInput button code.
+   if (event.gbutton.button >= xbutton_lookup.size()) {
+diff --git a/src/input/xinput/xinput_input_driver.cpp b/src/input/xinput/xinput_input_driver.cpp
+index d934eaa..93888b4 100644
+--- a/src/input/xinput/xinput_input_driver.cpp
++++ b/src/input/xinput/xinput_input_driver.cpp
+@@ -12,12 +12,14 @@
+ #include "../stick_deadzone.h"
+ 
+ #include <array>
++#include <cstdlib>
+ #include <filesystem>
+ 
+ #include <rex/assert.h>
+ #include <rex/chrono/clock.h>
+ #include <rex/cvar.h>
+ #include <rex/input/flags.h>
++#include <rex/input/input_system.h>
+ #include <rex/input/xinput/xinput_input_driver.h>
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+@@ -232,6 +234,14 @@ X_RESULT XinputInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state
+   out_state->gamepad.thumb_rx = dead_rx;
+   out_state->gamepad.thumb_ry = dead_ry;
+ 
++  const auto& native_pad = native_state.state.Gamepad;
++  if (native_pad.wButtons != 0 || native_pad.bLeftTrigger > 30 || native_pad.bRightTrigger > 30 ||
++      std::abs(static_cast<int>(native_pad.sThumbLX)) > 7849 ||
++      std::abs(static_cast<int>(native_pad.sThumbLY)) > 7849 ||
++      std::abs(static_cast<int>(dead_rx)) > 6000 || std::abs(static_cast<int>(dead_ry)) > 6000) {
++    NotePhysicalPadActivity(2);  // SDL_GAMEPAD_TYPE_XBOX360
++  }
++
+   return result;
+ }
+ 

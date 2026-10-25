@@ -5,7 +5,8 @@
 
 .DESCRIPTION
   Creates a virtual environment in out\keycaps-tool\venv with pinned versions of the packages pack.py
-  needs, freezes pack.py with its data (font_info.json, atlas_info.json, the DejaVu font) into
+  needs, freezes pack.py with its data (font_info.json, atlas_info.json, the DejaVu font, the PlayStation
+  button art of assets\glyphs\playstation) into
   out\keycaps-tool\dist\keycaps-pack.exe, and copies the license texts of everything the exe bundles
   into out\keycaps-tool\dist\licenses. The exe holds no game data: it reads the player's own texture
   dump at run time. scripts\package.ps1 runs this.
@@ -20,6 +21,7 @@ function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 $root = Split-Path -Parent $PSScriptRoot
 $out = if ([IO.Path]::IsPathRooted($OutDir)) { $OutDir } else { Join-Path $root $OutDir }
 $keycaps = Join-Path $root 'tools\keycaps'
+$glyphs = Join-Path $root 'assets\glyphs'
 $venv = Join-Path $out 'venv'
 $python = Join-Path $venv 'Scripts\python.exe'
 $dist = Join-Path $out 'dist'
@@ -40,11 +42,12 @@ if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
     --add-data "$(Join-Path $keycaps 'font_info.json');." `
     --add-data "$(Join-Path $keycaps 'atlas_info.json');." `
     --add-data "$(Join-Path $keycaps 'fonts');fonts" `
+    --add-data "$(Join-Path $glyphs 'playstation');glyphs\playstation" `
     (Join-Path $keycaps 'pack.py')
 if ($LASTEXITCODE -ne 0) { Fail 'PyInstaller failed.' }
 
 # License texts of what the exe bundles: Python, the packages (their dist-info licenses), PyInstaller's
-# bootloader and the DejaVu font.
+# bootloader, the DejaVu font and the Kenney button art.
 $licenses = Join-Path $dist 'licenses'
 New-Item -ItemType Directory -Force $licenses | Out-Null
 $basePrefix = & $python -c 'import sys; print(sys.base_prefix)'
@@ -58,6 +61,7 @@ foreach ($name in 'pillow', 'numpy', 'resvg_py', 'fonttools', 'pyinstaller') {
     Copy-Item -Recurse -Force $source (Join-Path $licenses $name)
 }
 Copy-Item -Force (Join-Path $keycaps 'fonts\LICENSE_DEJAVU') (Join-Path $licenses 'DejaVu-LICENSE.txt')
+Copy-Item -Force (Join-Path $glyphs 'playstation\LICENSE-Kenney.txt') (Join-Path $licenses 'Kenney-LICENSE.txt')
 
 $exe = Join-Path $dist 'keycaps-pack.exe'
 & $exe --help | Out-Null

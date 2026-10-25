@@ -29,6 +29,22 @@ Files in this repository derived from it:
 - `tools/patch_game_patches.py`, `src/gow2_game_patches.cpp` — adapted from its `tools/patch_game_patches.py` and `src/gowj_game_patches.cpp`; the patched sites and values come from xenia-canary/game-patches (`4D53082D - Gears of War 2.patch.toml`, authors illusion and boma; that repository has no license file, so only the addresses and values are reused, with credit).
 - `src/gow2_coalesced.h`, `src/gow2_coalesced.cpp` — adapted from its `src/gowj_coalesced.*` (bundle reader/writer, cached-override plumbing); the edits are GoW2-specific (mouse-look dead zone, key prompts).
 
+## gears-of-war-3-recomp (Flippage)
+
+- Project: [Flippage/gears-of-war-3-recomp](https://github.com/Flippage/gears-of-war-3-recomp)
+- Description: Gears of War 3 static recompilation on ReXGlue (BSD-3-Clause).
+- Copyright: Copyright (c) 2026, Flippage and the gow3-recomp contributors
+- License: BSD 3-Clause (full text below).
+
+Derived from it (issue #25):
+
+- `sdk/patches/0060-pad-activity.patch` — adapted from its `sdk/patches/0065-pad-activity-poll.patch` (last physical controller activity and gamepad type).
+- `src/gow2_input_activity.cpp`, `src/gow2_prompt_device.h` — the device choice (the most recent of keyboard/mouse and physical controller activity, PlayStation from the SDL gamepad type) follows its `src/gow3_button_glyphs.cpp`.
+
+## Kenney Input Prompts (PlayStation buttons)
+
+The PlayStation button pictures in `assets/glyphs/playstation` are from Kenney's Input Prompts 1.5 (www.kenney.nl), unmodified, licensed under Creative Commons Zero (CC0 1.0); see `assets/glyphs/playstation/LICENSE-Kenney.txt`. `keycaps\keycaps-pack.exe` bundles them to paint the PlayStation variants of the keycap pack.
+
 ## SDL_GameControllerDB
 
 - Project: [mdqinc/SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB)
@@ -295,6 +311,7 @@ The exe bundles, with their license texts in `keycaps\licenses`:
 - The PyInstaller 6.22.3 bootloader (GPL 2.0 or later with the bootloader exception, which allows
   distributing programs built with it).
 - DejaVu Sans Bold (see above).
+- Kenney Input Prompts PlayStation pictures (CC0, see above).
 
 ## Component licenses
 
@@ -2111,7 +2128,7 @@ zip; it has to keep the exported interface `gow2.exe` and `rexgpu-xenos.dll` use
 
 ## BSD 3-Clause License text
 
-The following license text applies to gears-judgement-recomp and the ReXGlue SDK:
+The following license text applies to gears-judgement-recomp, gears-of-war-3-recomp and the ReXGlue SDK:
 
 ```
 BSD 3-Clause License

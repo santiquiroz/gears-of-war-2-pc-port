@@ -17,6 +17,8 @@ analyze_font.py  reads the font out of your game (cell table, which characters s
 pack.py        lays the caps out in the free space of the two pages, renders them, copies the
                glyphs the game still needs from your texture dump, writes the pack and
                src/gow2_keycap_layout.inc
+atlas.py       the tutorial pictogram atlas without its Xbox button sprites (replace_kbd_base)
+playstation.py the PlayStation variants of the pages and the atlas (replace_ps4, replace_ps5)
 ```
 
 ## Using it
@@ -56,6 +58,20 @@ The SVGs in `assets/keycaps/svg` are original artwork and can be used on their o
   the pack), writes the result to `replace_kbdA` or `replace_kbdB` (alternating) and sets
   `texture_replace_variant` to it; SDK patch 0023 reloads the texture at once. A rebind composes it
   again, a controller gets the original picture back.
+
+## PlayStation buttons
+
+`pack.py` also writes two variants next to `replace`: `replace_ps4` and `replace_ps5`. Each holds
+the font page with the pad buttons (the other page falls back to `replace`) and the tutorial
+pictogram atlas, with PlayStation art in place of the Xbox glyphs: A/B/X/Y become cross, circle,
+square and triangle, LB/RB/LT/RT become L1/R1/L2/R2, the sticks and stick clicks become L/R and
+L3/R3, and Back/Start become Share/Options (PS4) or Create/Options (PS5). Every other glyph (arrows,
+D-pad, icons) and every keycap stays as it is. The game turns the variant on while a PlayStation
+controller is the device in use.
+
+The art is Kenney's Input Prompts (CC0), in `assets/glyphs/playstation`; the frozen tool bundles it.
+A pack built before this needs to be rebuilt (run `scripts/build-keycaps.ps1` or `Build keycap
+pack.cmd` again) to get the variants.
 
 ## Limits
 
