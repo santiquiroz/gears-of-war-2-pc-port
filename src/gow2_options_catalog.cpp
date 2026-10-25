@@ -421,7 +421,7 @@ constexpr QualityLabel kQualityLabels[] = {
 };
 
 std::vector<Choice> QualityChoices(const graphics_quality::Setting& setting) {
-  std::vector<Choice> choices{C("auto", "Platform default", "Predeterminado de plataforma")};
+  std::vector<Choice> choices{C("auto", "Auto (retail on PC)", "Auto (original en PC)")};
   for (const auto value : setting.choices) {
     if (value == "auto") continue;
     if (value == "on") choices.push_back(C(value, "On", "Encendido"));
