@@ -15,6 +15,8 @@ include(generated/rexglue.cmake)
 set(GOW2_SOURCES
     src/main.cpp
     src/gow2_coalesced.cpp
+    src/gow2_voice_language.cpp
+    src/gow2_voice_language_setup.cpp
     src/gow2_sha_table.cpp
     src/gow2_gpu_pick.cpp
     src/gow2_native_frontend.cpp

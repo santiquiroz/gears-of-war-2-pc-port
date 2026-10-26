@@ -37,6 +37,7 @@
 #include "gow2_save_dir.h"
 #include "gow2_sha_table.h"
 #include "gow2_utf8_guard.h"
+#include "gow2_voice_language_setup.h"
 #include "gow2_xam_input_guard.h"
 
 #if defined(__ANDROID__)
@@ -331,6 +332,31 @@ class Gow2App : public rex::ReXApp {
     coalesced_hashes_ = coalesced.hashes;
   }
 
+  void PrepareLanguage() {
+    const auto user_language =
+        static_cast<uint32_t>(std::strtoul(rex::cvar::GetFlagByName("user_language").c_str(), nullptr, 10));
+    const rex::glue::VoiceLanguageSetup setup = rex::glue::PrepareVoiceLanguage(
+        game_data_root_, cache_root_, user_language, rex::cvar::Query<std::string>("gow2_voice_language"));
+    if (setup.text_missing) {
+      rex::cvar::SetFlagByName("user_language", "1");
+      REXLOG_WARN("LANGUAGE user_language {} is not on this disc; English is used for this launch", user_language);
+    }
+#ifdef _WIN32
+    _wputenv_s(L"GOW2_VFS_OVERRIDES_FILE", setup.overrides_file.wstring().c_str());
+#else
+    if (setup.overrides_file.empty()) {
+      unsetenv("GOW2_VFS_OVERRIDES_FILE");
+    } else {
+      setenv("GOW2_VFS_OVERRIDES_FILE", setup.overrides_file.c_str(), 1);
+    }
+#endif
+    if (setup.failed) {
+      REXLOG_WARN("{}", setup.summary);
+    } else {
+      REXLOG_INFO("{}", setup.summary);
+    }
+  }
+
   // The temporal upscalers scale the finished frame to the screen size and skip every frame while
   // it is unknown. GOW2_TARGET_W/H set by the player win.
   static void SetUpscaleTarget() {
@@ -400,6 +426,7 @@ class Gow2App : public rex::ReXApp {
     PrepareNativeRenderer();
     rex::glue::PrepareWidescreen();
     PrepareCoalesced();
+    PrepareLanguage();
 #ifdef _WIN32
     rex::glue::PrepareKeycapPack();
 #endif

@@ -1326,6 +1326,45 @@ void AddSystem(std::vector<Setting>& out) {
           C("es", "Español"),
       }});
   out.push_back(Setting{
+      .id = "user_language",
+      .tab = Tab::kSystem,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Subtitles and text",
+      .label_es = "Subtítulos y textos",
+      .help_en = "Language of the game's menus, text and subtitles. Every language here is on the retail disc. Applies after a restart.",
+      .help_es =
+          "Idioma de los menús, textos y subtítulos del juego. Todos los idiomas de la lista vienen en el disco original. Se aplica al reiniciar.",
+      .choices = {
+          C("1", "English"),
+          C("5", "Español (Latinoamérica)"),
+          C("4", "Français"),
+          C("3", "Deutsch"),
+          C("6", "Italiano"),
+          C("11", "Polski"),
+          C("12", "Russian", "Ruso"),
+          C("7", "Korean", "Coreano"),
+          C("8", "Traditional Chinese", "Chino tradicional"),
+      }});
+  out.push_back(Setting{
+      .id = "gow2_voice_language",
+      .tab = Tab::kSystem,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Voices",
+      .label_es = "Voces",
+      .help_en = "Language of the voices. The retail disc has English, Latin American Spanish and French voices; \"Same as subtitles\" uses the subtitle language's voices when the disc has them, English otherwise. Applies after a restart.",
+      .help_es =
+          "Idioma de las voces. El disco original trae voces en inglés, español latino y francés; «Igual que los subtítulos» usa las voces del idioma de los subtítulos si el disco las trae, si no, inglés. Se aplica al reiniciar.",
+      .choices = {
+          C("auto", "Same as subtitles", "Igual que los subtítulos"),
+          C("en", "English"),
+          C("es", "Español (Latinoamérica)"),
+          C("fr", "Français"),
+      }});
+  out.push_back(Setting{
       .id = "gow2_menu_advanced",
       .tab = Tab::kSystem,
       .kind = Kind::kToggle,

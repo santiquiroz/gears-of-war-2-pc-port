@@ -120,6 +120,8 @@ Todo esto se puede cambiar en el juego desde Opciones > Opciones de PC (o F10, o
 
 La pestaña Gráficos incluye **Calidad del juego**: perfiles Bajo / Medio / Alto (original) y 24 controles de calidad del motor; requieren reiniciar. Alto restaura la calidad original; Automático conserva los valores de la plataforma (en PC, los originales, que ya son la opción más alta de cada fila; Android apaga las sombras de objetos). Ver [el inventario de claves y perfiles](docs/SYSTEM_SETTINGS.md).
 
+Las voces (inglés, español latino o francés; `gow2_voice_language`) y los subtítulos y textos (9 idiomas; `user_language`) se eligen por separado en Opciones de PC > Sistema y se aplican al reiniciar.
+
 - `fullscreen` — pantalla completa o ventana.
 - `resolution_scale` — resolución interna de renderizado como múltiplo de 720p: 1 = 720p, 2 = 1440p, 3 = 4K.
 - `present_effect` — escalado de la imagen final: `bilinear` con el runtime estándar; `fsr`, `cas` y rutas temporales experimentales con un runtime compilado desde el código fuente (ver abajo).

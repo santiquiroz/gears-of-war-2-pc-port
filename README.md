@@ -124,6 +124,8 @@ Everything here can be changed in game from Options > PC Options (or F10, or Bac
 
 The Graphics tab includes **Game quality**: Low / Medium / High (retail) presets and 24 individual engine quality controls, all applied after a restart. High restores retail quality; Auto keeps platform defaults (retail on PC, which is already the highest choice in every row; Android turns object shadows off). See [the key inventory and presets](docs/SYSTEM_SETTINGS.md).
 
+Voices (English, Latin American Spanish or French; `gow2_voice_language`) and subtitles and text (9 languages; `user_language`) are chosen separately in PC Options > System and apply after a restart.
+
 - `fullscreen` — run fullscreen or windowed.
 - `resolution_scale` — internal render resolution as a multiple of 720p: 1 = 720p, 2 = 1440p, 3 = 4K.
 - `present_effect` — final image scaling: `bilinear` with the stock runtime; `fsr`, `cas` and experimental temporal paths with a source-built runtime (see below).

@@ -10,6 +10,12 @@
 # into this file and keeps every comment. See docs/PC_OPTIONS.md.
 # Menu language: "auto" follows the system (English or Spanish), "en" or "es" forces one.
 # gow2_menu_language = "auto"
+# Language of the game's menus, text and subtitles (restart to apply): 1 English, 5 Spanish (Latin
+# America), 4 French, 3 German, 6 Italian, 11 Polish, 12 Russian, 7 Korean, 8 Traditional Chinese.
+# user_language = 1
+# Voices (restart to apply): "auto" = the subtitle language's voices when the disc has them, else
+# English; "en", "es" (Latin America) or "fr".
+# gow2_voice_language = "auto"
 # The game's Options > Storage Location button opens the PC Options menu (renamed PC Options).
 # gow2_pc_options_entry = true
 # Key that opens and closes the PC Options menu from anywhere.

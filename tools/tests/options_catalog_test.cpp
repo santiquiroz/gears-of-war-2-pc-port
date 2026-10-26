@@ -201,7 +201,7 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
-  Expect(CountTab(options::Tab::kSystem) == 13, "system has 13 rows");
+  Expect(CountTab(options::Tab::kSystem) == 15, "system has 15 rows");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
@@ -284,6 +284,25 @@ void TestWindowsUpdateRows() {
   }
 }
 
+void TestLanguageRows() {
+  const struct {
+    const char* id;
+    size_t choices;
+    std::string_view first;
+  } rows[] = {{"user_language", 9, "1"}, {"gow2_voice_language", 4, "auto"}};
+  for (const auto& row : rows) {
+    const auto* setting = options::FindSetting(row.id);
+    Expect(setting != nullptr, std::string("language row exists: ") + row.id);
+    if (!setting) continue;
+    Expect(setting->tab == options::Tab::kSystem && setting->apply == options::Apply::kRestart &&
+               setting->platforms == options::kAllPlatforms,
+           std::string("language row is a System restart row on both platforms: ") + row.id);
+    Expect(setting->choices.size() == row.choices, std::string("language row choice count: ") + row.id);
+    Expect(!setting->choices.empty() && setting->choices.front().value == row.first,
+           std::string("language row first choice: ") + row.id);
+  }
+}
+
 int main() {
   try {
     TestIdsUnique();
@@ -302,6 +321,7 @@ int main() {
     TestCoopPlayersRow();
     TestSplitScreenRows();
     TestGraphicsQualityRows();
+    TestLanguageRows();
   } catch (const std::exception& e) {
     ++g_checks;
     ++g_failures;

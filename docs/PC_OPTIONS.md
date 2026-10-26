@@ -239,6 +239,8 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
 | Menu language | `gow2_menu_language` | automatic, English, Spanish | now | both |
+| Subtitles and text | `user_language` | English, Latin American Spanish, French, German, Italian, Polish, Russian, Korean, Traditional Chinese | restart | both |
+| Voices | `gow2_voice_language` | same as subtitles, English, Latin American Spanish, French | restart | both |
 | Show advanced options | `gow2_menu_advanced` | on, off | now | both |
 | All runtime settings | action | opens the F4 list | now | both |
 | Restart the game | action | save first: it saves nothing | now | Windows |
@@ -251,7 +253,8 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 
 `gow2_fps_cap`, `gow2_audio_volume`, `gow2_menu_language`,
 `gow2_menu_advanced`, `gow2_host_lease_hours`, `gow2_host_close_on_exit`,
-`gow2_pc_options_entry`, `bind_pc_options` (F10).
+`gow2_pc_options_entry`, `bind_pc_options` (F10), `user_language`,
+`gow2_voice_language`.
 
 ## Host over the internet
 
