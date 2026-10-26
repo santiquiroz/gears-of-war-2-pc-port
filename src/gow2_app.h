@@ -26,6 +26,7 @@
 #include "gow2_prompt_swap.h"
 #include "gow2_coop_network.h"
 #include "gow2_crash_watch.h"
+#include "gow2_disc_install.h"
 #include "gow2_frame_stats.h"
 #include "gow2_input_activity.h"
 #include "gow2_gpu_pick.h"
@@ -61,11 +62,8 @@ class Gow2App : public rex::ReXApp {
         PPCImageConfig));
   }
 
-  // A folder with only default.xex (like the repo's codegen input) boots to a black screen.
   static bool IsDiscFolder(const std::filesystem::path& dir) {
-    std::error_code ec;
-    return std::filesystem::exists(dir / "default.xex", ec) &&
-           std::filesystem::is_directory(dir / "GearGame", ec);
+    return rex::glue::disc_install::IsDiscFolder(dir);
   }
 
   static std::filesystem::path WithXex(const std::filesystem::path& dir) {
@@ -145,8 +143,8 @@ class Gow2App : public rex::ReXApp {
   }
 
 #ifdef _WIN32
-  // Standard Windows folder picker. Returns empty when cancelled.
-  static std::filesystem::path PickGameFolder() {
+  // Standard Windows file picker. Returns empty when cancelled.
+  static std::filesystem::path PickGameDisc() {
     const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     std::filesystem::path result;
     IFileOpenDialog* dlg = nullptr;
@@ -154,8 +152,13 @@ class Gow2App : public rex::ReXApp {
                                    IID_PPV_ARGS(&dlg)))) {
       DWORD opts = 0;
       dlg->GetOptions(&opts);
-      dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-      dlg->SetTitle(L"Select your Gears of War 2 folder (the one with default.xex)");
+      dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST);
+      const COMDLG_FILTERSPEC types[] = {
+          {L"Gears of War 2 disc image or default.xex", L"*.iso;default.xex"},
+          {L"All files", L"*.*"},
+      };
+      dlg->SetFileTypes(2, types);
+      dlg->SetTitle(L"Select your Gears of War 2 disc image (.iso), or default.xex in your game folder");
       IShellItem* item = nullptr;
       if (SUCCEEDED(dlg->Show(nullptr)) && SUCCEEDED(dlg->GetResult(&item))) {
         PWSTR path = nullptr;
@@ -171,27 +174,66 @@ class Gow2App : public rex::ReXApp {
     return result;
   }
 
+  struct GamePick {
+    std::filesystem::path game_folder;
+    bool error_shown = false;
+  };
+
+  static GamePick GameFolderFromPick(const std::filesystem::path& picked) {
+    namespace disc = rex::glue::disc_install;
+    switch (disc::ClassifyPick(picked)) {
+      case disc::PickKind::kGameExecutable:
+        return {WithXex(picked.parent_path())};
+      case disc::PickKind::kIso: {
+        const disc::InstallResult result = disc::InstallFromIso(picked, AppHome());
+        if (!result.error.empty()) {
+          MessageBoxW(nullptr, result.error.c_str(), L"Gears of War 2", MB_OK | MB_ICONWARNING);
+          return {{}, true};
+        }
+        if (result.cancelled) return {};
+        return {WithXex(result.game_folder)};
+      }
+      case disc::PickKind::kOther:
+        break;
+    }
+    return {};
+  }
+
   // Asks once. On a valid pick the choice is remembered and used; otherwise
   // explains the requirement and returns the fallback for a clean runtime failure.
   static std::filesystem::path PromptAndRememberGameFolder(
       const std::filesystem::path& fallback) {
-    const std::filesystem::path picked = PickGameFolder();
-    if (auto hit = WithXex(picked); !hit.empty()) {
+    const GamePick pick = GameFolderFromPick(PickGameDisc());
+    if (const auto& hit = pick.game_folder; !hit.empty()) {
       WriteRememberedGamePath(hit);
-      REXLOG_INFO("gow2 content root chosen by the player: {}", hit.string());
+      REXLOG_INFO("gow2 content root chosen by the player: {}", PathUtf8(hit));
       return hit;
     }
-    MessageBoxW(nullptr,
-                L"Gears of War 2 needs your own game files to run.\n\n"
-                L"The selected folder must contain default.xex and GearGame "
-                L"from your own retail disc.",
-                L"Gears of War 2", MB_OK | MB_ICONWARNING);
+    if (!pick.error_shown) {
+      MessageBoxW(nullptr,
+                  L"Gears of War 2 needs your own game files to run.\n\n"
+                  L"Choose the .iso of your own retail disc, or default.xex in a folder "
+                  L"that also has GearGame.",
+                  L"Gears of War 2", MB_OK | MB_ICONWARNING);
+    }
     return fallback;
   }
 #endif
 
   static std::filesystem::path ResolveContentRoot(const std::filesystem::path& given) {
     std::error_code ec;
+#ifdef _WIN32
+    if (std::filesystem::is_regular_file(given, ec) &&
+        rex::glue::disc_install::ClassifyPick(given) == rex::glue::disc_install::PickKind::kIso) {
+      const GamePick pick = GameFolderFromPick(given);
+      if (const auto& hit = pick.game_folder; !hit.empty()) {
+        WriteRememberedGamePath(hit);
+        REXLOG_INFO("gow2 content root from the disc image {}: {}", PathUtf8(given), PathUtf8(hit));
+        return hit;
+      }
+    }
+    ec.clear();
+#endif
     if (!given.empty() && std::filesystem::exists(given, ec)) {
       if (auto hit = WithXex(given); !hit.empty()) return hit;
     }
@@ -201,7 +243,7 @@ class Gow2App : public rex::ReXApp {
         if (auto hit = WithXex(remembered); !hit.empty()) {
           if (hit != given) {
             REXLOG_INFO("gow2 content root from gow2_game_path.txt: {}",
-                        hit.string());
+                        PathUtf8(hit));
           }
           return hit;
         }
@@ -210,7 +252,7 @@ class Gow2App : public rex::ReXApp {
     std::filesystem::path dir = AppHome();
     for (int depth = 0; !dir.empty(); ++depth) {
       if (auto hit = WithXex(dir); !hit.empty()) {
-        if (hit != given) REXLOG_INFO("gow2 found content root {}", hit.string());
+        if (hit != given) REXLOG_INFO("gow2 found content root {}", PathUtf8(hit));
         return hit;
       }
       if (depth >= 4) break;

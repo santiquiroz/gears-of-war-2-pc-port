@@ -58,7 +58,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ## Download and play
 
-Nothing of the game is included in the release. You need your own retail Xbox 360 copy of Gears of War 2 (title ID `4D53082D`), dumped to a folder that has `default.xex` and the `GearGame` folder, for example by extracting your ISO with [xdvdfs](https://github.com/antangelo/xdvdfs):
+Nothing of the game is included in the release. You need your own retail Xbox 360 copy of Gears of War 2 (title ID `4D53082D`): a disc image (`.iso`) of it, or a folder that has `default.xex` and the `GearGame` folder, which you can still make by extracting your ISO with [xdvdfs](https://github.com/antangelo/xdvdfs):
 
 ```text
 xdvdfs unpack "Gears of War 2.iso" C:\Games\GoW2
@@ -72,9 +72,9 @@ Requirements: Windows 10/11 x64 and a DirectX 12 GPU (developed on an AMD Radeon
 
 1. Download `gow2-recomp-<version>-win64.zip` from the [latest release](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest) (the `.apk` is the Android build).
 2. Unzip it anywhere and run `gow2.exe`. The exe is not signed, so Windows may show "Windows protected your PC": choose **More info**, then **Run anyway**.
-3. The first launch asks for the game folder (the one with `default.xex` and `GearGame`) and remembers it in `gow2_game_path.txt` next to the exe. To pick another folder later, delete that file.
+3. The first launch asks for your `.iso`, or for `default.xex` in an extracted game folder (one that also has `GearGame`), and remembers the game folder in `gow2_game_path.txt` next to the exe. With an `.iso` it extracts it once into a `game` folder next to `gow2.exe`, which needs about 8 GB free on that drive; you can delete the `.iso` afterwards if you want. To pick another folder later, delete `gow2_game_path.txt`.
 
-It does not ask when the game folder is inside the exe's folder or right next to it, when the exe's folder is inside the game folder, or when you pass the folder yourself:
+It does not ask when the game folder is inside the exe's folder or right next to it, when the exe's folder is inside the game folder, or when you pass the folder yourself (`--game_data_root` also takes the .iso):
 
 ```text
 gow2.exe --game_data_root="C:\Games\GoW2"

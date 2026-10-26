@@ -56,7 +56,7 @@ Ver el plan completo en [ROADMAP.md](ROADMAP.md).
 
 ## Descarga y juego
 
-La versión no incluye nada del juego. Necesitas tu propia copia comercial de Gears of War 2 para Xbox 360 (ID de título `4D53082D`), volcada a una carpeta que tenga `default.xex` y la carpeta `GearGame`, por ejemplo extrayendo tu ISO con [xdvdfs](https://github.com/antangelo/xdvdfs):
+La versión no incluye nada del juego. Necesitas tu propia copia comercial de Gears of War 2 para Xbox 360 (ID de título `4D53082D`): una imagen de disco (`.iso`) de ella, o una carpeta que tenga `default.xex` y la carpeta `GearGame`, que todavía puedes crear extrayendo tu ISO con [xdvdfs](https://github.com/antangelo/xdvdfs):
 
 ```text
 xdvdfs unpack "Gears of War 2.iso" C:\Games\GoW2
@@ -70,9 +70,9 @@ Requisitos: Windows 10/11 x64 y una GPU con DirectX 12 (desarrollado en una AMD 
 
 1. Descarga `gow2-recomp-<versión>-win64.zip` de la [última versión](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest) (el `.apk` es la versión de Android).
 2. Descomprímelo en cualquier lugar y ejecuta `gow2.exe`. El exe no está firmado, así que Windows puede mostrar «Windows protegió tu PC»: elige **Más información** y luego **Ejecutar de todas formas**.
-3. El primer arranque pide la carpeta del juego (la que tiene `default.xex` y `GearGame`) y la recuerda en `gow2_game_path.txt`, junto al exe. Para elegir otra carpeta más adelante, borra ese archivo.
+3. El primer arranque pide tu `.iso`, o el `default.xex` de una carpeta del juego ya extraída (que también tenga `GearGame`), y recuerda la carpeta del juego en `gow2_game_path.txt`, junto al exe. Con un `.iso` lo extrae una sola vez en una carpeta `game` junto a `gow2.exe`, lo que necesita unos 8 GB libres en esa unidad; después puedes borrar el `.iso` si quieres. Para elegir otra carpeta más adelante, borra `gow2_game_path.txt`.
 
-No pregunta si la carpeta del juego está dentro de la carpeta del exe o justo al lado, si la carpeta del exe está dentro de la del juego, o si pasas la carpeta tú:
+No pregunta si la carpeta del juego está dentro de la carpeta del exe o justo al lado, si la carpeta del exe está dentro de la del juego, o si pasas la carpeta tú (`--game_data_root` también acepta el .iso):
 
 ```text
 gow2.exe --game_data_root="C:\Games\GoW2"
