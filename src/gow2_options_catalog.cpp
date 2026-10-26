@@ -1502,6 +1502,8 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("Tabs", "Pestañas", lang);
     case TextId::kHintClose:
       return Pick("Close", "Cerrar", lang);
+    case TextId::kHintQuit:
+      return Pick("Quit game", "Salir del juego", lang);
     case TextId::kEditTextTitle:
       return Pick("Edit", "Editar", lang);
     case TextId::kEditTextOk:

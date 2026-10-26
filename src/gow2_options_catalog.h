@@ -88,6 +88,7 @@ enum class TextId : uint8_t {
   kSaved, kSaveFailed,
   kPressAKey,          // key capture prompt
   kHintChange, kHintBack, kHintDefault, kHintSave, kHintTabs, kHintClose,
+  kHintQuit,
   kEditTextTitle, kEditTextOk, kEditTextCancel,
 };
 

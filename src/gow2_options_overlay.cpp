@@ -840,16 +840,21 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     constexpr std::array<Command,3> commands{Command::kSave,Command::kResetRow,Command::kBack};
     const std::array<TextId,3> labels{TextId::kHintSave,TextId::kHintDefault,
         state_.page == Page::kMain && state_.touched.empty() ? TextId::kHintClose : TextId::kHintBack};
-    const float item_width = width_/3;
+    const float item_width = width_/4;
+    const ImVec2 size{item_width-.008f*h_,std::max(44.f,.055f*h_)};
     PushFont(.024f*h_,true);
     for (size_t i=0;i<commands.size();++i) {
       ImGui::SetCursorScreenPos({left_+item_width*static_cast<float>(i),.875f*h_});
       ImGui::PushID(static_cast<int>(i));
-      const bool clicked = DrawButton(std::string(T(labels[i])).c_str(),
-          {item_width-.008f*h_,std::max(44.f,.055f*h_)},commands[i] == Command::kSave);
+      const bool clicked = DrawButton(std::string(T(labels[i])).c_str(),size,commands[i] == Command::kSave);
       ImGui::PopID();
       if (clicked && !ModalActive()) Dispatch(commands[i]);
     }
+    ImGui::SetCursorScreenPos({left_+item_width*static_cast<float>(commands.size()),.875f*h_});
+    ImGui::PushID("quit_game");
+    const bool quit = DrawButton(std::string(T(TextId::kHintQuit)).c_str(),size,false);
+    ImGui::PopID();
+    if (quit && !ModalActive()) RunAction("quit_game");
     ImGui::PopFont();
   }
 

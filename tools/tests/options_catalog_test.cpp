@@ -140,11 +140,12 @@ void TestUiTexts() {
       options::TextId::kHintSave,
       options::TextId::kHintTabs,
       options::TextId::kHintClose,
+      options::TextId::kHintQuit,
       options::TextId::kEditTextTitle,
       options::TextId::kEditTextOk,
       options::TextId::kEditTextCancel,
   };
-  Expect(ids.size() == 33, "all 33 TextIds are listed");
+  Expect(ids.size() == 34, "all 34 TextIds are listed");
   for (options::TextId id : ids) {
     Expect(!options::Text(id, options::Lang::kEn).empty(), "Text EN is non-empty");
     Expect(!options::Text(id, options::Lang::kEs).empty(), "Text ES is non-empty");

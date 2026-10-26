@@ -46,7 +46,9 @@ Keyboard:
 Mouse and touch:
 
 - Click or tap tabs, rows, and the arrows beside a value.
-- Three buttons at the bottom: Save, Default, Back (Close when clean).
+- Four buttons at the bottom: Save, Default, Back (Close when clean), and
+  Quit game. Quit game sits in the footer of every page and quits the same
+  way as System > Quit the game. F10 or Back + Start opens the menu.
 
 Text rows open an editor. Controllers get an on-screen keyboard there.
 
@@ -240,7 +242,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Show advanced options | `gow2_menu_advanced` | on, off | now | both |
 | All runtime settings | action | opens the F4 list | now | both |
 | Restart the game | action | save first: it saves nothing | now | Windows |
-| Quit the game | action | quit, then open the game again | now | Android |
+| Quit the game | action | quit, then open the game again | now | both |
 | Settings file | info | where the menu saves | now | both |
 | Version | info | this build of the port | now | both |
 | Open this menu | info | F10, Back + Start | now | both |
