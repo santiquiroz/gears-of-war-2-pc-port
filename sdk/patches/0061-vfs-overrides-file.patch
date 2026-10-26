@@ -1,0 +1,69 @@
+diff --git a/src/filesystem/devices/host_path_device.cpp b/src/filesystem/devices/host_path_device.cpp
+index 2c4e247..c88a440 100644
+--- a/src/filesystem/devices/host_path_device.cpp
++++ b/src/filesystem/devices/host_path_device.cpp
+@@ -14,6 +14,8 @@
+ #include <algorithm>
+ #include <cctype>
+ #include <cstdlib>
++#include <filesystem>
++#include <fstream>
+ #include <string>
+ #include <system_error>
+ #include <unordered_map>
+@@ -43,11 +45,55 @@ std::string NormalizeOverrideKey(std::string_view path) {
+   return out;
+ }
+ 
++// GOW2_VFS_OVERRIDES_FILE names a UTF-8 file of "guest=host" lines, for lists
++// too long for one environment variable.
++void AddOverridesFromFile(std::unordered_map<std::string, std::string>& table) {
++#ifdef _WIN32
++  // Wide read so a cache folder under a non-ASCII user name survives.
++  const wchar_t* raw = _wgetenv(L"GOW2_VFS_OVERRIDES_FILE");
++#else
++  const char* raw = std::getenv("GOW2_VFS_OVERRIDES_FILE");
++#endif
++  if (!raw || !*raw) {
++    return;
++  }
++  std::filesystem::path path(raw);
++  std::ifstream file(path, std::ios::binary);
++  if (!file) {
++    REXLOG_WARN("vfs overrides file: cannot open {}", rex::path_to_utf8(path));
++    return;
++  }
++  size_t count = 0;
++  std::string line;
++  while (std::getline(file, line)) {
++    if (!line.empty() && line.back() == '\r') {
++      line.pop_back();
++    }
++    if (line.empty() || line.front() == '#') {
++      continue;
++    }
++    size_t eq = line.find('=');
++    if (eq == std::string::npos) {
++      continue;
++    }
++    std::string key = NormalizeOverrideKey(std::string_view(line).substr(0, eq));
++    std::string value = line.substr(eq + 1);
++    if (key.empty() || value.empty()) {
++      continue;
++    }
++    table[key] = value;
++    ++count;
++  }
++  REXLOG_INFO("vfs overrides file: {} entries from {}", count, rex::path_to_utf8(path));
++}
++
+ // GOW2_VFS_OVERRIDES="guest/relative/path=C:\host\file;other/path=D:\x\y".
+ // Parsed once; later edits of the variable do not re-read it.
+ const std::unordered_map<std::string, std::string>& GetVfsOverrides() {
+   static const std::unordered_map<std::string, std::string> overrides = [] {
+     std::unordered_map<std::string, std::string> table;
++    // File first so the variable wins on a duplicate key.
++    AddOverridesFromFile(table);
+     const char* raw = std::getenv("GOW2_VFS_OVERRIDES");
+     if (!raw || !*raw) {
+       return table;
