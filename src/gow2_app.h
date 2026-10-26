@@ -277,6 +277,7 @@ class Gow2App : public rex::ReXApp {
   void PrepareCoalesced() {
     rex::glue::CoalescedOptions options = rex::glue::CoalescedOptionsFromCvars();
     rex::glue::RememberBakedBindings(options.native_bindings);
+    rex::glue::RememberMouseButtonSwap(options.swap_mouse_buttons);
     const rex::glue::CoalescedResult coalesced =
         rex::glue::PrepareCoalescedOverrides(game_data_root_, cache_root_, options);
 #ifdef _WIN32

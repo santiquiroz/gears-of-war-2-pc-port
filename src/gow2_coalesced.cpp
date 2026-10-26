@@ -6,6 +6,7 @@
 #include "gow2_coalesced_text.h"
 #include "gow2_graphics_quality.h"
 #include "gow2_native_bindings.h"
+#include "gow2_key_names.h"
 
 #include "gow2_mouse_aim.h"
 
@@ -414,10 +415,11 @@ void AddNativeKeys(std::vector<Edit>* e, const CoalescedOptions& o) {
     e->push_back({Edit::kRemove, kFile, section, "Bindings", "", "", "", false, false});
   for (const std::string& key : NativeBindingKeys(o.native_bindings))
     e->push_back({Edit::kRemove, kFile, "Engine.PlayerInput", "Bindings",
-                  "(Name=\"" + key + "\",", "", "", false, false});
+                  "(Name=\"" + std::string(keynames::EngineMouseName(key, o.swap_mouse_buttons)) + "\",",
+                  "", "", false, false});
   for (const NativeBinding& b : o.native_bindings)
-    e->push_back({Edit::kAppend, kFile, "Engine.PlayerInput", "Bindings", BindingIniValue(b), "", "",
-                  false, false});
+    e->push_back({Edit::kAppend, kFile, "Engine.PlayerInput", "Bindings",
+                  BindingIniValue(b, o.swap_mouse_buttons), "", "", false, false});
 }
 
 void AddNativeMouse(std::vector<Edit>* e) {
@@ -765,10 +767,13 @@ std::string FriendlyKeyName(const std::string& k) {
   return k;
 }
 
-std::string KeybindLabel(const char* name, const char* fallback) {
+std::string KeybindValue(const char* name, const char* fallback) {
   std::string v = rex::cvar::Query<std::string>(name);
-  if (v.empty()) v = fallback;
-  return "[" + FriendlyKeyName(FirstKey(v)) + "]";
+  return v.empty() ? fallback : v;
+}
+
+std::string KeybindLabel(const char* name, const char* fallback) {
+  return "[" + FriendlyKeyName(FirstKey(KeybindValue(name, fallback))) + "]";
 }
 
 
@@ -784,6 +789,8 @@ CoalescedOptions CoalescedOptionsFromCvars() {
   o.native_mouse = NativeMouseAimWanted();
   if (rex::cvar::Query<bool>("gow2_native_keys") && o.native_mouse) {
     o.native_bindings = NativeKeyBindings([](const char* name) { return rex::cvar::Query<std::string>(name); });
+    o.swap_mouse_buttons = keynames::MouseButtonsFollowTriggers(
+        KeybindValue("keybind_left_trigger", "RMB"), KeybindValue("keybind_right_trigger", "LMB"));
   }
   o.pc_options_entry = REXCVAR_GET(gow2_pc_options_entry) && HostUiHooksAvailable();
 #if defined(__ANDROID__)

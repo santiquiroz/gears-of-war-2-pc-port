@@ -60,8 +60,9 @@ std::vector<NativeBinding> NativeKeyBindings(const std::function<std::string(con
   return out;
 }
 
-std::string BindingIniValue(const NativeBinding& b) {
-  std::string v = "(Name=\"" + b.key + "\",Command=\"" + b.command + "\"";
+std::string BindingIniValue(const NativeBinding& b, bool swap_mouse_buttons) {
+  std::string v = "(Name=\"" + std::string(keynames::EngineMouseName(b.key, swap_mouse_buttons)) +
+                  "\",Command=\"" + b.command + "\"";
   if (b.shift || b.control || b.alt) {
     v += std::string(",Control=") + (b.control ? "True" : "False") + ",Shift=" +
          (b.shift ? "True" : "False") + ",Alt=" + (b.alt ? "True" : "False");

@@ -144,4 +144,30 @@ std::vector<Chord> ParseChords(std::string_view value) {
   return out;
 }
 
+namespace {
+
+bool HasBareKey(std::string_view value, std::string_view engine_name) {
+  for (const Chord& chord : ParseChords(value)) {
+    if (chord.shift || chord.control || chord.alt) continue;
+    for (const std::string& name : chord.engine_names)
+      if (name == engine_name) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool MouseButtonsFollowTriggers(std::string_view left_trigger_value,
+                                std::string_view right_trigger_value) {
+  return HasBareKey(left_trigger_value, "RightMouseButton") &&
+         HasBareKey(right_trigger_value, "LeftMouseButton");
+}
+
+std::string_view EngineMouseName(std::string_view engine_name, bool swapped) {
+  if (!swapped) return engine_name;
+  if (engine_name == "LeftMouseButton") return "RightMouseButton";
+  if (engine_name == "RightMouseButton") return "LeftMouseButton";
+  return engine_name;
+}
+
 }  // namespace rex::glue::keynames

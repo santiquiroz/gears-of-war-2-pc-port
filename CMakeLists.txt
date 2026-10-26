@@ -173,6 +173,7 @@ add_executable(gow2_update_check_test EXCLUDE_FROM_ALL tools/tests/update_check_
 add_executable(gow2_widescreen_math_test EXCLUDE_FROM_ALL tools/tests/widescreen_math_test.cpp)
 add_executable(gow2_native_renderer_math_test EXCLUDE_FROM_ALL tools/tests/native_renderer_math_test.cpp)
 add_executable(gow2_prompt_device_test EXCLUDE_FROM_ALL tools/tests/prompt_device_test.cpp)
+add_executable(gow2_key_names_test EXCLUDE_FROM_ALL tools/tests/key_names_test.cpp src/gow2_key_names.cpp)
 add_executable(gow2_native_frontend_test EXCLUDE_FROM_ALL tools/tests/native_frontend_test.cpp)
 add_executable(gow2_audio_volume_test EXCLUDE_FROM_ALL tools/tests/audio_volume_test.cpp)
 add_executable(gow2_coalesced_text_test EXCLUDE_FROM_ALL tools/tests/coalesced_text_test.cpp)
@@ -180,7 +181,8 @@ add_executable(gow2_keycaps_test EXCLUDE_FROM_ALL tools/tests/keycaps_test.cpp s
 foreach(_options_test gow2_toml_edit_test gow2_options_catalog_test gow2_options_model_test
         gow2_options_input_test gow2_options_values_test gow2_options_actions_test gow2_fps_cap_test
         gow2_audio_volume_test gow2_coalesced_text_test gow2_keycaps_test gow2_gpu_pick_test gow2_widescreen_math_test gow2_frame_stats_test
-        gow2_update_check_test gow2_native_renderer_math_test gow2_native_frontend_test gow2_prompt_device_test)
+        gow2_update_check_test gow2_native_renderer_math_test gow2_native_frontend_test gow2_prompt_device_test
+        gow2_key_names_test)
     target_include_directories(${_options_test} PRIVATE src)
 endforeach()
 

@@ -26,5 +26,8 @@ bool NativeKeysActive();
 // The bindings the game's input bundle was made with at start. Keys the player changes later in
 // the options are routed to these (RouteKey), so a change applies while playing.
 void RememberBakedBindings(std::vector<NativeBinding> bindings);
+// Whether the bundle was made with the mouse buttons' engine names traded
+// (keynames::MouseButtonsFollowTriggers); keys sent to the game are traded the same way.
+void RememberMouseButtonSwap(bool swapped);
 
 }  // namespace rex::glue

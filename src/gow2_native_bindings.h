@@ -22,8 +22,9 @@ struct NativeBinding {
 // missing value with the setting's default. Mouse wheel bindings are always added.
 std::vector<NativeBinding> NativeKeyBindings(const std::function<std::string(const char*)>& get);
 
-// The line for the bundle: (Name="SpaceBar",Command="GBA_MoveAction",Shift=False,...).
-std::string BindingIniValue(const NativeBinding& binding);
+// The line for the bundle: (Name="SpaceBar",Command="GBA_MoveAction",Shift=False,...), with the
+// mouse buttons' names traded when `swap_mouse_buttons` (keynames::MouseButtonsFollowTriggers).
+std::string BindingIniValue(const NativeBinding& binding, bool swap_mouse_buttons);
 
 // The engine key names the bindings use, for removing the game's own debug bindings of them.
 std::vector<std::string> NativeBindingKeys(const std::vector<NativeBinding>& bindings);

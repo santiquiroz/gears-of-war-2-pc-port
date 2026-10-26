@@ -115,6 +115,7 @@ FocusListener g_focus_listener;
 
 std::map<std::string, uint64_t> g_names;  // engine key name -> FName value (game thread)
 std::vector<NativeBinding> g_baked;       // the bindings the game's input bundle was made with
+bool g_swap_mouse = false;                // the bundle names the mouse buttons the other way round
 
 // The engine key a physical key stands for; the wheel has no virtual key of its own.
 const char* EngineNameOf(uint16_t vk) {
@@ -169,7 +170,8 @@ bool PrepareDelivery(Delivery* d) {
 }
 
 bool SendKey(Delivery& d, const std::string& engine_name, int event) {
-  const uint64_t name = NameFor(*d.ctx, d.base, engine_name);
+  const uint64_t name =
+      NameFor(*d.ctx, d.base, std::string(keynames::EngineMouseName(engine_name, g_swap_mouse)));
   if (name == 0) return false;
   PPCContext call = *d.ctx;
   call.r3.u64 = d.client;
@@ -335,6 +337,8 @@ bool NativeKeysWanted() {
 bool NativeKeysActive() { return g_active.load(std::memory_order_acquire); }
 
 void RememberBakedBindings(std::vector<NativeBinding> bindings) { g_baked = std::move(bindings); }
+
+void RememberMouseButtonSwap(bool swapped) { g_swap_mouse = swapped; }
 
 void InstallNativeKeys(rex::ui::Window* window) {
   if (!window || !NativeKeysWanted()) return;

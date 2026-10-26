@@ -32,6 +32,8 @@ struct CoalescedOptions {
   bool pc_options_entry = false;
   // Keyboard bindings of the engine (cvar gow2_native_keys); empty leaves the game's bindings alone.
   std::vector<NativeBinding> native_bindings;
+  // The bundle names the two mouse buttons the other way round (keynames::MouseButtonsFollowTriggers).
+  bool swap_mouse_buttons = false;
   // Key = a name in [ControllerFont] of GearGameUI ("Controller_A"), value = the label shown
   // ("[Space]"). Empty means "leave the pad glyphs alone".
   std::vector<std::pair<std::string, std::string>> prompt_labels;

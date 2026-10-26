@@ -113,6 +113,16 @@ does depend on is the unconfirmed point of list 1: it fixes the pick-up and relo
 those prompts are drawn with these font characters. If they are painted icons, they stay as Xbox
 buttons until step 4 below is done.
 
+## Mouse buttons in the Choose Path prompt (issue #29)
+
+`GearUIScene_PathChoice.HandleInputKey` takes `LeftMouseButton` as the left trigger's choice and
+`RightMouseButton` as the right trigger's, while the default bindings put RMB on LT and LMB on RT,
+so with native keys the mouse did the opposite of the prompt. When the triggers hold the mouse
+buttons that way round (`keynames::MouseButtonsFollowTriggers`, decided once at start), the two
+mouse buttons trade engine names at the engine boundary only: in the `Xe-GearInput.ini` bindings
+the Coalesced layer writes and in the key names `src/gow2_native_keys.cpp` sends to `InputKey`;
+everything else (routing, prompt labels, keycaps) keeps the true names.
+
 ## What still shows Xbox buttons, and the steps to finish it
 
 1. **No keycap pack (text labels).** The font has no keyboard art, so the hardcoded glyphs and the
