@@ -51,7 +51,9 @@ constexpr uint32_t kBlocks = 128;          // 0x4000-0x47FF: 2048 dwords
 constexpr uint32_t kBlockDwords = 16;
 constexpr uint32_t kMirrorDwords = kBlocks * kBlockDwords;
 constexpr uint32_t kArenaCount = 4;        // the command processor runs at most 2 frames behind
-constexpr uint32_t kMaxSnapshotsPerArena = 4096;
+// 4096 overflowed by ~230 draws a frame near the gas canisters of Act 1 (issue #26 log, arena_full); chunks are
+// allocated on demand, so the cap only costs memory where a frame has that many draws (~2.6 KB each).
+constexpr uint32_t kMaxSnapshotsPerArena = 8192;
 constexpr size_t kBlockBytes = kBlockDwords * sizeof(uint32_t);
 constexpr size_t kChunkBytes = size_t(1) << 20;
 constexpr size_t kArenaCapBytes = size_t(kMaxSnapshotsPerArena) * (sizeof(NativeDrawSnapshot) + 64 * 1024);
