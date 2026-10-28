@@ -143,7 +143,8 @@ public class Gow2Activity extends SDLActivity
     public void chooseGpuDriver() {
         Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         pick.addCategory(Intent.CATEGORY_OPENABLE);
-        pick.setType("application/zip");
+        pick.setType("*/*");
+        pick.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"application/zip", "application/x-zip-compressed", "application/octet-stream"});
         try {
             startActivityForResult(pick, REQUEST_GPU_DRIVER);
         } catch (ActivityNotFoundException e) {

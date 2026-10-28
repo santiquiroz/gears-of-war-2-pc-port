@@ -20,10 +20,12 @@ int main() {
   Expect(!UseNativeRenderer("off", false, "AMD Radeon RX 7800 XT", false), "off is off for AMD");
   Expect(UseNativeRenderer("auto", false, "AMD Radeon RX 7800 XT", false), "auto on AMD with the path unset is on");
   Expect(!UseNativeRenderer("auto", true, "AMD Radeon RX 7800 XT", false), "auto on AMD with the path set is off");
-  Expect(!UseNativeRenderer("auto", false, "NVIDIA GeForce RTX 5080", false), "auto on NVIDIA is off");
+  Expect(UseNativeRenderer("auto", false, "NVIDIA GeForce RTX 5080", false), "auto on NVIDIA is on");
+  Expect(!UseNativeRenderer("auto", true, "NVIDIA GeForce GTX 1070", false), "auto on NVIDIA with the path set is off");
+  Expect(!UseNativeRenderer("auto", false, "Intel(R) UHD Graphics 770", false), "auto on Intel is off");
   Expect(!UseNativeRenderer("auto", false, "", false), "auto with an unknown GPU is off");
   Expect(UseNativeRenderer("garbage", false, "AMD Radeon RX 7800 XT", false), "a garbage mode behaves like auto on AMD");
-  Expect(!UseNativeRenderer("garbage", false, "NVIDIA GeForce RTX 5080", false), "a garbage mode behaves like auto on NVIDIA");
+  Expect(UseNativeRenderer("garbage", false, "NVIDIA GeForce GTX 1070", false), "a garbage mode behaves like auto on NVIDIA");
   Expect(UseNativeRenderer("auto", false, "", true), "auto on Android with no GPU name is on");
   Expect(!UseNativeRenderer("auto", true, "", true), "auto on Android with the path set is off");
   Expect(!UseNativeRenderer("off", false, "", true), "off is off on Android");

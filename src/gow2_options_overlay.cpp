@@ -527,7 +527,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
   bool Hit(const char* id, ImVec2 pos, ImVec2 size) {
     ImGui::SetCursorScreenPos(pos);
-    return ImGui::InvisibleButton(id, size);
+    return ImGui::InvisibleButton(id, size) && !touch_scrolling_;
   }
 
   void RetirePopups() {
@@ -647,8 +647,16 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::SetCursorScreenPos({left_, top});
     ImGui::BeginChild("##option-rows", {width_, .67f*h_-top}, ImGuiChildFlags_None,
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNavInputs);
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) touch_scrolling_ = false;
     const auto rows = Rows(state_,Catalog(),values_,context_.ctx);
     for (size_t index=0;index<rows.size();++index) DrawRow(rows[index],static_cast<int>(index));
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseSource == ImGuiMouseSource_TouchScreen &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        ImGui::IsMouseDragging(ImGuiMouseButton_Left, std::max(12.f, .02f*h_))) {
+      touch_scrolling_ = true;
+      ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+    }
     ImGui::EndChild();
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(2);
@@ -1234,6 +1242,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   int64_t release_deadline_ = 0;
   bool focus_ = false;
   bool scroll_selection_ = false;
+  bool touch_scrolling_ = false;
   bool capture_ = false;
   bool popup_focus_ = false;
   bool shift_ = false;
