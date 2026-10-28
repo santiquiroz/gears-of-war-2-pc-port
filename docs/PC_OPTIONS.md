@@ -92,6 +92,7 @@ Defaults keep the original game and crossplay working.
 
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
+| Graphics API | `gpu_backend` | automatic (Direct3D 12), Direct3D 12, Vulkan (experimental); Direct3D 12 is the tested path, Vulkan is experimental with only FSR 1 and CAS | restart | Windows |
 | Internal resolution | `resolution_scale` | 720p, 1440p, 4K | restart | both |
 | Upscaler | `gow2_temporal` + `gow2_upscaler` | off, FSR 3.1, FSR 4 (DLSS on DLSS builds) | now | Windows |
 | Upscaling | info | internal -> screen ratio | now | Windows |

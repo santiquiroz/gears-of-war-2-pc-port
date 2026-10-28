@@ -151,6 +151,25 @@ void AddDisplay(std::vector<Setting>& out) {
 
 void AddGraphicsUpscaling(std::vector<Setting>& out) {
   out.push_back(Setting{
+      .id = "gpu_backend",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kWindows,
+      .label_en = "Graphics API",
+      .label_es = "API gráfica",
+      .help_en = "Direct3D 12 is the tested path and the only one with FSR 2/3/4 and DLSS. Vulkan is "
+                 "experimental: try it if your GPU driver crashes or stutters with Direct3D 12. On Vulkan only "
+                 "the FSR 1 and CAS present effects work.",
+      .help_es = "Direct3D 12 es el camino probado y el único con FSR 2/3/4 y DLSS. Vulkan es experimental: "
+                 "pruébalo si el driver de tu GPU se cuelga o da tirones con Direct3D 12. En Vulkan solo "
+                 "funcionan los efectos de presentación FSR 1 y CAS.",
+      .choices = {
+          C("any", "Automatic (Direct3D 12)", "Automático (Direct3D 12)"),
+          C("d3d12", "Direct3D 12", "Direct3D 12"),
+          C("vulkan", "Vulkan (experimental)", "Vulkan (experimental)"),
+      }});
+  out.push_back(Setting{
       .id = "gow2_native_renderer",
       .tab = Tab::kGraphics,
       .kind = Kind::kChoice,
@@ -957,16 +976,15 @@ void AddMultiplayer(std::vector<Setting>& out) {
       .label_en = "Split-screen players",
       .label_es = "Jugadores en pantalla dividida",
       .help_en =
-          "Local players signed in for split-screen campaign co-op (Co-op Campaign > Split-screen). "
-          "Each extra player needs a controller. Applies on the next start.",
+          "Local players signed in for split-screen campaign co-op (Co-op Campaign > Split-screen): two at "
+          "most, the game's own limit. The second player needs a controller. Applies on the next start.",
       .help_es =
           "Jugadores locales para la campaña cooperativa en pantalla dividida (Campaña cooperativa > "
-          "Pantalla dividida). Cada jugador extra necesita un mando. Se aplica al reiniciar.",
+          "Pantalla dividida): dos como máximo, el límite del juego. El segundo jugador necesita un mando. "
+          "Se aplica al reiniciar.",
       .choices = {
           C("1", "1"),
           C("2", "2"),
-          C("3", "3"),
-          C("4", "4"),
       }});
   out.push_back(Setting{
       .id = "input_pad_first_user",
