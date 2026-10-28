@@ -44,15 +44,16 @@ diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/com
 index 3cd872c..4575c89 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -94,6 +94,7 @@ REXCVAR_DEFINE_BOOL(vulkan_occlusion_query_precise, false, "GPU/Vulkan",
+@@ -72,6 +72,8 @@ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
+                     "device (falls back to render passes otherwise)")
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
- REXCVAR_DECLARE(int32_t, vulkan_android_depth_experiment);
 +REXCVAR_DECLARE(bool, gpu_vertex_buffer_state_skip);
- 
- REXCVAR_DEFINE_INT32(vulkan_android_trace_frame_after_seconds, 0, "GPU/Vulkan",
-                      "Log every draw of one frame (FRAMETRACE lines: shaders, vertex formats, the "
-@@ -4603,7 +4604,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
++
+ #if REX_PLATFORM_ANDROID
+ REXCVAR_DEFINE_BOOL(vulkan_android_stats_log, false, "GPU/Vulkan",
+                     "Log the command processor's work every five seconds (GPUSTATS lines: draws, "
+@@ -4603,7 +4605,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
            return false;
        }
        VertexBufferState& state = vertex_buffer_states_[vfetch_index];
