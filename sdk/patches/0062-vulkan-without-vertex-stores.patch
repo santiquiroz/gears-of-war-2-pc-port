@@ -1,0 +1,60 @@
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 986b796..08a22cf 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -117,11 +117,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       return nullptr;
+     }
+     if (!supported_features.vertexPipelineStoresAndAtomics) {
++      // Not supported on Mali. The feature is only enabled when supported (see
++      // XE_UI_VULKAN_FEATURE), and vertex shader memexport draws are skipped.
+       REXLOG_WARN(
+-          "Vulkan device '{}' doesn't support vertexPipelineStoresAndAtomics, which "
+-          "is required for Vulkan GPU emulation parity",
++          "Vulkan device '{}' doesn't support vertexPipelineStoresAndAtomics: "
++          "draws whose vertex shader exports to memory will be skipped",
+           properties.deviceName);
+-      return nullptr;
+     }
+     if (REXCVAR_GET(vulkan_require_geometry_shader) && !supported_features.geometryShader) {
+       REXLOG_WARN(
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 4575c89..9f5b184 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -1421,10 +1421,9 @@ bool VulkanCommandProcessor::SetupContext() {
+     return false;
+   }
+   if (!device_properties.vertexPipelineStoresAndAtomics) {
+-    REXGPU_ERROR(
+-        "Vulkan vertexPipelineStoresAndAtomics is required for GPU emulation and "
+-        "D3D12 parity, but unsupported by the selected device");
+-    return false;
++    REXGPU_WARN(
++        "Vulkan vertexPipelineStoresAndAtomics is not supported by the device; "
++        "draws whose vertex shader exports to memory will be skipped");
+   }
+   if (!device_properties.geometryShader) {
+     if (REXCVAR_GET(vulkan_require_geometry_shader)) {
+@@ -4192,10 +4191,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+   bool memexport_used_vertex = vertex_shader->memexport_eM_written() != 0;
+   if (memexport_used_vertex) {
+     if (!device_properties.vertexPipelineStoresAndAtomics) {
+-      REXGPU_ERROR(
+-          "Vertex shader memexport draw encountered without "
+-          "vertexPipelineStoresAndAtomics support");
+-      return false;
++      // Skip the draw. Returning true (like the zero surface pitch case below)
++      // avoids the per-draw "Failed in backend" error in the generic
++      // CommandProcessor, which would otherwise drop the draw the same way.
++      static bool vertex_memexport_skipped_logged = false;
++      if (!vertex_memexport_skipped_logged) {
++        REXGPU_WARN(
++            "Skipping vertex shader memexport draws: the device doesn't support "
++            "vertexPipelineStoresAndAtomics");
++        vertex_memexport_skipped_logged = true;
++      }
++      return true;
+     }
+     draw_util::AddMemExportRanges(regs, *vertex_shader, memexport_ranges_);
+   }
