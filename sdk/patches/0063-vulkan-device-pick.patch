@@ -1,0 +1,78 @@
+diff --git a/src/ui/vulkan/vulkan_provider.cpp b/src/ui/vulkan/vulkan_provider.cpp
+index 9eeb902..1d4345c 100644
+--- a/src/ui/vulkan/vulkan_provider.cpp
++++ b/src/ui/vulkan/vulkan_provider.cpp
+@@ -10,6 +10,8 @@
+  */
+ 
+ #include <algorithm>
++#include <cctype>
++#include <string>
+ #include <vector>
+ 
+ #include <rex/cvar.h>
+@@ -25,6 +27,11 @@ REXCVAR_DEFINE_BOOL(vulkan_validation_enabled, false, "UI/Vulkan",
+ REXCVAR_DEFINE_INT32(vulkan_device, -1, "UI/Vulkan", "Vulkan device index (-1 for auto selection)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ 
++REXCVAR_DEFINE_STRING(vulkan_device_name, "", "UI/Vulkan",
++                      "Part of the Vulkan device name to use when vulkan_device is -1 "
++                      "(case-insensitive, for example 7800); empty for auto selection")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++
+ REXCVAR_DEFINE_BOOL(vulkan_prefer_geometry_shader, true, "UI/Vulkan",
+                     "Prefer physical devices supporting geometryShader when auto-selecting")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+@@ -82,6 +89,40 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
+         with_gpu_emulation, with_presentation);
+   }
+ 
++  if (!provider->vulkan_device_) {
++    std::string wanted = REXCVAR_GET(vulkan_device_name);
++    if (!wanted.empty()) {
++      std::string wanted_lower = wanted;
++      std::transform(wanted_lower.begin(), wanted_lower.end(), wanted_lower.begin(),
++                     [](unsigned char c) { return std::tolower(c); });
++      bool chosen = false;
++      for (const VkPhysicalDevice physical_device : physical_devices) {
++        VkPhysicalDeviceProperties properties;
++        ifn.vkGetPhysicalDeviceProperties(physical_device, &properties);
++        std::string name = properties.deviceName;
++        std::string name_lower = name;
++        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(),
++                       [](unsigned char c) { return std::tolower(c); });
++        if (name_lower.find(wanted_lower) == std::string::npos) {
++          continue;
++        }
++        provider->vulkan_device_ = VulkanDevice::CreateIfSupported(
++            provider->vulkan_instance_.get(), physical_device, with_gpu_emulation,
++            with_presentation);
++        if (provider->vulkan_device_) {
++          REXLOG_INFO("Vulkan device '{}' chosen by vulkan_device_name '{}'", name, wanted);
++          chosen = true;
++          break;
++        }
++      }
++      if (!chosen) {
++        REXLOG_WARN(
++            "No usable Vulkan device matches vulkan_device_name '{}'; using auto selection",
++            wanted);
++      }
++    }
++  }
++
+   if (!provider->vulkan_device_) {
+     std::vector<VkPhysicalDevice> physical_devices_ordered = physical_devices;
+     bool prefer_geometry_shader = REXCVAR_GET(vulkan_prefer_geometry_shader);
+@@ -101,6 +142,11 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
+         VkPhysicalDeviceFeatures supported_features = {};
+         ifn.vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
+         uint32_t score = 0;
++        VkPhysicalDeviceProperties properties;
++        ifn.vkGetPhysicalDeviceProperties(physical_device, &properties);
++        if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
++          score += 16;
++        }
+         if (prefer_geometry_shader && supported_features.geometryShader) {
+           ++score;
+         }

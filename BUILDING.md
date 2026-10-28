@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-sdk.ps1 -NoDlss
 pwsh -ExecutionPolicy Bypass -File scripts\package.ps1 -Version 0.1.2
 ```
 
-`-NoDlss` installs the DLLs into `out\sdk-nodlss\` and leaves `out\sdk\`, the DLLs
+`-NoDlss` installs the DLLs (both the Direct3D 12 and the Vulkan backend, as every SDK build) into `out\sdk-nodlss\` and leaves `out\sdk\`, the DLLs
 `scripts\build.ps1` puts next to `gow2.exe`, as they are. It shares the SDK build tree with the
 everyday build, so the next `scripts\build-sdk.ps1` without it compiles `rexgpu-xenos.dll` again.
 `package.ps1` writes `out\package\gow2-recomp-<version>-win64.zip` and its `.sha256`. It refuses

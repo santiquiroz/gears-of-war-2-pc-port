@@ -41,8 +41,9 @@
   -NoDlss) first.
 
 .PARAMETER Vulkan
-  Build both Vulkan and D3D12 without DLSS in out\sdk-build-vulkan\ and install
-  the development DLLs in out\sdk-vulkan\. Can be combined with -Dev.
+  Build without DLSS in out\sdk-build-vulkan\ and install the development DLLs in
+  out\sdk-vulkan\ (every build has both the Direct3D 12 and the Vulkan backend). Can be
+  combined with -Dev.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\build-sdk.ps1
@@ -166,7 +167,9 @@ Repair-SymlinkStubs $sdk
 
 Step 'Configuring'
 $devFlag = if ($Dev) { 'ON' } else { 'OFF' }
-$vulkanFlag = if ($Vulkan) { 'ON' } else { 'OFF' }
+# Both backends in every build: gpu_backend = "any" still picks Direct3D 12 first on Windows, and
+# Vulkan is the player's choice in PC Options > Graphics > Graphics API (issue #34).
+$vulkanFlag = 'ON'
 Push-Location $sdk
 try {
     Run 'cmake configure' {
