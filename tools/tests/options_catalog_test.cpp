@@ -195,7 +195,7 @@ int CountPage(options::Page page) {
 
 void TestCounts() {
   Expect(CountTab(options::Tab::kDisplay) == 8, "display has 8 rows");
-  Expect(CountTab(options::Tab::kGraphics) == 49, "graphics has 49 rows including the renderer, draw source, anti-aliasing, quality heading, preset and 24 settings");
+  Expect(CountTab(options::Tab::kGraphics) == 50, "graphics has 50 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset and 24 settings");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
@@ -261,8 +261,8 @@ void TestSplitScreenRows() {
   if (players) {
     Expect(players->kind == options::Kind::kChoice && players->apply == options::Apply::kRestart,
            "split-screen players is a restart choice");
-    Expect(players->choices.size() == 4 && players->choices.front().value == "1" &&
-               players->choices.back().value == "4", "split-screen players offers 1 to 4");
+    Expect(players->choices.size() == 2 && players->choices.front().value == "1" &&
+               players->choices.back().value == "2", "split-screen players offers 1 and 2, the game's limit");
   }
   const auto* keyboard = options::FindSetting("input_pad_first_user");
   Expect(keyboard != nullptr, "keyboard is player 1 row exists");
@@ -281,6 +281,19 @@ void TestWindowsUpdateRows() {
     Expect(setting->platforms == options::kWindows, "update rows only appear on Windows");
     Expect(setting->tab == options::Tab::kSystem && setting->page == options::Page::kMain,
            "update rows appear on the main System tab");
+  }
+}
+
+void TestGpuBackendRow() {
+  const auto* backend = options::FindSetting("gpu_backend");
+  Expect(backend != nullptr, "graphics API row exists");
+  if (backend) {
+    Expect(backend->tab == options::Tab::kGraphics && backend->kind == options::Kind::kChoice &&
+               backend->apply == options::Apply::kRestart && backend->platforms == options::kWindows,
+           "graphics API is a Windows-only restart choice on the Graphics tab");
+    Expect(backend->choices.size() == 3 && backend->choices[0].value == "any" &&
+               backend->choices[1].value == "d3d12" && backend->choices[2].value == "vulkan",
+           "graphics API offers any, d3d12 and vulkan");
   }
 }
 
@@ -321,6 +334,7 @@ int main() {
     TestCoopPlayersRow();
     TestSplitScreenRows();
     TestGraphicsQualityRows();
+    TestGpuBackendRow();
     TestLanguageRows();
   } catch (const std::exception& e) {
     ++g_checks;

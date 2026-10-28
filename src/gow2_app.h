@@ -284,6 +284,10 @@ class Gow2App : public rex::ReXApp {
     if (gpu.index >= 0 && SetIfUnset("d3d12_adapter", std::to_string(gpu.index))) {
       REXLOG_INFO("gow2 d3d12_adapter -> {} ({}; {})", gpu.index, gpu.name, gpu.reason);
     }
+    // Vulkan names its devices like DXGI: the same GPU when gpu_backend is vulkan.
+    if (gpu.index >= 0 && SetIfUnset("vulkan_device_name", gpu.name)) {
+      REXLOG_INFO("gow2 vulkan_device_name -> '{}' (used when gpu_backend is vulkan)", gpu.name);
+    }
     // Internal resolution follows the GPU unless the player set resolution_scale:
     // 720p on an integrated GPU, 1440p on a dedicated one.
     if (gpu.index >= 0 && SetIfUnset("resolution_scale", gpu.integrated ? "1" : "2")) {
@@ -303,6 +307,14 @@ class Gow2App : public rex::ReXApp {
     if (gpu.index >= 0 && SetIfUnset("clear_memory_page_state", "false")) {
       REXLOG_INFO("gow2 clear_memory_page_state -> false (set it in gow2.toml to change)");
     }
+  }
+
+  // GearUIScene_Base.UpdateScenePlayerState shows "Too many profile sessions" with more than two signed-in
+  // profiles, and its accept handler keeps the box open while they stay signed in: the menus never come back.
+  static void ClampLocalUsers() {
+    if (rex::cvar::Query<int32_t>("local_users") <= 2) return;
+    rex::cvar::SetFlagByName("local_users", "2");
+    REXLOG_INFO("gow2 local_users -> 2 (the game allows two signed-in players)");
   }
 
   // Before PrepareWidescreen: the automatic aspect depends on it.
@@ -423,6 +435,7 @@ class Gow2App : public rex::ReXApp {
     SetIfUnset("mnk_mode", "true");
 #endif
     rex::glue::PrepareNativeMouseAim();
+    ClampLocalUsers();
     PrepareNativeRenderer();
     rex::glue::PrepareWidescreen();
     PrepareCoalesced();
