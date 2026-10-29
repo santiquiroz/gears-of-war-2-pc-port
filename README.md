@@ -68,6 +68,8 @@ Nothing of the game is included in the release. You need your own retail Xbox 36
 xdvdfs unpack "Gears of War 2.iso" C:\Games\GoW2
 ```
 
+The port was recompiled from the US retail disc (its default.xex); other releases such as the European disc are untested and can crash, and the log says at start which one you have (`XEX default.xex ...`).
+
 Do not pirate the game.
 
 ### PC

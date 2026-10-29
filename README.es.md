@@ -68,6 +68,8 @@ La versión no incluye nada del juego. Necesitas tu propia copia comercial de Ge
 xdvdfs unpack "Gears of War 2.iso" C:\Games\GoW2
 ```
 
+El port se recompiló desde el disco retail de EE. UU. (su default.xex); otras ediciones, como el disco europeo, no están probadas y pueden fallar, y el log dice al arrancar cuál tienes (`XEX default.xex ...`).
+
 No piratees el juego.
 
 ### PC

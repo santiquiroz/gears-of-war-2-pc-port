@@ -39,6 +39,7 @@
 #include "gow2_utf8_guard.h"
 #include "gow2_voice_language_setup.h"
 #include "gow2_xam_input_guard.h"
+#include "gow2_xex_identity.h"
 
 #if defined(__ANDROID__)
 #include "gow2_android_devices.h"
@@ -442,6 +443,7 @@ class Gow2App : public rex::ReXApp {
     rex::glue::PrepareWidescreen();
     PrepareCoalesced();
     PrepareLanguage();
+    LogGameExecutableIdentity();
 #ifdef _WIN32
     rex::glue::PrepareKeycapPack();
 #endif
@@ -621,6 +623,17 @@ class Gow2App : public rex::ReXApp {
   // void OnShutdown() override {}
 
  private:
+  // Releases other than the US retail disc this port was recompiled from can crash at random (issue #34).
+  void LogGameExecutableIdentity() {
+    const auto identity =
+        rex::glue::xex_identity::DescribeXex(rex::glue::xex_identity::HashFile(game_data_root_ / "default.xex"));
+    if (identity.is_us_retail) {
+      REXLOG_INFO("{}", identity.text);
+    } else {
+      REXLOG_WARN("{}", identity.text);
+    }
+  }
+
   rex::glue::options::GamePaths options_paths_;
   std::unique_ptr<rex::ui::ImGuiDialog> options_overlay_;
   std::filesystem::path game_data_root_;
