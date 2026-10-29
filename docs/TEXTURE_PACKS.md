@@ -13,7 +13,7 @@ from the textures your own copy dumps, upscaled on your GPU with Real-ESRGAN (Wi
    loads). Choose the scale (2x or 4x) and the quality, then **Start**. The status row counts the
    textures (`Building 120 / 724`). You can press Play and keep it running in the background; quitting
    the game cancels it. Cancel and Start again picks up where it stopped, and a later build only adds the
-   textures you dumped since.
+   textures you dumped since. The builder runs Real-ESRGAN on the same GPU as the game.
 3. **Pick.** When it says `Done`, choose the new pack (`dump-2x`, `dump-4x`, `dump-2x-bc7` or
    `dump-4x-bc7`) in **Texture pack** and restart.
 

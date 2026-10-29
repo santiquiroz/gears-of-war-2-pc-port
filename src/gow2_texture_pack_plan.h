@@ -210,4 +210,61 @@ inline std::string CommandLine(const std::vector<std::string>& args) {
   return line;
 }
 
+inline std::string Lower(std::string_view text) {
+  std::string out(text);
+  for (char& c : out) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  return out;
+}
+
+// Vulkan names devices like DXGI, so the game's GPU name finds ncnn's -g index.
+inline std::optional<uint32_t> VulkanIndexForName(const std::vector<std::string>& vulkan_names,
+                                                  std::string_view gpu_name) {
+  if (gpu_name.empty()) return std::nullopt;
+  for (size_t i = 0; i < vulkan_names.size(); ++i) {
+    if (vulkan_names[i] == gpu_name) return static_cast<uint32_t>(i);
+  }
+  const std::string gpu = Lower(gpu_name);
+  for (size_t i = 0; i < vulkan_names.size(); ++i) {
+    const std::string name = Lower(vulkan_names[i]);
+    if (!name.empty() && (name.find(gpu) != std::string::npos || gpu.find(name) != std::string::npos)) {
+      return static_cast<uint32_t>(i);
+    }
+  }
+  return std::nullopt;
+}
+
+inline bool IsAsciiLetter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+inline std::string_view Trim(std::string_view text) {
+  constexpr std::string_view kSpace = " \t\r\n";
+  const size_t first = text.find_first_not_of(kSpace);
+  if (first == std::string_view::npos) return {};
+  return text.substr(first, text.find_last_not_of(kSpace) - first + 1);
+}
+
+// vk<letters> failed, case-insensitive, anywhere in the line.
+inline bool IsVulkanFailureLine(std::string_view line) {
+  const std::string lower = Lower(line);
+  for (size_t at = lower.find("vk"); at != std::string::npos; at = lower.find("vk", at + 1)) {
+    size_t end = at + 2;
+    while (end < lower.size() && IsAsciiLetter(lower[end])) ++end;
+    if (end > at + 2 && std::string_view(lower).substr(end).starts_with(" failed")) return true;
+  }
+  return false;
+}
+
+// ncnn can report a failed Vulkan call and still exit 0.
+inline std::optional<std::string> VulkanFailureLine(std::string_view log) {
+  while (!log.empty()) {
+    const size_t end = log.find('\n');
+    const std::string_view line = log.substr(0, end);
+    if (IsVulkanFailureLine(line)) return std::string(Trim(line));
+    if (end == std::string_view::npos) break;
+    log.remove_prefix(end + 1);
+  }
+  return std::nullopt;
+}
+
 }  // namespace rex::glue::texture_pack_plan

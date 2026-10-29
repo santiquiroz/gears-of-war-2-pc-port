@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 // Texture pack builder: dump DDS -> texconv PNG -> Real-ESRGAN x4 -> texconv DDS with a full mip chain.
 #include "gow2_texture_pack_builder.h"
+#include "gow2_gpu_pick.h"
 #include "gow2_texture_pack_plan.h"
 #include "gow2_texture_packs.h"
 
@@ -9,10 +10,12 @@
 #include <atomic>
 #include <cstddef>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <system_error>
 #include <thread>
@@ -42,8 +45,46 @@ struct Cancelled {};
 
 struct Job {
   std::string file_name;
+  plan::DumpName dump;
   plan::Plan plan;
 };
+
+// Mirrors vulkan_core.h: the SDK ships no Vulkan headers and only these few are needed.
+namespace vk {
+using Instance = struct Instance_T*;
+using PhysicalDevice = struct PhysicalDevice_T*;
+using Result = int32_t;
+using VoidFunction = void (*)();
+constexpr int32_t kStructureTypeApplicationInfo = 0;
+constexpr int32_t kStructureTypeInstanceCreateInfo = 1;
+constexpr uint32_t kApiVersion10 = 1u << 22;
+constexpr size_t kDeviceNameOffset = 20;
+constexpr size_t kDeviceNameSize = 256;
+struct ApplicationInfo {
+  int32_t sType;
+  const void* pNext;
+  const char* pApplicationName;
+  uint32_t applicationVersion;
+  const char* pEngineName;
+  uint32_t engineVersion;
+  uint32_t apiVersion;
+};
+struct InstanceCreateInfo {
+  int32_t sType;
+  const void* pNext;
+  uint32_t flags;
+  const ApplicationInfo* pApplicationInfo;
+  uint32_t enabledLayerCount;
+  const char* const* ppEnabledLayerNames;
+  uint32_t enabledExtensionCount;
+  const char* const* ppEnabledExtensionNames;
+};
+using GetInstanceProcAddr = VoidFunction (*)(Instance, const char*);
+using CreateInstance = Result (*)(const InstanceCreateInfo*, const void*, Instance*);
+using DestroyInstance = void (*)(Instance, const void*);
+using EnumeratePhysicalDevices = Result (*)(Instance, uint32_t*, PhysicalDevice*);
+using GetPhysicalDeviceProperties = void (*)(PhysicalDevice, void*);
+}  // namespace vk
 
 fs::path ExeDir() { return rex::filesystem::GetExecutablePath().parent_path(); }
 fs::path TexconvExe() { return ExeDir() / "tools" / "texconv" / "texconv.exe"; }
@@ -85,6 +126,67 @@ std::vector<uint8_t> ReadBytes(const fs::path& path) {
 bool IsNormalMap(const fs::path& file, const plan::DumpName& dump) {
   const auto bytes = ReadBytes(file);
   return plan::LooksLikeNormalMap(dump.format, plan::DdsMip0(bytes, dump));
+}
+
+template <typename Fn>
+Fn VulkanProc(vk::GetInstanceProcAddr get, vk::Instance instance, const char* name) {
+  return reinterpret_cast<Fn>(get(instance, name));
+}
+
+std::string VulkanDeviceName(vk::GetPhysicalDeviceProperties get_properties, vk::PhysicalDevice device) {
+  // The real VkPhysicalDeviceProperties is 824 bytes; the spare room covers a driver writing a newer layout.
+  alignas(8) uint8_t properties[1024] = {};
+  get_properties(device, properties);
+  const char* name = reinterpret_cast<const char*>(properties + vk::kDeviceNameOffset);
+  return std::string(name, strnlen(name, vk::kDeviceNameSize));
+}
+
+std::vector<std::string> VulkanDeviceNames(vk::GetInstanceProcAddr get, vk::Instance instance) {
+  const auto enumerate = VulkanProc<vk::EnumeratePhysicalDevices>(get, instance, "vkEnumeratePhysicalDevices");
+  const auto properties = VulkanProc<vk::GetPhysicalDeviceProperties>(get, instance, "vkGetPhysicalDeviceProperties");
+  if (!enumerate || !properties) return {};
+  uint32_t count = 0;
+  if (enumerate(instance, &count, nullptr) < 0 || count == 0) return {};
+  std::vector<vk::PhysicalDevice> devices(count);
+  if (enumerate(instance, &count, devices.data()) < 0) return {};
+  devices.resize(count);
+  std::vector<std::string> names;
+  for (const auto device : devices) names.push_back(VulkanDeviceName(properties, device));
+  return names;
+}
+
+std::vector<std::string> VulkanDeviceNames(vk::GetInstanceProcAddr get) {
+  const auto create = VulkanProc<vk::CreateInstance>(get, nullptr, "vkCreateInstance");
+  if (!create) return {};
+  const vk::ApplicationInfo app{vk::kStructureTypeApplicationInfo, nullptr, "gow2", 0, nullptr, 0, vk::kApiVersion10};
+  const vk::InstanceCreateInfo info{vk::kStructureTypeInstanceCreateInfo, nullptr, 0, &app, 0, nullptr, 0, nullptr};
+  vk::Instance instance = nullptr;
+  if (create(&info, nullptr, &instance) < 0 || !instance) return {};
+  auto names = VulkanDeviceNames(get, instance);
+  if (const auto destroy = VulkanProc<vk::DestroyInstance>(get, instance, "vkDestroyInstance")) destroy(instance, nullptr);
+  return names;
+}
+
+// ncnn numbers its -g devices in this same enumeration order.
+std::vector<std::string> VulkanDeviceNames() {
+  const HMODULE loader = LoadLibraryW(L"vulkan-1.dll");
+  if (!loader) return {};
+  std::vector<std::string> names;
+  if (const auto get = reinterpret_cast<vk::GetInstanceProcAddr>(GetProcAddress(loader, "vkGetInstanceProcAddr"))) {
+    names = VulkanDeviceNames(get);
+  }
+  FreeLibrary(loader);
+  return names;
+}
+
+// Vulkan's device 0 is not DXGI's: it can be the integrated GPU, about 10x slower.
+std::optional<uint32_t> EsrganDevice() {
+  const std::string gpu = ChooseRenderGpu().name;
+  const auto names = VulkanDeviceNames();
+  const auto index = plan::VulkanIndexForName(names, gpu);
+  if (index) REXLOG_INFO("TEXBUILD Real-ESRGAN on Vulkan device {} '{}' (game GPU '{}')", *index, names[*index], gpu);
+  else REXLOG_INFO("TEXBUILD no Vulkan match for '{}', using the default device", gpu);
+  return index;
 }
 
 void ClearDir(const fs::path& dir) {
@@ -171,6 +273,7 @@ class Builder {
     fs::create_directories(replace_, ec);
     if (ec) throw Failure{"could not create " + Utf8(replace_) + ": " + ec.message()};
     if (jobs.empty()) return;
+    esrgan_device_ = EsrganDevice();
     CreateJob();
     for (size_t first = 0; first < jobs.size(); first += kBatchSize) {
       const size_t last = (std::min)(jobs.size(), first + kBatchSize);
@@ -191,7 +294,7 @@ class Builder {
       if (IsFile(replace_ / name)) { ++existing; continue; }
       const bool normal = plan::IsColorFormat(dump.format) && IsNormalMap(DumpDir() / name, dump);
       const auto planned = plan::PlanTexture(dump, normal, scale, high_quality);
-      if (planned.step == plan::Step::kUpscale) jobs.push_back({name, planned});
+      if (planned.step == plan::Step::kUpscale) jobs.push_back({name, dump, planned});
       else if (normal) ++normal_maps;
       else ++skipped;
     }
@@ -210,18 +313,46 @@ class Builder {
     // --ignore-srgb on every texconv call: read as sRGB, the PNGs come back linear and the pack renders dark.
     RunTool(TexconvExe(), {"-nologo", "-y", "--ignore-srgb", "-ft", "png", "-o", "png", "in\\*.dds"}, kTexconvTimeoutMs,
             "texconv");
-    RunTool(EsrganExe(), {"-i", "png", "-o", "png4", "-n", "realesrgan-x4plus", "-s", "4", "-f", "png", "-m",
-                          Utf8(EsrganModels())}, kEsrganTimeoutMs, "realesrgan-ncnn-vulkan");
+    RunEsrgan(jobs);
     for (const auto& job : jobs) EncodeOne(job);
     REXLOG_INFO("TEXBUILD batch of {} in {:.0f} s", jobs.size(), SecondsSince(start));
   }
 
+  void RunEsrgan(const std::vector<Job>& jobs) {
+    std::vector<std::string> args = {"-i", "png", "-o", "png4", "-n", "realesrgan-x4plus", "-s", "4", "-f", "png",
+                                     "-m", Utf8(EsrganModels())};
+    if (esrgan_device_) args.insert(args.end(), {"-g", std::to_string(*esrgan_device_)});
+    RunTool(EsrganExe(), std::move(args), kEsrganTimeoutMs, "realesrgan-ncnn-vulkan");
+    CheckEsrganLog();
+    for (const auto& job : jobs) {
+      const std::string png = StemOf(job) + ".png";
+      if (!IsFile(work_ / "png4" / png)) throw Failure{"realesrgan-ncnn-vulkan did not write png4\\" + png};
+    }
+  }
+
+  // ncnn can report a failed Vulkan call and still exit 0.
+  void CheckEsrganLog() {
+    const auto bytes = ReadBytes(LogPath());
+    const std::string_view log(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    if (const auto line = plan::VulkanFailureLine(log)) {
+      throw Failure{"realesrgan-ncnn-vulkan reported '" + *line + "': the tile may not fit in video memory"};
+    }
+  }
+
+  static std::string StemOf(const Job& job) { return job.file_name.substr(0, job.file_name.size() - 4); }
+
+  fs::path LogPath() const { return work_ / "tools.log"; }
+
   // Written to out\ first and moved in whole, so a cancelled build never leaves a half-written DDS behind.
   void EncodeOne(const Job& job) {
-    const std::string stem = job.file_name.substr(0, job.file_name.size() - 4);
-    RunTool(TexconvExe(), {"-nologo", "-y", "--ignore-srgb", "-w", std::to_string(job.plan.width), "-h",
-                           std::to_string(job.plan.height), "-f", job.plan.dxgi, "-m", "0", "-o", "out",
-                           "png4\\" + stem + ".png"}, kTexconvTimeoutMs, "texconv");
+    std::vector<std::string> args = {"-nologo", "-y", "--ignore-srgb", "-w", std::to_string(job.plan.width), "-h",
+                                     std::to_string(job.plan.height), "-f", job.plan.dxgi, "-m", "0", "-o", "out"};
+    // texconv has no Lanczos; cubic keeps the downsized 4x output sharper than the default filter.
+    if (job.plan.width != job.dump.width * 4 || job.plan.height != job.dump.height * 4) {
+      args.insert(args.end(), {"-if", "CUBIC"});
+    }
+    args.push_back("png4\\" + StemOf(job) + ".png");
+    RunTool(TexconvExe(), std::move(args), kTexconvTimeoutMs, "texconv");
     std::error_code ec;
     fs::rename(work_ / "out" / job.file_name, replace_ / job.file_name, ec);
     if (ec) throw Failure{"could not move " + job.file_name + " into the pack: " + ec.message()};
@@ -243,17 +374,55 @@ class Builder {
     args.insert(args.begin(), Utf8(exe));
     std::wstring command = Widen(plan::CommandLine(args));
     const std::wstring dir = work_.wstring();
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
+    const HANDLE log = OpenLog(tool);
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED,
-                        nullptr, dir.c_str(), &startup, &process)) {
-      throw Failure{"could not start " + std::string(tool) + " (error " + std::to_string(GetLastError()) + ")"};
-    }
+    const bool started = CreateWithLog(exe, command, dir, log, process);
+    const DWORD error = GetLastError();
+    CloseHandle(log);
+    if (!started) throw Failure{"could not start " + std::string(tool) + " (error " + std::to_string(error) + ")"};
     if (job_) AssignProcessToJobObject(job_, process.hProcess);
     ResumeThread(process.hThread);
     CloseHandle(process.hThread);
     return process;
+  }
+
+  // Truncated per child, so the scan after realesrgan sees only its own output.
+  HANDLE OpenLog(std::string_view tool) {
+    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+    const HANDLE log = CreateFileW(LogPath().c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (log == INVALID_HANDLE_VALUE) {
+      throw Failure{"could not create the log for " + std::string(tool) + " (error " +
+                    std::to_string(GetLastError()) + ")"};
+    }
+    return log;
+  }
+
+  // The handle list keeps every other inheritable handle of the game out of the child.
+  static bool CreateWithLog(const fs::path& exe, std::wstring& command, const std::wstring& dir, HANDLE log,
+                            PROCESS_INFORMATION& process) {
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<std::byte> buffer(size);
+    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &size)) return false;
+    HANDLE inherited = log;
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdOutput = log;
+    startup.StartupInfo.hStdError = log;
+    startup.lpAttributeList = attributes;
+    const bool started =
+        UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &inherited, sizeof(inherited),
+                                  nullptr, nullptr) &&
+        CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE,
+                       CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr, dir.c_str(),
+                       &startup.StartupInfo, &process);
+    const DWORD error = GetLastError();
+    DeleteProcThreadAttributeList(attributes);
+    SetLastError(error);
+    return started;
   }
 
   void RunTool(const fs::path& exe, std::vector<std::string> args, DWORD timeout_ms, std::string_view tool) {
@@ -285,6 +454,7 @@ class Builder {
   HANDLE job_ = nullptr;
   fs::path work_;
   fs::path replace_;
+  std::optional<uint32_t> esrgan_device_;
 };
 
 Builder& TheBuilder() {

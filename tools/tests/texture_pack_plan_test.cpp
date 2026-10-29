@@ -132,6 +132,27 @@ void TestQuoting() {
   Expect(plan::CommandLine({"C:\\a b\\t.exe", "-o", "png"}) == "\"C:\\a b\\t.exe\" -o png", "a command line");
 }
 
+void TestVulkanIndexForName() {
+  const std::vector<std::string> names = {"AMD Radeon(TM) Graphics", "AMD Radeon RX 7800 XT"};
+  Expect(plan::VulkanIndexForName(names, "AMD Radeon RX 7800 XT") == 1u, "the exact name finds the card");
+  Expect(plan::VulkanIndexForName(names, "rx 7800") == 1u, "part of the name matches case-insensitively");
+  Expect(!plan::VulkanIndexForName(names, ""), "no game GPU name, no index");
+  Expect(!plan::VulkanIndexForName(names, "NVIDIA"), "no match, no index");
+  Expect(plan::VulkanIndexForName({"AMD Radeon RX 7800 XT (2)", "AMD Radeon RX 7800 XT"}, "AMD Radeon RX 7800 XT") ==
+             1u,
+         "an exact match wins over a containing name");
+}
+
+void TestVulkanFailureLine() {
+  Expect(plan::VulkanFailureLine("[0 AMD Radeon RX 7800 XT]  queueC=1[8]\nvkAllocateMemory failed -2\n") ==
+             std::string("vkAllocateMemory failed -2"),
+         "vkAllocateMemory failed is found and trimmed");
+  Expect(!plan::VulkanFailureLine("[0 AMD Radeon RX 7800 XT]  queueC=1[8]\npng4\\a.png done\n"),
+         "a clean log has no failure");
+  Expect(plan::VulkanFailureLine("vkQueueSubmit FAILED") == std::string("vkQueueSubmit FAILED"),
+         "the match ignores case");
+}
+
 int main() {
   TestParseDumpName();
   TestPlanTexture();
@@ -139,6 +160,8 @@ int main() {
   TestDdsMip0();
   TestPackNameAndMemory();
   TestQuoting();
+  TestVulkanIndexForName();
+  TestVulkanFailureLine();
   std::printf("texture_pack_plan_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }
