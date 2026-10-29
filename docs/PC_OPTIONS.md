@@ -86,7 +86,7 @@ Defaults keep the original game and crossplay working.
 | VSync | `vsync` | on, off | now | both |
 | Unlock frame rate | `gow2_unlock_fps` | on, off | now | both |
 | Frame rate limit | `gow2_fps_cap` | off, 30 ... 240 | now | both |
-| Keep 16:9 shape | `present_letterbox` | on (black bars), off (fill: crop up to 10 % top and bottom, stretch the rest) | now | both |
+| Keep 16:9 shape | `present_letterbox` | on (black bars), off (fill: crop up to 10 % top and bottom, stretch the rest) | now | Android |
 | Display refresh hint | `present_android_frame_rate` | phone default, 30 ... 120 | restart | Android |
 
 ## Graphics
@@ -243,6 +243,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Menu language | `gow2_menu_language` | automatic, English, Spanish | now | both |
 | Subtitles and text | `user_language` | English, Latin American Spanish, French, German, Italian, Polish, Russian, Korean, Traditional Chinese | restart | both |
 | Voices | `gow2_voice_language` | same as subtitles, English, Latin American Spanish, French | restart | both |
+| Skip intro videos | `gow2_skip_intro_movies` | on, off | restart | both |
 | Show advanced options | `gow2_menu_advanced` | on, off | now | both |
 | All runtime settings | action | opens the F4 list | now | both |
 | Restart the game | action | save first: it saves nothing | now | Windows |

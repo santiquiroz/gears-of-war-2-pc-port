@@ -201,7 +201,7 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
-  Expect(CountTab(options::Tab::kSystem) == 15, "system has 15 rows");
+  Expect(CountTab(options::Tab::kSystem) == 16, "system has 16 rows including skip intro videos");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
@@ -297,13 +297,23 @@ void TestGpuBackendRow() {
   }
 }
 
+void TestSkipIntroRow() {
+  const auto* skip = options::FindSetting("gow2_skip_intro_movies");
+  Expect(skip != nullptr, "skip intro videos row exists");
+  if (skip) {
+    Expect(skip->tab == options::Tab::kSystem && skip->kind == options::Kind::kToggle &&
+               skip->apply == options::Apply::kRestart && skip->platforms == options::kAllPlatforms,
+           "skip intro videos is a System restart toggle on both platforms");
+  }
+}
+
 void TestLetterboxRow() {
   const auto* letterbox = options::FindSetting("present_letterbox");
   Expect(letterbox != nullptr, "keep 16:9 shape row exists");
   if (letterbox) {
     Expect(letterbox->tab == options::Tab::kDisplay && letterbox->kind == options::Kind::kToggle &&
-               letterbox->apply == options::Apply::kNow && letterbox->platforms == options::kAllPlatforms,
-           "keep 16:9 shape is an apply-now Display toggle on both platforms");
+               letterbox->apply == options::Apply::kNow && letterbox->platforms == options::kAndroid,
+           "keep 16:9 shape is an apply-now Display toggle on Android");
   }
 }
 
@@ -345,6 +355,7 @@ int main() {
     TestSplitScreenRows();
     TestGraphicsQualityRows();
     TestGpuBackendRow();
+    TestSkipIntroRow();
     TestLetterboxRow();
     TestLanguageRows();
   } catch (const std::exception& e) {

@@ -14,6 +14,7 @@
 //                     (cvar gow2_pc_options_entry, needs SDK patch 0013)
 //   native-keys  the keyboard's own engine bindings (cvar gow2_native_keys, src/gow2_native_keys.cpp)
 //   system-settings  the game's own [SystemSettings] values (Game quality cvars and gow2_system_settings)
+//   skip-intro-movies  no Epic / MGS logo videos at start (cvar gow2_skip_intro_movies)
 #pragma once
 
 #include <filesystem>
@@ -40,6 +41,8 @@ struct CoalescedOptions {
   // Key = a name in [SystemSettings] of Xe-GearEngine.ini ("AmbientOcclusion"), value = its new
   // value ("False"). Empty means "leave the game's settings alone".
   std::vector<std::pair<std::string, std::string>> system_settings;
+  // Drops the Epic and MGS logo videos from [FullScreenMovie] StartupMovies (cvar gow2_skip_intro_movies).
+  bool skip_intro_movies = false;
 };
 
 struct CoalescedResult {

@@ -105,6 +105,8 @@ they control the host D3D12 runtime; use the existing display/runtime rows for t
 | `TEXTUREGROUP_LightAndShadowMap` | `(MinLODSize=512,MaxLODSize=4096,LODBias=0,MinMagFilter=aniso,MipFilter=point)` | struct | Texture size bounds, mip bias and filters for LightAndShadowMap textures. |
 | `TEXTUREGROUP_RenderTarget` | `(MinLODSize=1,MaxLODSize=4096,LODBias=0,MinMagFilter=aniso,MipFilter=point)` | struct | Texture size bounds, mip bias and filters for RenderTarget textures. |
 
+Lowering these LODBias values below retail is not offered: tried on 2026-10-28 (one level and all to 0, with and without a bigger texture pool), some objects render black, because the disc's cooked textures do not carry the mips the retail values skip. Sharper textures come from texture packs (Graphics → Texture packs).
+
 ## Game quality in Graphics
 
 The new **Game quality** group (**Calidad del juego** in Spanish) is available on

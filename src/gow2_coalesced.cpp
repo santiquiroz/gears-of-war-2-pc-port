@@ -154,6 +154,10 @@ REXCVAR_DEFINE_STRING(gow2_gfx_decal_cull_distance_scale, "auto", "graphics",
 REXCVAR_DEFINE_BOOL(gow2_pc_options_entry, true, "UI",
                     "The game's Options > Storage Location button opens the port's PC Options "
                     "menu (renamed PC Options). Takes effect on the next start.");
+REXCVAR_DEFINE_BOOL(gow2_skip_intro_movies, false, "UI",
+                    "Skips the Epic Games and Microsoft Game Studios logo videos at start. Takes "
+                    "effect on the next start.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 namespace rex::glue {
 
@@ -437,6 +441,13 @@ void AddSystemSettings(std::vector<Edit>* e, const CoalescedOptions& o) {
     e->push_back({Edit::kSet, "Xe-GearEngine.ini", "SystemSettings", kv.first, kv.second, "", "", false, false, true});
 }
 
+// The Epic and Microsoft Game Studios logos go; LoadingMovie stays (the game shows it while loading).
+void AddSkipIntroMovies(std::vector<Edit>* e) {
+  for (const char* movie : {"EpicLogo", "MGSLogo"})
+    e->push_back({Edit::kRemove, "Xe-GearEngine.ini", "FullScreenMovie", "StartupMovies", movie,
+                  "", "", false, false});
+}
+
 uint64_t Fnv(const std::string& s, uint64_t h = 1469598103934665603ull) {
   for (unsigned char c : s) {
     h ^= c;
@@ -559,6 +570,10 @@ CoalescedResult PrepareCoalescedOverrides(const std::filesystem::path& game_root
   if (!options.system_settings.empty()) {
     AddSystemSettings(&edits, options);
     groups += "system-settings ";
+  }
+  if (options.skip_intro_movies) {
+    AddSkipIntroMovies(&edits);
+    groups += "skip-intro-movies ";
   }
   if (edits.empty()) return res;
 
@@ -813,6 +828,7 @@ CoalescedOptions CoalescedOptionsFromCvars() {
     if (shadow > 0 && !(user != o.system_settings.end() && std::atoi(user->second.c_str()) <= shadow))
       o.system_settings.emplace_back("MaxShadowResolution", std::to_string(shadow));
   }
+  o.skip_intro_movies = REXCVAR_GET(gow2_skip_intro_movies);
   // The live swap (gow2_prompt_swap.cpp) rewrites the strings in memory: leave the bundles alone.
   if (PromptsFollowController()) return o;
   const std::string mode = REXCVAR_GET(gow2_prompts);

@@ -135,7 +135,8 @@ void AddDisplay(std::vector<Setting>& out) {
       .tab = Tab::kDisplay,
       .kind = Kind::kToggle,
       .apply = Apply::kNow,
-      .platforms = kAllPlatforms,
+      // On PC the game's display size follows the window, so there are no bars to remove.
+      .platforms = kAndroid,
       .label_en = "Keep 16:9 shape",
       .label_es = "Mantener formato 16:9",
       .help_en =
@@ -1398,6 +1399,16 @@ void AddSystem(std::vector<Setting>& out) {
           C("es", "Español (Latinoamérica)"),
           C("fr", "Français"),
       }});
+  out.push_back(Setting{
+      .id = "gow2_skip_intro_movies",
+      .tab = Tab::kSystem,
+      .kind = Kind::kToggle,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Skip intro videos",
+      .label_es = "Saltar videos de inicio",
+      .help_en = "Skips the Epic Games and Microsoft Game Studios logos at start. The game's own cinematics still play.",
+      .help_es = "Salta los logos de Epic Games y Microsoft Game Studios al arrancar. Las cinemáticas del juego se siguen viendo."});
   out.push_back(Setting{
       .id = "gow2_menu_advanced",
       .tab = Tab::kSystem,
