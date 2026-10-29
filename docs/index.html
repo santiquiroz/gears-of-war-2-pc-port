@@ -76,7 +76,7 @@
         "url": "https://santiquiroz.github.io/gears-of-war-2-pc-port/",
         "applicationCategory": "GameApplication",
         "operatingSystem": "Windows 10, Windows 11 (x64)",
-        "softwareVersion": "0.3.9",
+        "softwareVersion": "0.3.10",
         "datePublished": "2026-10-15",
         "softwareRequirements": "A DirectX 12 GPU and your own retail Xbox 360 copy of Gears of War 2 (title ID 4D53082D)",
         "downloadUrl": "https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest",
@@ -176,7 +176,7 @@
             <a class="btn btn--primary" href="https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest">
               <svg aria-hidden="true"><use href="#i-download"/></svg>
               Download for Windows
-              <span class="btn__meta">v0.3.9</span>
+              <span class="btn__meta">v0.3.10</span>
             </a>
             <a class="btn btn--ghost" href="https://github.com/santiquiroz/gears-of-war-2-pc-port">
               <svg aria-hidden="true"><use href="#i-star"/></svg>
@@ -385,7 +385,7 @@
         <div class="section-head">
           <p class="eyebrow">Status</p>
           <h2 id="status-title">Act 1 is playable. The rest is in progress.</h2>
-          <p class="status__stamp">v0.3.9 · October 2026</p>
+          <p class="status__stamp">v0.3.10 · October 2026</p>
         </div>
         <div class="status__grid">
           <div class="panel plate">
@@ -413,12 +413,12 @@
             </ul>
           </div>
           <div class="panel plate issues">
-            <h3>Known issues in 0.3.9</h3>
+            <h3>Known issues in 0.3.10</h3>
             <ul role="list">
               <li><strong>Hints show Xbox button pictures.</strong> Menu prompts follow the device you used last: keyboard keys ([Space], [E]...), Xbox buttons or PlayStation buttons (<code>gow2_prompts</code>; PlayStation buttons need a keycap pack rebuilt for 0.3.5); the button pictures inside in-game hints are still the Xbox ones.</li>
               <li><strong>Green-looking lighting.</strong> It has been reported on one PC and could not be reproduced yet. <a href="https://github.com/santiquiroz/gears-of-war-2-pc-port/issues">Screenshots in an issue</a> help.</li>
               <li><strong>Co-op with three or four players is new.</strong> Stage 2 was tested with four copies on one PC: players 3 and 4 keep their bodies and weapons through chapter changes and travel, respawn, leave and rejoin, return after checkpoint loads, hide during cinematics, stay unharmed on foot while a hero rides, and are moved next to Marcus or Dom by the host when left far behind. Co-op splits, getting out of a vehicle, the Ride-Reaver section, joining during a cinematic, long real combat, four PCs over a LAN or the internet, and Android with 3+ players have not been tried.</li>
-              <li><strong>Every player needs the same release.</strong> Everyone should run 0.3.9: mixing it with older versions is not expected to work. With three or more players, campaigns with different co-op hashes stay hidden, while two-player co-op has no check and v0.1.1 is expected to crash at the end of Act 1 chapter 2.</li>
+              <li><strong>Every player needs the same release.</strong> Everyone should run 0.3.10: mixing it with older versions is not expected to work. With three or more players, campaigns with different co-op hashes stay hidden, while two-player co-op has no check and v0.1.1 is expected to crash at the end of Act 1 chapter 2.</li>
             </ul>
           </div>
         </div>
@@ -536,7 +536,7 @@
           <details>
             <summary>Is there an Android or Linux version?</summary>
             <div class="faq__answer">
-              <p>Experimental: the v0.3.9 release attaches an Android APK (arm64, Android 10+, you copy your own game files to the phone), but it is not a finished port yet. On a Samsung Galaxy S25 Ultra (Adreno 830, 1280x720 internal), a build from the repository reaches gameplay with touch controls and joins a PC's System Link campaign. Since v0.3.1 the native renderer is on by default. 2026-10-23 (v0.3.1): 52.9 fps cool (32 °C battery), falling to about 37 fps warm (38 °C); 1,100 draws and 53 render passes a frame; the GPU is the limit (95-99 % busy). 2026-10-24 patch 0054 halves render passes (55 to 26) and cuts GPU work by about 7 %. v0.3.4 draws from the game's Direct3D calls (Graphics → Draw source, Automatic = Direct3D): measured 46.7 fps cool with the same picture as the emulated path. New in v0.3.4: Graphics → Anti-aliasing (FXAA, FXAA Extreme) on every platform. Light environment shadows stay off by default (`LightEnvironmentShadows=0`); keyboard/mouse hot-plug not tested; very old checkpoint saves can crash. The plan and status are in <a href="https://github.com/santiquiroz/gears-of-war-2-pc-port/blob/master/docs/ANDROID.md">docs/ANDROID.md</a>.</p>
+              <p>Experimental: the v0.3.10 release attaches an Android APK (arm64, Android 10+, you copy your own game files to the phone), but it is not a finished port yet. On a Samsung Galaxy S25 Ultra (Adreno 830, 1280x720 internal), a build from the repository reaches gameplay with touch controls and joins a PC's System Link campaign. Since v0.3.1 the native renderer is on by default. 2026-10-23 (v0.3.1): 52.9 fps cool (32 °C battery), falling to about 37 fps warm (38 °C); 1,100 draws and 53 render passes a frame; the GPU is the limit (95-99 % busy). 2026-10-24 patch 0054 halves render passes (55 to 26) and cuts GPU work by about 7 %. v0.3.4 draws from the game's Direct3D calls (Graphics → Draw source, Automatic = Direct3D): measured 46.7 fps cool with the same picture as the emulated path. New in v0.3.4: Graphics → Anti-aliasing (FXAA, FXAA Extreme) on every platform. Light environment shadows stay off by default (`LightEnvironmentShadows=0`); keyboard/mouse hot-plug not tested; very old checkpoint saves can crash. The plan and status are in <a href="https://github.com/santiquiroz/gears-of-war-2-pc-port/blob/master/docs/ANDROID.md">docs/ANDROID.md</a>.</p>
               <figure class="feat__figure">
                 <a href="screenshots/device-options.jpg">
                   <img src="assets/img/device-options-800.webp"
