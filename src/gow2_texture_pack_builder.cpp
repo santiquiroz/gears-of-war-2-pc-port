@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 // Texture pack builder: dump DDS -> texconv PNG -> Real-ESRGAN x4 -> texconv DDS with a full mip chain.
 #include "gow2_texture_pack_builder.h"
+
+#ifdef _WIN32
 #include "gow2_gpu_pick.h"
 #include "gow2_texture_pack_plan.h"
 #include "gow2_texture_packs.h"
@@ -505,3 +507,19 @@ Snapshot GetSnapshot() { return TheBuilder().Get(); }
 void Shutdown() { TheBuilder().Shutdown(); }
 
 }  // namespace rex::glue::texture_pack_builder
+
+#else
+
+// The bundled tools are Windows programs and only Direct3D 12 loads packs: elsewhere there is nothing to build.
+namespace rex::glue::texture_pack_builder {
+
+bool ToolsPresent() { return false; }
+size_t DumpCount() { return 0; }
+bool Start(uint32_t, bool) { return false; }
+void Cancel() {}
+Snapshot GetSnapshot() { return {}; }
+void Shutdown() {}
+
+}  // namespace rex::glue::texture_pack_builder
+
+#endif
