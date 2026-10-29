@@ -141,11 +141,12 @@ void TestUiTexts() {
       options::TextId::kHintTabs,
       options::TextId::kHintClose,
       options::TextId::kHintQuit,
+      options::TextId::kHintPlay,
       options::TextId::kEditTextTitle,
       options::TextId::kEditTextOk,
       options::TextId::kEditTextCancel,
   };
-  Expect(ids.size() == 34, "all 34 TextIds are listed");
+  Expect(ids.size() == 35, "all 35 TextIds are listed");
   for (options::TextId id : ids) {
     Expect(!options::Text(id, options::Lang::kEn).empty(), "Text EN is non-empty");
     Expect(!options::Text(id, options::Lang::kEs).empty(), "Text ES is non-empty");
@@ -195,13 +196,13 @@ int CountPage(options::Page page) {
 
 void TestCounts() {
   Expect(CountTab(options::Tab::kDisplay) == 9, "display has 9 rows including keep 16:9 shape");
-  Expect(CountTab(options::Tab::kGraphics) == 50, "graphics has 50 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset and 24 settings");
+  Expect(CountTab(options::Tab::kGraphics) == 51, "graphics has 51 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack and its folder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
-  Expect(CountTab(options::Tab::kSystem) == 16, "system has 16 rows including skip intro videos");
+  Expect(CountTab(options::Tab::kSystem) == 17, "system has 17 rows including skip intro videos and show options at start");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
@@ -307,6 +308,56 @@ void TestSkipIntroRow() {
   }
 }
 
+void TestLauncherRow() {
+  const auto* launcher = options::FindSetting("gow2_launcher");
+  Expect(launcher != nullptr, "show options at start row exists");
+  if (launcher) {
+    Expect(launcher->tab == options::Tab::kSystem && launcher->kind == options::Kind::kToggle &&
+               launcher->apply == options::Apply::kNow && launcher->platforms == options::kWindows,
+           "show options at start is an apply-now System toggle on Windows");
+  }
+}
+
+void TestTexturePackRows() {
+  Expect(options::FindSetting("texture_replace") == nullptr, "the texture pack chooser replaces the toggle");
+  const auto* pack = options::FindSetting("gow2_texture_pack");
+  Expect(pack != nullptr, "texture pack row exists");
+  if (pack) {
+    Expect(pack->tab == options::Tab::kGraphics && pack->kind == options::Kind::kChoice &&
+               pack->apply == options::Apply::kRestart && pack->platforms == options::kWindows &&
+               pack->dynamic_choices,
+           "texture pack is a dynamic restart choice on the Windows Graphics tab");
+  }
+  const auto* folder = options::FindSetting("gow2_open_texture_packs");
+  Expect(folder && folder->kind == options::Kind::kAction && folder->platforms == options::kWindows &&
+             folder->need == options::Need::kNothing,
+         "open texture packs folder is a Windows action that also works in the launcher");
+  const auto* runtime = options::FindSetting("runtime_settings");
+  Expect(runtime && runtime->need == options::Need::kGameRunning, "runtime settings need the running game");
+  for (const char* id : {"host_online", "host_status", "host_open", "host_close"}) {
+    const auto* host = options::FindSetting(id);
+    Expect(host && host->need == options::Need::kGameRunning, "host rows need the running game");
+  }
+}
+
+// The launcher opens before the runtime: only these rows call into it. Key bindings and controller
+// buttons only write keybind_* / pad_map_* cvars (registered by rexruntime.dll at load) and read keys
+// through ImGui; the input driver picks them up when the game starts.
+void TestLauncherAudit() {
+  const std::unordered_set<std::string_view> expected{"coop_check", "host_online", "host_status",
+                                                      "host_open", "host_close", "runtime_settings"};
+  std::unordered_set<std::string_view> found;
+  for (const auto& setting : options::Catalog()) {
+    if (setting.need == options::Need::kGameRunning) found.insert(setting.id);
+  }
+  Expect(found == expected, "only the co-op check, host page entries and runtime settings need the game");
+  for (const char* id : {"keybindings", "pad_buttons", "user_name", "local_users", "save_dir_browse",
+                         "save_open", "restart_game", "quit_game"}) {
+    const auto* row = options::FindSetting(id);
+    Expect(row && row->need == options::Need::kNothing, std::string("works in the launcher: ") + id);
+  }
+}
+
 void TestLetterboxRow() {
   const auto* letterbox = options::FindSetting("present_letterbox");
   Expect(letterbox != nullptr, "keep 16:9 shape row exists");
@@ -357,6 +408,9 @@ int main() {
     TestGpuBackendRow();
     TestSkipIntroRow();
     TestLetterboxRow();
+    TestLauncherRow();
+    TestTexturePackRows();
+    TestLauncherAudit();
     TestLanguageRows();
   } catch (const std::exception& e) {
     ++g_checks;

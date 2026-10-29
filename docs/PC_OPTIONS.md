@@ -29,6 +29,17 @@ language (persist.sys.locale).
 Turn the Options entry off with `gow2_pc_options_entry = false`. It takes
 effect on the next start.
 
+On Windows the menu also opens before the game loads, on the Display tab,
+with **Play** in place of Close (Esc, Back or B also play). Play saves the
+changed rows; when one of them needs a restart, the game restarts once with
+them and goes straight in. Rows that need the running game are hidden there:
+All runtime settings, Co-op check code, and Multiplayer > Host over the
+internet with its whole page (status, open, close and the host settings).
+Key bindings, Controller buttons and the save folder rows still work: they
+only change settings the game reads when it starts. Turn it off in System > Show
+options at start (`gow2_launcher = false`); a restart from the menu never
+stops at it.
+
 ## Controls
 
 Controller:
@@ -108,7 +119,8 @@ Defaults keep the original game and crossplay working.
 | 16x filtering patch | `gow2_aniso16` | on, off | restart | both |
 | Ambient occlusion fix | `gow2_ao_upscaling_fix` | on, off | now | both |
 | Depth of field fix | `gow2_dof_upscaling_fix` | on, off | now | both |
-| Texture packs | `texture_replace` | on, off | restart | Windows |
+| Texture pack | `gow2_texture_pack` | off, textures folder, the folder names in `texture_packs` next to the exe (each holds `4D53082D\replace`); empty uses `texture_replace`; it overrides `texture_replace` and `texture_pack_dir` in gow2.toml, not on the command line | restart | Windows |
+| Open texture packs folder | action | creates `texture_packs` next to the exe and opens it | now | Windows |
 | Dump textures | `texture_dump` | on, off (advanced) | restart | Windows |
 | Sustained performance | `gow2_android_sustained_performance` | on, off | restart | Android |
 | Engine settings | `gow2_system_settings` | text (advanced) | restart | both |
@@ -244,6 +256,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Subtitles and text | `user_language` | English, Latin American Spanish, French, German, Italian, Polish, Russian, Korean, Traditional Chinese | restart | both |
 | Voices | `gow2_voice_language` | same as subtitles, English, Latin American Spanish, French | restart | both |
 | Skip intro videos | `gow2_skip_intro_movies` | on, off | restart | both |
+| Show options at start | `gow2_launcher` | on, off | at start | Windows |
 | Show advanced options | `gow2_menu_advanced` | on, off | now | both |
 | All runtime settings | action | opens the F4 list | now | both |
 | Restart the game | action | save first: it saves nothing | now | Windows |

@@ -11,6 +11,7 @@
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging.h>
+#include <rex/runtime.h>
 
 #include "gow2_mouse_aim.h"
 #include "gow2_graphics_quality.h"
@@ -18,6 +19,7 @@
 #include "gow2_options_values_text.h"
 #include "gow2_script_patch_groups.h"
 #include "gow2_script_patch_stack.h"
+#include "gow2_texture_packs.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -38,6 +40,11 @@ REXCVAR_DEFINE_BOOL(gow2_menu_advanced, false, "UI", "PC Options menu shows the 
 REXCVAR_DEFINE_INT32(gow2_host_lease_hours, 6, "Network", "Hours the in-game host keeps the router ports open")
     .range(1, 24);
 REXCVAR_DEFINE_BOOL(gow2_host_close_on_exit, true, "Network", "The in-game host closes the router ports when the game exits");
+REXCVAR_DEFINE_BOOL(gow2_launcher, true, "UI", "Open PC Options before the game loads, with a Play button");
+REXCVAR_DEFINE_STRING(gow2_texture_pack, "", "GPU/Textures",
+                      "Texture pack folder name under texture_packs, 'textures' for the old folder, 'off', or "
+                      "empty to use texture_replace")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 namespace {
 
@@ -295,6 +302,17 @@ void AddChoices(OwnedContext* out, std::string_view id,
   }
 }
 
+#ifdef _WIN32
+std::vector<options_actions::NamedValue> TexturePackChoices() {
+  const auto exe_dir = rex::filesystem::GetExecutablePath().parent_path();
+  std::vector<options_actions::NamedValue> choices{{"off", Localized("Off", "Desactivado")}};
+  if (texture_packs::IsPackRoot(exe_dir / "textures"))
+    choices.push_back({"textures", Localized("textures folder", "Carpeta textures")});
+  for (const auto& name : texture_packs::PackNames(exe_dir / "texture_packs")) choices.push_back({name, name});
+  return choices;
+}
+#endif
+
 void AddUnavailable(Context* ctx) {
   for (const auto& row : Catalog()) {
     if (IsReadOnly(row.id)) continue;
@@ -401,10 +419,14 @@ void BuildContext(bool touch_controls, OwnedContext* out) {
   out->ctx.dlss = HasDlss();
   out->ctx.native_mouse = rex::glue::NativeMouseAimInstalled();
   out->ctx.advanced = CurrentValue("gow2_menu_advanced") == "true";
+  out->ctx.game_running = rex::Runtime::instance() != nullptr;
   out->ctx.lang = MenuLang();
   AddChoices(out, "monitor", options_actions::ListMonitors());
   AddChoices(out, "gow2_gpu", options_actions::ListGpus());
   AddChoices(out, "gow2_save_dir", options_actions::ListSaveFolders(CurrentValue("gow2_save_dir")));
+#ifdef _WIN32
+  AddChoices(out, "gow2_texture_pack", TexturePackChoices());
+#endif
   AddUnavailable(&out->ctx);
 }
 

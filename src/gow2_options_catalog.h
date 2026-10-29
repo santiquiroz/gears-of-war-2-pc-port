@@ -42,6 +42,7 @@ enum class Need : uint8_t {
   kNoDlss,
   kNativeMouse,     // the native mouse-look hooks are installed
   kNoNativeMouse,   // the mouse drives the right stick
+  kGameRunning,     // the runtime exists (hidden in the launcher, which opens before it)
 };
 
 struct Choice {
@@ -89,6 +90,7 @@ enum class TextId : uint8_t {
   kPressAKey,          // key capture prompt
   kHintChange, kHintBack, kHintDefault, kHintSave, kHintTabs, kHintClose,
   kHintQuit,
+  kHintPlay,           // the launcher's Back: leave the menu and load the game
   kEditTextTitle, kEditTextOk, kEditTextCancel,
 };
 

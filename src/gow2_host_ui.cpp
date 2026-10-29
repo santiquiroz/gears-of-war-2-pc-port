@@ -20,6 +20,10 @@
 #include <rex/ui/ui_event.h>
 #include <rex/ui/virtual_key.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace rex::glue {
 namespace {
 
@@ -27,6 +31,66 @@ std::atomic<bool> g_host_ui_open{false};
 
 float NormalizeStick(int16_t value) {
   return static_cast<float>(value) / (value < 0 ? 32768.0f : 32767.0f);
+}
+
+HostPad PadFromState(uint16_t buttons, int16_t lx, int16_t ly, int16_t rx, int16_t ry, uint8_t lt,
+                     uint8_t rt) {
+  return {true, buttons, NormalizeStick(lx), NormalizeStick(ly), NormalizeStick(rx), NormalizeStick(ry), lt, rt};
+}
+
+HostPad ReadRuntimePad(rex::Runtime* runtime) {
+  rex::input::X_INPUT_STATE state{};
+  X_RESULT result = X_ERROR_DEVICE_NOT_CONNECTED;
+  auto* input = static_cast<rex::input::InputSystem*>(runtime->input_system());
+  const auto read = [&] { result = input->GetState(0, &state); };
+#ifdef _WIN32
+  WithXamInputLock(read);
+#else
+  read();
+#endif
+  if (result != X_ERROR_SUCCESS) return {};
+  return PadFromState(static_cast<uint16_t>(state.gamepad.buttons),
+                      static_cast<int16_t>(state.gamepad.thumb_lx), static_cast<int16_t>(state.gamepad.thumb_ly),
+                      static_cast<int16_t>(state.gamepad.thumb_rx), static_cast<int16_t>(state.gamepad.thumb_ry),
+                      state.gamepad.left_trigger, state.gamepad.right_trigger);
+}
+
+#ifdef _WIN32
+// XINPUT_STATE's layout; <Xinput.h> would #define XINPUT_DEVTYPE_GAMEPAD over the SDK's enum of that name.
+struct XInputState {
+  DWORD packet;
+  WORD buttons;
+  BYTE left_trigger, right_trigger;
+  SHORT thumb_lx, thumb_ly, thumb_rx, thumb_ry;
+};
+static_assert(sizeof(XInputState) == 16);
+using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XInputState*);
+
+XInputGetStateFn LoadXInputGetState() {
+  HMODULE module = LoadLibraryW(L"xinput1_4.dll");
+  if (!module) module = LoadLibraryW(L"xinput9_1_0.dll");
+  if (!module) return nullptr;
+  return reinterpret_cast<XInputGetStateFn>(GetProcAddress(module, "XInputGetState"));
+}
+
+// The launcher runs before the runtime and its input system exist (Steam Deck players have only the pad).
+HostPad ReadXInputPad() {
+  static const XInputGetStateFn get_state = LoadXInputGetState();
+  XInputState state{};
+  if (!get_state || get_state(0, &state) != ERROR_SUCCESS) return {};
+  return PadFromState(state.buttons, state.thumb_lx, state.thumb_ly, state.thumb_rx, state.thumb_ry,
+                      state.left_trigger, state.right_trigger);
+}
+#endif
+
+HostPad ReadDevicePad() {
+  rex::Runtime* runtime = rex::Runtime::instance();
+  if (runtime && runtime->input_system()) return ReadRuntimePad(runtime);
+#ifdef _WIN32
+  return ReadXInputPad();
+#else
+  return {};
+#endif
 }
 
 }  // namespace
@@ -41,26 +105,7 @@ void SetHostUiOpen(bool open) {
 }
 
 HostPad ReadHostPad() {
-  rex::Runtime* runtime = rex::Runtime::instance();
-  if (!runtime || !runtime->input_system()) return {};
-  rex::input::X_INPUT_STATE state{};
-  X_RESULT result = X_ERROR_DEVICE_NOT_CONNECTED;
-  auto* input = static_cast<rex::input::InputSystem*>(runtime->input_system());
-  const auto read = [&] { result = input->GetState(0, &state); };
-#ifdef _WIN32
-  WithXamInputLock(read);
-#else
-  read();
-#endif
-  HostPad pad{};
-  if (result == X_ERROR_SUCCESS) {
-    pad = {true, static_cast<uint16_t>(state.gamepad.buttons),
-           NormalizeStick(static_cast<int16_t>(state.gamepad.thumb_lx)),
-           NormalizeStick(static_cast<int16_t>(state.gamepad.thumb_ly)),
-           NormalizeStick(static_cast<int16_t>(state.gamepad.thumb_rx)),
-           NormalizeStick(static_cast<int16_t>(state.gamepad.thumb_ry)),
-           state.gamepad.left_trigger, state.gamepad.right_trigger};
-  }
+  HostPad pad = ReadDevicePad();
   test_input::PadState scripted;
   if (test_input::CurrentPad(&scripted)) {
     pad.buttons |= scripted.buttons;
@@ -72,8 +117,9 @@ HostPad ReadHostPad() {
       pad.rx = NormalizeStick(scripted.rx);
       pad.ry = NormalizeStick(scripted.ry);
     }
-    pad.lt = std::max(pad.lt, scripted.left_trigger);
-    pad.rt = std::max(pad.rt, scripted.right_trigger);
+    // The template argument keeps windows.h's max macro out.
+    pad.lt = std::max<uint8_t>(pad.lt, scripted.left_trigger);
+    pad.rt = std::max<uint8_t>(pad.rt, scripted.right_trigger);
     pad.connected = true;
   }
   return pad;

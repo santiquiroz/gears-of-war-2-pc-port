@@ -62,7 +62,7 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $log = Join-Path $root "out/runs/capture-$stamp.log"
 $exe = if ([System.IO.Path]::IsPathRooted($Exe)) { $Exe } else { Join-Path $root $Exe }
 $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru `
-    -ArgumentList (@("--game_data_root=`"$GameRoot`"", "--log_file=`"$log`"") + ($ExtraArgs -split ' ' | Where-Object { $_ }))
+    -ArgumentList (@("--game_data_root=`"$GameRoot`"", "--log_file=`"$log`"", '--gow2_launcher=false') + ($ExtraArgs -split ' ' | Where-Object { $_ }))
 $start = Get-Date
 # pwsh -File passes "8,20,40" as one string, so split it here.
 $events = @()

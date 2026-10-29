@@ -25,6 +25,7 @@ struct Context {
   uint8_t platform = kWindows;
   bool touch = false, fidelityfx = false, dlss = false, native_mouse = false;
   bool advanced = false;
+  bool game_running = true;  // false in the launcher, before the runtime exists
   Lang lang = Lang::kEn;
   std::map<std::string, std::vector<Choice>, std::less<>> dynamic_choices;
   std::set<std::string, std::less<>> unavailable;  // rows whose cvar this runtime does not have

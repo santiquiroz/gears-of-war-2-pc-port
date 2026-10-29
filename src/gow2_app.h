@@ -30,12 +30,14 @@
 #include "gow2_frame_stats.h"
 #include "gow2_input_activity.h"
 #include "gow2_gpu_pick.h"
+#include "gow2_launcher.h"
 #include "gow2_machine_xuid.h"
 #include "gow2_mouse_aim.h"
 #include "gow2_options_actions.h"
 #include "gow2_options_overlay.h"
 #include "gow2_save_dir.h"
 #include "gow2_sha_table.h"
+#include "gow2_texture_packs.h"
 #include "gow2_utf8_guard.h"
 #include "gow2_voice_language_setup.h"
 #include "gow2_xam_input_guard.h"
@@ -446,6 +448,7 @@ class Gow2App : public rex::ReXApp {
     LogGameExecutableIdentity();
 #ifdef _WIN32
     rex::glue::PrepareKeycapPack();
+    ApplyTexturePack();
 #endif
     PickRenderGpu();
     SetUpscaleTarget();
@@ -459,6 +462,34 @@ class Gow2App : public rex::ReXApp {
     rex::glue::InstallCrashWatch();
     ConfigurePcOptionsEntry();
   }
+
+#ifdef _WIN32
+  // The chosen pack outranks gow2.toml but not the command line (build-keycaps.ps1 passes texture_pack_dir).
+  // The GPU plugin usually registers texture_replace and texture_pack_dir after this runs; it then reads
+  // REX_* with the same ranking.
+  static void SetTextureCvar(const char* name, const char* env, const std::string& value) {
+    if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kCommandLine) {
+      REXLOG_WARN("TEXPACK {} from the command line wins over gow2_texture_pack", name);
+      return;
+    }
+    if (rex::cvar::GetFlagInfo(name)) rex::cvar::SetFlagByName(name, value);
+    _putenv_s(env, value.c_str());
+  }
+
+  // gow2_texture_pack outranks texture_replace / texture_pack_dir; empty leaves them as gow2.toml says.
+  static void ApplyTexturePack() {
+    const std::string choice = rex::cvar::Query<std::string>("gow2_texture_pack");
+    const std::filesystem::path exe_dir = rex::filesystem::GetExecutablePath().parent_path();
+    auto pack = rex::glue::texture_packs::ResolvePack(choice, exe_dir);
+    // An empty REX_ variable is no variable: the old folder goes in by its full path.
+    if (pack.pack_dir && pack.pack_dir->empty()) pack.pack_dir = PathUtf8(exe_dir / "textures");
+    if (pack.replace) SetTextureCvar("texture_replace", "REX_TEXTURE_REPLACE", *pack.replace ? "true" : "false");
+    if (pack.pack_dir) SetTextureCvar("texture_pack_dir", "REX_TEXTURE_PACK_DIR", *pack.pack_dir);
+    REXLOG_INFO("TEXPACK pack '{}' -> replace {} dir '{}'", choice,
+                pack.replace ? (*pack.replace ? "on" : "off") : "from gow2.toml",
+                pack.pack_dir ? *pack.pack_dir : std::string("from gow2.toml"));
+  }
+#endif
 
   static void ConfigurePcOptionsEntry() {
     const bool enabled = rex::glue::HostUiHooksAvailable() &&
@@ -516,9 +547,7 @@ class Gow2App : public rex::ReXApp {
   }
 
   // gow2.toml is loaded by now (OnConfigurePaths runs before it), and the runtime is not built yet.
-  std::optional<rex::PathConfig> OnFinalizePaths(const rex::PathConfig& defaults,
-                                                 std::function<void(rex::PathConfig)> resume) override {
-    (void)resume;
+  rex::PathConfig FinalizePaths(const rex::PathConfig& defaults) {
     rex::PathConfig paths = defaults;
     if (UserDataRootOutranksSaveDir()) {
       ReportSaveDirOutranked(paths.user_data_root);
@@ -536,6 +565,39 @@ class Gow2App : public rex::ReXApp {
     rex::glue::options::UpdatePcOptionsPaths(options_paths_);
     return paths;
   }
+
+  std::optional<rex::PathConfig> OnFinalizePaths(const rex::PathConfig& defaults,
+                                                 std::function<void(rex::PathConfig)> resume) override {
+    const rex::PathConfig paths = FinalizePaths(defaults);
+#ifdef _WIN32
+    if (OpenLauncher(paths, std::move(resume))) return std::nullopt;
+#else
+    (void)resume;
+#endif
+    return paths;
+  }
+
+#ifdef _WIN32
+  // Play resumes start-up from the event loop, outside the overlay's ImGui frame.
+  bool OpenLauncher(const rex::PathConfig& paths, std::function<void(rex::PathConfig)> resume) {
+    if (!rex::glue::launcher::ShouldShowLauncher(rex::cvar::Query<bool>("gow2_launcher"),
+                                                 rex::cvar::Query<int32_t>("gow2_wait_pid"))) {
+      return false;
+    }
+    auto play = [this, paths, resume] {
+      REXLOG_INFO("LAUNCHER continuing into the game");
+      app_context().CallInUIThreadDeferred([paths, resume] { resume(paths); });
+    };
+    auto quit = [this] {
+      app_context().CallInUIThreadDeferred([this] {
+        if (window()) window()->RequestClose();
+      });
+    };
+    if (!rex::glue::options::OpenPcOptionsLauncher(std::move(play), std::move(quit))) return false;
+    REXLOG_INFO("LAUNCHER shown (gow2_launcher=false skips it)");
+    return true;
+  }
+#endif
 
   static uint64_t RandomXuidBits() {
     std::random_device device;

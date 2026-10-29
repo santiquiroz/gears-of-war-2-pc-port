@@ -73,6 +73,7 @@ function Build-InstanceArgs([string]$gameRoot, [string]$log, [int]$width, [int]$
     $list = @(
         "--game_data_root=`"$gameRoot`"",
         "--log_file=`"$log`"",
+        '--gow2_launcher=false',
         '--fullscreen=false',
         "--window_width=$width",
         "--window_height=$height",

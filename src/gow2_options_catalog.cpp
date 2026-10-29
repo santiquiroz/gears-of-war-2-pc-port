@@ -545,15 +545,30 @@ void AddGraphicsPatches(std::vector<Setting>& out) {
       .help_es =
           "Parche de la comunidad: profundidad de campo sin artefactos por encima de 720p."});
   out.push_back(Setting{
-      .id = "texture_replace",
+      .id = "gow2_texture_pack",
       .tab = Tab::kGraphics,
-      .kind = Kind::kToggle,
+      .kind = Kind::kChoice,
       .apply = Apply::kRestart,
       .platforms = kWindows,
-      .label_en = "Texture packs",
-      .label_es = "Packs de texturas",
-      .help_en = "Loads your own textures from textures\\4D53082D\\replace next to the game.",
-      .help_es = "Carga tus propias texturas desde textures\\4D53082D\\replace junto al juego."});
+      .dynamic_choices = true,
+      .label_en = "Texture pack",
+      .label_es = "Pack de texturas",
+      .help_en = "Pick a folder from texture_packs next to the game (each pack holds 4D53082D\\replace). "
+                 "Off uses the game's own textures.",
+      .help_es = "Elige una carpeta de texture_packs junto al juego (cada pack trae 4D53082D\\replace). "
+                 "Desactivado usa las texturas del juego."});
+  out.push_back(Setting{
+      .id = "gow2_open_texture_packs",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kAction,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Open texture packs folder",
+      .label_es = "Abrir carpeta de packs de texturas",
+      .help_en = "Creates texture_packs next to the game and opens it. Put each pack in its own folder there; "
+                 "it shows up in Texture pack after you reopen Options.",
+      .help_es = "Crea texture_packs junto al juego y la abre. Pon cada pack en su propia carpeta; aparece en "
+                 "Pack de texturas al reabrir Opciones."});
   out.push_back(Setting{
       .id = "texture_dump",
       .tab = Tab::kGraphics,
@@ -1023,6 +1038,7 @@ void AddMultiplayer(std::vector<Setting>& out) {
       .kind = Kind::kInfo,
       .apply = Apply::kNow,
       .platforms = kAllPlatforms,
+      .need = Need::kGameRunning,
       .label_en = "Co-op check code",
       .label_es = "Código de comprobación",
       .help_en =
@@ -1050,6 +1066,7 @@ void AddMultiplayer(std::vector<Setting>& out) {
       .kind = Kind::kAction,
       .apply = Apply::kNow,
       .platforms = kWindows,
+      .need = Need::kGameRunning,
       .label_en = "Host over the internet",
       .label_es = "Alojar por internet",
       .help_en = "Open the System Link ports on your routers (UPnP) and choose who may join.",
@@ -1113,6 +1130,7 @@ void AddHost(std::vector<Setting>& out) {
       .kind = Kind::kInfo,
       .apply = Apply::kNow,
       .platforms = kWindows,
+      .need = Need::kGameRunning,
       .label_en = "Status",
       .label_es = "Estado",
       .help_en = "Whether the ports are open on your routers right now.",
@@ -1141,6 +1159,7 @@ void AddHost(std::vector<Setting>& out) {
       .kind = Kind::kAction,
       .apply = Apply::kNow,
       .platforms = kWindows,
+      .need = Need::kGameRunning,
       .label_en = "Open ports now",
       .label_es = "Abrir puertos ahora",
       .help_en =
@@ -1154,6 +1173,7 @@ void AddHost(std::vector<Setting>& out) {
       .kind = Kind::kAction,
       .apply = Apply::kNow,
       .platforms = kWindows,
+      .need = Need::kGameRunning,
       .label_en = "Close ports",
       .label_es = "Cerrar puertos",
       .help_en = "Removes the port mappings this game made.",
@@ -1410,6 +1430,18 @@ void AddSystem(std::vector<Setting>& out) {
       .help_en = "Skips the Epic Games and Microsoft Game Studios logos at start. The game's own cinematics still play.",
       .help_es = "Salta los logos de Epic Games y Microsoft Game Studios al arrancar. Las cinemáticas del juego se siguen viendo."});
   out.push_back(Setting{
+      .id = "gow2_launcher",
+      .tab = Tab::kSystem,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Show options at start",
+      .label_es = "Mostrar opciones al iniciar",
+      .help_en = "Opens these options before the game loads, with a Play button. Changes that need a restart "
+                 "apply when you press Play.",
+      .help_es = "Abre estas opciones antes de cargar el juego, con un botón Jugar. Los cambios que requieren "
+                 "reinicio se aplican al pulsar Jugar."});
+  out.push_back(Setting{
       .id = "gow2_menu_advanced",
       .tab = Tab::kSystem,
       .kind = Kind::kToggle,
@@ -1425,6 +1457,7 @@ void AddSystem(std::vector<Setting>& out) {
       .kind = Kind::kAction,
       .apply = Apply::kNow,
       .platforms = kAllPlatforms,
+      .need = Need::kGameRunning,
       .label_en = "All runtime settings",
       .label_es = "Todos los ajustes del runtime",
       .help_en = "The runtime's own settings list (F4).",
@@ -1588,6 +1621,8 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("Close", "Cerrar", lang);
     case TextId::kHintQuit:
       return Pick("Quit game", "Salir del juego", lang);
+    case TextId::kHintPlay:
+      return Pick("Play", "Jugar", lang);
     case TextId::kEditTextTitle:
       return Pick("Edit", "Editar", lang);
     case TextId::kEditTextOk:

@@ -126,7 +126,7 @@ A controller works at the same time. Its buttons can be remapped in PC Options >
 
 ## Settings
 
-Everything here can be changed in game from Options > PC Options (or F10, or Back+Start); see [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). `gow2.toml` sits next to the exe. It is read at start-up; command-line flags (`--name=value`) override it. Main keys:
+Everything here can be changed in game from Options > PC Options (or F10, or Back+Start); see [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). On Windows PC Options also opens before the game loads, with a Play button (turn it off in System > Show options at start). `gow2.toml` sits next to the exe. It is read at start-up; command-line flags (`--name=value`) override it. Main keys:
 
 The Graphics tab includes **Game quality**: Low / Medium / High (retail) presets and 24 individual engine quality controls, all applied after a restart. High restores retail quality; Auto keeps platform defaults (retail on PC, which is already the highest choice in every row; Android turns object shadows off). See [the key inventory and presets](docs/SYSTEM_SETTINGS.md).
 
@@ -140,6 +140,8 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `gpu_backend` — `any` (Direct3D 12), `d3d12` or `vulkan` (experimental); needs a restart.
 - `gow2_native_frontend` — draw source: `auto` (console commands, faster on PC and on the phones measured so far), `on` or `off`.
 - `gow2_skip_intro_movies` — skips the Epic Games and Microsoft Game Studios logo videos at start.
+- `gow2_launcher` — Windows: opens PC Options before the game loads, with a Play button (`false` goes straight into the game).
+- `gow2_texture_pack` — Windows: the texture pack folder under `texture_packs` next to the exe, `textures` for the old `textures` folder, `off`, or empty to follow `texture_replace`; needs a restart.
 - `present_letterbox` — Android: `false` fills a wider screen (cropped up to 10 % at the top and bottom, stretched sideways for the rest).
 - `gow2_unlock_fps` — lifts the game's 30 fps cap.
 - `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit).

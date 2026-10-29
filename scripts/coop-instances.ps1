@@ -126,7 +126,7 @@ function Get-CoopArgs([int]$i) {
 function Get-InstanceArgs([int]$i, [string]$dir) {
     $own = @("--game_data_root=`"$GameRoot`"", "--log_file=`"$(Join-Path $dir 'game.log')`"",
         "--gow2_test_input=`"$(Join-Path $dir 'pad.txt')`"",
-        "--user_data_root=`"$(Join-Path $dir 'user')`"", '--fullscreen=false',
+        "--user_data_root=`"$(Join-Path $dir 'user')`"", '--gow2_launcher=false', '--fullscreen=false',
         "--window_width=$Width", "--window_height=$Height", '--resolution_scale=1')
     $own += "--gow2_dev_command_file=`"$(Join-Path $dir 'cmd.txt')`""
     if ($Coop) { $own += Get-CoopArgs $i }

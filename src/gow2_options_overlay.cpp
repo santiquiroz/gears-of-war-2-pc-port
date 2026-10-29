@@ -18,12 +18,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <thread>
 #include <utility>
 #include <imgui.h>
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
 #include <rex/ui/imgui_dialog.h>
@@ -304,14 +307,24 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     { std::lock_guard lock(g_modal_mutex); ++g_generation; }
     SetHostUiOpen(true);
     rex::cvar::SetFlagByName("xam_input_block", "true");
-    if (source != OpenSource::kGameMenu) NotifyUi(true);
+    notify_game_ = source != OpenSource::kGameMenu && !launcher_;
+    if (notify_game_) NotifyUi(true);
     reader_.Reset(CurrentPad());
     REXLOG_INFO("PCOPTIONS open ({})", SourceName(source));
   }
 
   void Toggle(OpenSource source) {
+    if (launcher_) return;
     if (!open_) { OpenMenu(source); return; }
     Dispatch(Command::kBack);
+  }
+
+  void OpenLauncher(std::function<void()> play, std::function<void()> quit) {
+    play_ = std::move(play);
+    quit_ = std::move(quit);
+    launcher_ = true;
+    OpenMenu(OpenSource::kShortcut);
+    SelectTab(state_, 0, Catalog(), values_, context_.ctx);
   }
 
   void SetPaths(const GamePaths& paths) { values_.set_paths(paths); }
@@ -367,7 +380,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     releasing_ = false;
     rex::cvar::SetFlagByName("xam_input_block", "false");
     SetHostUiOpen(false);
-    if (!notify || source_ == OpenSource::kGameMenu) return;
+    if (!notify || !notify_game_) return;
     uint64_t generation;
     { std::lock_guard lock(g_modal_mutex); generation = g_generation; }
     ReleaseNotificationLater(generation);
@@ -388,7 +401,38 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   void Dispatch(Command command) {
     if (!open_ || !popup_id_.empty()) return;
     scroll_selection_ = true;
+    if (LauncherPlays(command)) { Play(); return; }
     ApplyOutcome(Handle(state_, command, Catalog(), values_, context_.ctx));
+  }
+
+  bool LauncherPlays(Command command) const {
+    return launcher_ && command == Command::kBack && state_.page == Page::kMain && state_.prompt == Prompt::kNone;
+  }
+
+  void Play() {
+    if (!SaveBeforeExit()) return;
+    if (!RestartPending(state_,Catalog(),values_,context_.ctx).empty() && RestartFromLauncher()) return;
+    launcher_ = false;
+    CloseMenu();
+    if (auto play = std::move(play_)) play();
+  }
+
+  bool RestartFromLauncher() {
+    CloseHostPortsBeforeExit();
+    if (!options_actions::RestartGame()) return false;
+    REXLOG_INFO("LAUNCHER play: restarting to apply the options that need a restart");
+    Quit();
+    return true;
+  }
+
+  // Before the runtime exists RequestQuit has no window to close; the app's quit does.
+  void Quit() {
+    if (launcher_ && quit_) { quit_(); return; }
+    RequestQuit();
+  }
+
+  void OpenTexturePacks() {
+    options_actions::OpenFolder(rex::filesystem::GetExecutablePath().parent_path() / "texture_packs");
   }
 
   void ApplyOutcome(const Outcome& outcome) {
@@ -445,15 +489,16 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     if (id == "quit_game") {
       if (!SaveBeforeExit()) return;
       CloseHostPortsBeforeExit();
-      RequestQuit();
+      Quit();
       return;
     }
     if (id == "restart_game") {
       if (!SaveBeforeExit()) return;
       CloseHostPortsBeforeExit();
-      if (options_actions::RestartGame()) RequestQuit();
+      if (options_actions::RestartGame()) Quit();
       return;
     }
+    if (id == "gow2_open_texture_packs") { OpenTexturePacks(); return; }
     if (id == "save_open") { options_actions::OpenFolder(values_.paths().user_data_root); return; }
     if (id == "save_dir_browse") { BrowseFolder(); return; }
     if (id == "host_open") { StartHost(); return; }
@@ -833,9 +878,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       return;
     }
     constexpr std::array<Command,4> commands{Command::kAccept,Command::kBack,Command::kResetRow,Command::kSave};
-    const std::array<TextId,4> text{TextId::kHintChange,
-        state_.page == Page::kMain && state_.touched.empty() ? TextId::kHintClose : TextId::kHintBack,
-        TextId::kHintDefault,TextId::kHintSave};
+    const std::array<TextId,4> text{TextId::kHintChange,BackHint(),TextId::kHintDefault,TextId::kHintSave};
     constexpr std::array<const char*,4> keys{"Enter","Esc","Del","Ctrl+S"};
     constexpr std::array<const char*,4> pad_keys{"A","B","X","Y"};
     constexpr std::array<ImU32,4> colors{kGreen,IM_COL32(224,80,80,255),IM_COL32(74,144,226,255),IM_COL32(232,196,64,255)};
@@ -853,17 +896,22 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     }
   }
 
+  TextId BackHint() const {
+    if (launcher_ && state_.page == Page::kMain) return TextId::kHintPlay;
+    return state_.page == Page::kMain && state_.touched.empty() ? TextId::kHintClose : TextId::kHintBack;
+  }
+
   void DrawPointerFooter() {
     constexpr std::array<Command,3> commands{Command::kSave,Command::kResetRow,Command::kBack};
-    const std::array<TextId,3> labels{TextId::kHintSave,TextId::kHintDefault,
-        state_.page == Page::kMain && state_.touched.empty() ? TextId::kHintClose : TextId::kHintBack};
+    const std::array<TextId,3> labels{TextId::kHintSave,TextId::kHintDefault,BackHint()};
+    const Command primary = launcher_ ? Command::kBack : Command::kSave;
     const float item_width = width_/4;
     const ImVec2 size{item_width-.008f*h_,std::max(44.f,.055f*h_)};
     PushFont(.024f*h_,true);
     for (size_t i=0;i<commands.size();++i) {
       ImGui::SetCursorScreenPos({left_+item_width*static_cast<float>(i),.875f*h_});
       ImGui::PushID(static_cast<int>(i));
-      const bool clicked = DrawButton(std::string(T(labels[i])).c_str(),size,commands[i] == Command::kSave);
+      const bool clicked = DrawButton(std::string(T(labels[i])).c_str(),size,commands[i] == primary);
       ImGui::PopID();
       if (clicked && !ModalActive()) Dispatch(commands[i]);
     }
@@ -1257,6 +1305,10 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   bool shift_ = false;
   bool symbols_ = false;
   bool host_pending_ = false;
+  bool launcher_ = false;
+  bool notify_game_ = false;
+  std::function<void()> play_;
+  std::function<void()> quit_;
   std::optional<std::string> closed_host_original_;
   bool show_keyboard_ = false;
   bool retire_popups_ = false;
@@ -1339,6 +1391,12 @@ std::unique_ptr<rex::ui::ImGuiDialog> CreateOptionsOverlay(
 
 void TogglePcOptions(OpenSource source) {
   if (g_overlay) g_overlay->Toggle(source);
+}
+
+bool OpenPcOptionsLauncher(std::function<void()> play, std::function<void()> quit) {
+  if (!g_overlay) return false;
+  g_overlay->OpenLauncher(std::move(play), std::move(quit));
+  return true;
 }
 
 void UpdatePcOptionsPaths(const GamePaths& paths) {

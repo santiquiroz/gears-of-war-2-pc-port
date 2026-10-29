@@ -126,7 +126,7 @@ Un mando funciona al mismo tiempo. Sus botones se reasignan en Opciones de PC > 
 
 ## Ajustes
 
-Todo esto se puede cambiar en el juego desde Opciones > Opciones de PC (o F10, o Back+Start); ver [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). `gow2.toml` se encuentra junto al exe. Se lee al arrancar; las opciones de línea de comandos (`--nombre=valor`) tienen prioridad sobre él. Claves principales:
+Todo esto se puede cambiar en el juego desde Opciones > Opciones de PC (o F10, o Back+Start); ver [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). En Windows, Opciones de PC también se abre antes de cargar el juego, con un botón Jugar (se desactiva en Sistema > Mostrar opciones al iniciar). `gow2.toml` se encuentra junto al exe. Se lee al arrancar; las opciones de línea de comandos (`--nombre=valor`) tienen prioridad sobre él. Claves principales:
 
 La pestaña Gráficos incluye **Calidad del juego**: perfiles Bajo / Medio / Alto (original) y 24 controles de calidad del motor; requieren reiniciar. Alto restaura la calidad original; Automático conserva los valores de la plataforma (en PC, los originales, que ya son la opción más alta de cada fila; Android apaga las sombras de objetos). Ver [el inventario de claves y perfiles](docs/SYSTEM_SETTINGS.md).
 
@@ -140,6 +140,8 @@ Las voces (inglés, español latino o francés; `gow2_voice_language`) y los sub
 - `gpu_backend` — `any` (Direct3D 12), `d3d12` o `vulkan` (experimental); requiere reiniciar.
 - `gow2_native_frontend` — origen de los draws: `auto` (comandos de consola, más rápidos en PC y en los teléfonos medidos hasta ahora), `on` u `off`.
 - `gow2_skip_intro_movies` — salta los videos con los logos de Epic Games y Microsoft Game Studios al arrancar.
+- `gow2_launcher` — Windows: abre Opciones de PC antes de cargar el juego, con un botón Jugar (`false` entra directo al juego).
+- `gow2_texture_pack` — Windows: la carpeta del pack de texturas dentro de `texture_packs` junto al exe, `textures` para la carpeta `textures` antigua, `off`, o vacío para seguir `texture_replace`; requiere reiniciar.
 - `present_letterbox` — Android: `false` llena una pantalla más ancha (recorta hasta un 10 % arriba y abajo y estira a lo ancho el resto).
 - `gow2_unlock_fps` — elimina el límite de 30 fps del juego.
 - `gow2_fps_cap` — límite de FPS con el juego desbloqueado (0 = sin límite).

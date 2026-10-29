@@ -79,7 +79,7 @@ if ((Missing-Pages) -or -not (Get-ChildItem $dump -Filter "$($atlas.hash)_*.dds"
     $cmd = Join-Path $work 'cmd.txt'; [IO.File]::WriteAllText($cmd, '')
     $pad = Join-Path $work 'pad.txt'; [IO.File]::WriteAllText($pad, '')
     $log = Join-Path $work 'game.log'; if (Test-Path $log) { Remove-Item -Force $log }
-    $arguments = @('--texture_dump=true', '--gow2_keycaps=false', '--gow2_prompts=controller',
+    $arguments = @('--gow2_launcher=false', '--texture_dump=true','--gow2_keycaps=false', '--gow2_prompts=controller',
         "--gow2_dev_command_file=$cmd", "--gow2_test_input=$pad", "--log_file=$log")
     if ($TextureRoot) { $arguments += "--texture_pack_dir=$TextureRoot" }
     if ($GameFolder) { $arguments += "--game_data_root=$GameFolder" }

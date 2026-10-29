@@ -28,7 +28,7 @@ for i in $(seq 1 "$MAX_ITERS"); do
   log="out/runs/loop$i.log"
   rm -f "$log"
   winlog=$(cygpath -w "$PWD/$log")
-  (cd out/build/release && timeout "$RUN_SECONDS" ./gow2.exe --game_data_root="$GAME" --log_file="$winlog" > /dev/null 2>&1)
+  (cd out/build/release && timeout "$RUN_SECONDS" ./gow2.exe --gow2_launcher=false --game_data_root="$GAME" --log_file="$winlog" > /dev/null 2>&1)
   addr=$(fatal_address "$log")
   if [ -z "$addr" ]; then
     echo "iter $i: no unregistered-function FATAL; last lines:"; tail -3 "$log"; exit 0

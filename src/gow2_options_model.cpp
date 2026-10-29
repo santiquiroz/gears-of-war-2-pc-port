@@ -20,6 +20,7 @@ bool NeedSatisfied(Need need, const Context& ctx) {
     case Need::kNoDlss: return !ctx.dlss;
     case Need::kNativeMouse: return ctx.native_mouse;
     case Need::kNoNativeMouse: return !ctx.native_mouse;
+    case Need::kGameRunning: return ctx.game_running;
     default: return true;
   }
 }

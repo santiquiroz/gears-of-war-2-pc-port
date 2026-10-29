@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include "gow2_options_values.h"
 
@@ -16,6 +17,8 @@ void AddOptionsFonts(ImFontAtlas* atlas);
 std::unique_ptr<rex::ui::ImGuiDialog> CreateOptionsOverlay(
     rex::ui::ImGuiDrawer* drawer, const GamePaths& paths, bool touch_controls);
 void TogglePcOptions(OpenSource source);
+// Before the runtime exists: full-screen PC Options whose Back is Play. False when there is no overlay.
+bool OpenPcOptionsLauncher(std::function<void()> play, std::function<void()> quit);
 void UpdatePcOptionsPaths(const GamePaths& paths);
 void ClosePcOptionsForShutdown();
 }
