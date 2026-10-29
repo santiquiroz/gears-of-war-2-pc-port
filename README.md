@@ -138,6 +138,9 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `vsync` — vertical sync.
 - `gow2_native_renderer` — `auto` (native on AMD, NVIDIA and Android), `on` or `off` (emulated EDRAM).
 - `gpu_backend` — `any` (Direct3D 12), `d3d12` or `vulkan` (experimental); needs a restart.
+- `gow2_native_frontend` — draw source: `auto` (console commands on PC, faster today; Direct3D calls on Android), `on` or `off`.
+- `gow2_skip_intro_movies` — skips the Epic Games and Microsoft Game Studios logo videos at start.
+- `present_letterbox` — Android: `false` fills a wider screen (cropped up to 10 % at the top and bottom, stretched sideways for the rest).
 - `gow2_unlock_fps` — lifts the game's 30 fps cap.
 - `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit).
 - `gow2_audio_volume` — master volume in percent.
