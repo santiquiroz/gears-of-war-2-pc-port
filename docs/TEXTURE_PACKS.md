@@ -56,7 +56,7 @@ copy: do not share it. This project does not host or link packs made from the ga
 
 ## Credits
 
-- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al. (x4plus model, BSD 3-Clause)
+- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al. (realesr-animevideov3-x4 model, BSD 3-Clause)
   and [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) (MIT), on
   [ncnn](https://github.com/Tencent/ncnn) (BSD 3-Clause).
 - [DirectXTex](https://github.com/microsoft/DirectXTex) texconv (MIT) for the DDS and PNG conversion and

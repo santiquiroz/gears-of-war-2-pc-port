@@ -325,7 +325,7 @@ pinned one.
 - `tools\realesrgan\realesrgan-ncnn-vulkan.exe`: Real-ESRGAN-ncnn-vulkan (MIT), which links ncnn
   (BSD 3-Clause), unmodified, from `realesrgan-ncnn-vulkan-20220424-windows.zip` of
   <https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0>.
-- `tools\realesrgan\models\realesrgan-x4plus.bin` and `.param`: the Real-ESRGAN x4plus model
+- `tools\realesrgan\models\realesr-animevideov3-x4.bin` and `.param`: the Real-ESRGAN animevideov3 x4 model
   (BSD 3-Clause), from the same zip.
 - `tools\realesrgan\vcomp140.dll`: the Microsoft OpenMP runtime from the same zip, a Microsoft Visual
   C++ Redistributable file (Distributable Code under the Microsoft Visual Studio license terms).
@@ -1277,10 +1277,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Real-ESRGAN (x4plus model)
+### Real-ESRGAN (animevideov3 x4 model)
 
 - Project: [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), release `v0.2.5.0`.
-- Description: `tools\realesrgan\models\realesrgan-x4plus.bin` and `.param` (the trained upscaling model).
+- Description: `tools\realesrgan\models\realesr-animevideov3-x4.bin` and `.param` (the trained upscaling model).
 - Copyright: Copyright (c) 2021, Xintao Wang. All rights reserved.
 - License: BSD 3-Clause.
 

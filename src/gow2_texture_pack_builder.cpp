@@ -37,6 +37,10 @@ using texture_packs::Utf8;
 constexpr size_t kBatchSize = 64;
 constexpr DWORD kTexconvTimeoutMs = 5 * 60 * 1000;
 constexpr DWORD kEsrganTimeoutMs = 60 * 60 * 1000;
+// Measured on the hospital dump against realesrgan-x4plus: tones off by 3.3 instead of 5.0 (median), dark
+// pixels added at most 1 % instead of 28 % (x4plus crushes dark paint and concrete), and 15x faster (49 s
+// for 431 textures).
+constexpr const char* kEsrganModel = "realesr-animevideov3-x4";
 
 struct Failure {
   std::string message;
@@ -322,7 +326,7 @@ class Builder {
   }
 
   void RunEsrgan(const std::vector<Job>& jobs) {
-    std::vector<std::string> args = {"-i", "png", "-o", "png4", "-n", "realesrgan-x4plus", "-s", "4", "-f", "png",
+    std::vector<std::string> args = {"-i", "png", "-o", "png4", "-n", kEsrganModel, "-s", "4", "-f", "png",
                                      "-m", Utf8(EsrganModels())};
     if (esrgan_device_) args.insert(args.end(), {"-g", std::to_string(*esrgan_device_)});
     RunTool(EsrganExe(), std::move(args), kEsrganTimeoutMs, "realesrgan-ncnn-vulkan");
@@ -348,7 +352,9 @@ class Builder {
 
   // Written to out\ first and moved in whole, so a cancelled build never leaves a half-written DDS behind.
   void EncodeOne(const Job& job) {
-    std::vector<std::string> args = {"-nologo", "-y", "--ignore-srgb", "-w", std::to_string(job.plan.width), "-h",
+    // -sepalpha: the game uses alpha as a mask (a door's paint wear), and alpha-weighted resizing and mips turn
+    // the color under low alpha black (measured mean RGB 60,64,79 -> 36,41,54).
+    std::vector<std::string> args = {"-nologo", "-y", "--ignore-srgb", "-sepalpha", "-w", std::to_string(job.plan.width), "-h",
                                      std::to_string(job.plan.height), "-f", job.plan.dxgi, "-m", "0", "-o", "out"};
     // texconv has no Lanczos; cubic keeps the downsized 4x output sharper than the default filter.
     if (job.plan.width != job.dump.width * 4 || job.plan.height != job.dump.height * 4) {
@@ -469,7 +475,8 @@ Builder& TheBuilder() {
 
 bool ToolsPresent() {
   return IsFile(TexconvExe()) && IsFile(EsrganExe()) && IsFile(EsrganDir() / "vcomp140.dll") &&
-         IsFile(EsrganModels() / "realesrgan-x4plus.bin") && IsFile(EsrganModels() / "realesrgan-x4plus.param");
+         IsFile(EsrganModels() / (std::string(kEsrganModel) + ".bin")) &&
+         IsFile(EsrganModels() / (std::string(kEsrganModel) + ".param"));
 }
 
 size_t DumpCount() {

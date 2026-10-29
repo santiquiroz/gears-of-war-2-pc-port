@@ -207,8 +207,8 @@ $EsrganZipSha = 'abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802
 $EsrganFiles = [ordered]@{
     'realesrgan-ncnn-vulkan.exe'       = '07e49f7cbb4ede01ae4dd4c399d3a7e5846e3d2085c3128eff881e55cb7b1a0c'
     'vcomp140.dll'                     = '8f72ef2e483465444b2059fc6744d6cb22cd8d8a27f6fa56befd2a42dcd0f78b'
-    'models\realesrgan-x4plus.bin'     = '713ee713b0353afaa27976f0563a64a5043bd70b9bd8936c2e26e25ebcdbcddf'
-    'models\realesrgan-x4plus.param'   = '35330ececcea33b6c397a72548e788d5d53becee4734c50b7fada36e89f10a86'
+    'models\realesr-animevideov3-x4.bin'   = '548a36f9c3f4ab8da56cd3b13badf23968bee207b396dad14d04b830e5f2ab2d'
+    'models\realesr-animevideov3-x4.param' = '850a248e7c14c27e5bd8cf7265113a9441036a7db63963bb8aa5169d788a435e'
 }
 
 function Test-Sha256([string]$Path, [string]$Expected) {
