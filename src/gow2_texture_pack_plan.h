@@ -30,7 +30,7 @@ struct Plan {
 };
 
 constexpr uint32_t kMaxSide = 4096;
-constexpr uint32_t kMinSide = 64;
+constexpr uint32_t kMinSide = 128;
 
 inline bool IsLowerHex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }
 
@@ -80,16 +80,17 @@ inline std::string SourceDxgi(std::string_view format) {
   return "R8G8B8A8_UNORM";
 }
 
-inline bool IsColorFormat(std::string_view format) {
-  return format == "bc1" || format == "bc2" || format == "bc3" || format == "rgba8";
-}
+// rgba8 dumps are dither/jitter noise that Real-ESRGAN smooths flat.
+inline bool IsColorFormat(std::string_view format) { return format == "bc1" || format == "bc2" || format == "bc3"; }
 
-// Normal maps and single-channel masks are not photos: Real-ESRGAN would invent detail in them and a plain
-// resize adds memory without detail, so the disc texture stays.
-inline Plan PlanTexture(const DumpName& dump, bool normal_map, uint32_t scale, bool high_quality) {
+enum class Content { kColor, kNormalMap, kGrayscale };
+
+// Normal maps, grayscale masks and specular maps, noise and single-channel masks are not photos: Real-ESRGAN
+// would invent detail in them and a plain resize adds memory without detail, so the disc texture stays.
+inline Plan PlanTexture(const DumpName& dump, Content content, uint32_t scale, bool high_quality) {
   // Parentheses keep windows.h's min macro out.
   if ((std::min)(dump.width, dump.height) < kMinSide) return {};
-  if (normal_map || !IsColorFormat(dump.format)) return {};
+  if (content != Content::kColor || !IsColorFormat(dump.format)) return {};
   uint32_t width = dump.width * scale, height = dump.height * scale;
   while (width > kMaxSide || height > kMaxSide) {
     width /= 2;
@@ -112,11 +113,12 @@ inline std::string PackName(uint32_t scale, bool high_quality) {
 }
 
 struct ColorSum {
-  uint64_t r = 0, g = 0, b = 0, count = 0;
+  uint64_t r = 0, g = 0, b = 0, chroma = 0, count = 0;
   void Add(uint32_t red, uint32_t green, uint32_t blue) {
     r += red;
     g += green;
     b += blue;
+    chroma += (std::max)({red, green, blue}) - (std::min)({red, green, blue});
     ++count;
   }
 };
@@ -152,16 +154,20 @@ inline size_t BlockSize(std::string_view format) {
   return 0;
 }
 
-// Measured on the chapter 2 hospital dump: 166 of 620 color-format textures are tangent-space normal maps
-// stored as BC1, mean color about R127 G127 B250.
-inline bool LooksLikeNormalMap(std::string_view format, std::span<const uint8_t> mip0) {
+// Measured on the chapter 2 hospital dump: 166 textures are tangent-space normal maps stored as BC1,
+// mean color about R127 G127 B250.
+inline Content ClassifyTexture(std::string_view format, std::span<const uint8_t> mip0) {
   const size_t block = BlockSize(format);
-  if (block == 0 || mip0.size() < block || mip0.size() % block != 0) return false;
+  if (block == 0 || mip0.size() < block || mip0.size() % block != 0) return Content::kColor;
   const ColorSum sum = format == "rgba8" ? SumTexels(mip0) : SumBlockEndpoints(mip0, block, block == 16 ? 8 : 0);
-  if (sum.count == 0) return false;
-  const double r = double(sum.r) / double(sum.count), g = double(sum.g) / double(sum.count);
-  const double b = double(sum.b) / double(sum.count);
-  return r > 100 && r < 160 && g > 100 && g < 160 && b > 200;
+  if (sum.count == 0) return Content::kColor;
+  const double count = double(sum.count);
+  const double r = double(sum.r) / count, g = double(sum.g) / count, b = double(sum.b) / count;
+  if (r > 100 && r < 160 && g > 100 && g < 160 && b > 200) return Content::kNormalMap;
+  // RGB565 endpoints of a gray texture carry up to about 6 of chroma from rounding; measured on the hospital
+  // dump, 7 catches 151 of 161 grayscale textures and calls 4 of 268 colored ones gray.
+  if (double(sum.chroma) / count < 7) return Content::kGrayscale;
+  return Content::kColor;
 }
 
 inline size_t Mip0Bytes(std::string_view format, uint32_t width, uint32_t height) {

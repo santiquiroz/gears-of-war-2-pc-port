@@ -41,27 +41,34 @@ plan::DumpName Dump(std::string format, uint32_t width, uint32_t height) {
   return {"035e75eb6ad61933", std::move(format), width, height};
 }
 
+constexpr auto kColor = plan::Content::kColor;
+
 void TestPlanTexture() {
-  const auto bc1 = plan::PlanTexture(Dump("bc1", 512, 512), false, 2, false);
+  const auto bc1 = plan::PlanTexture(Dump("bc1", 512, 512), kColor, 2, false);
   Expect(bc1.step == plan::Step::kUpscale && bc1.width == 1024 && bc1.height == 1024 && bc1.dxgi == "BC1_UNORM",
          "512x512 bc1 x2 -> 1024x1024 BC1_UNORM");
-  Expect(plan::PlanTexture(Dump("bc1", 512, 512), false, 2, true).dxgi == "BC7_UNORM", "high quality is BC7");
-  Expect(plan::PlanTexture(Dump("bc1", 512, 512), true, 2, false).step == plan::Step::kSkip, "normal maps stay");
-  Expect(plan::PlanTexture(Dump("bc1", 32, 128), false, 2, false).step == plan::Step::kSkip, "32x128 stays");
-  Expect(plan::PlanTexture(Dump("bc1", 512, 16), false, 2, false).step == plan::Step::kSkip, "512x16 stays");
-  const auto big = plan::PlanTexture(Dump("bc3", 2048, 2048), false, 4, false);
+  Expect(plan::PlanTexture(Dump("bc1", 512, 512), kColor, 2, true).dxgi == "BC7_UNORM", "high quality is BC7");
+  Expect(plan::PlanTexture(Dump("bc1", 512, 512), plan::Content::kNormalMap, 2, false).step == plan::Step::kSkip,
+         "normal maps stay");
+  Expect(plan::PlanTexture(Dump("bc1", 512, 512), plan::Content::kGrayscale, 2, false).step == plan::Step::kSkip,
+         "grayscale textures stay");
+  Expect(plan::PlanTexture(Dump("bc1", 64, 64), kColor, 2, false).step == plan::Step::kSkip, "64x64 stays");
+  const auto small = plan::PlanTexture(Dump("bc1", 128, 128), kColor, 2, false);
+  Expect(small.step == plan::Step::kUpscale && small.width == 256 && small.height == 256, "128x128 x2 -> 256x256");
+  Expect(plan::PlanTexture(Dump("bc1", 32, 128), kColor, 2, false).step == plan::Step::kSkip, "32x128 stays");
+  Expect(plan::PlanTexture(Dump("bc1", 512, 16), kColor, 2, false).step == plan::Step::kSkip, "512x16 stays");
+  const auto big = plan::PlanTexture(Dump("bc3", 2048, 2048), kColor, 4, false);
   Expect(big.step == plan::Step::kUpscale && big.width == 4096 && big.height == 4096 && big.dxgi == "BC3_UNORM",
          "2048x2048 x4 stops at 4096x4096");
-  const auto wide = plan::PlanTexture(Dump("bc2", 2048, 512), false, 4, false);
+  const auto wide = plan::PlanTexture(Dump("bc2", 2048, 512), kColor, 4, false);
   Expect(wide.width == 4096 && wide.height == 1024 && wide.dxgi == "BC2_UNORM", "halving keeps the aspect");
-  Expect(plan::PlanTexture(Dump("bc1", 4096, 4096), false, 2, false).step == plan::Step::kSkip,
+  Expect(plan::PlanTexture(Dump("bc1", 4096, 4096), kColor, 2, false).step == plan::Step::kSkip,
          "4096x4096 x2 is back at its own size");
   for (const char* mask : {"bc4", "bc5", "r8", "rg8"}) {
-    Expect(plan::PlanTexture(Dump(mask, 512, 512), false, 2, false).step == plan::Step::kSkip,
+    Expect(plan::PlanTexture(Dump(mask, 512, 512), kColor, 2, false).step == plan::Step::kSkip,
            std::string("masks stay: ") + mask);
   }
-  const auto rgba = plan::PlanTexture(Dump("rgba8", 256, 256), false, 2, false);
-  Expect(rgba.step == plan::Step::kUpscale && rgba.dxgi == "R8G8B8A8_UNORM", "rgba8 x2 -> R8G8B8A8_UNORM");
+  Expect(plan::PlanTexture(Dump("rgba8", 256, 256), kColor, 2, false).step == plan::Step::kSkip, "rgba8 noise stays");
 }
 
 uint16_t Rgb565(uint32_t r, uint32_t g, uint32_t b) {
@@ -82,18 +89,22 @@ std::vector<uint8_t> Bc1Blocks(uint16_t color, int count) {
   return out;
 }
 
-void TestLooksLikeNormalMap() {
+void TestClassifyTexture() {
   const uint16_t flat = Rgb565(127, 127, 255);
-  Expect(plan::LooksLikeNormalMap("bc1", Bc1Blocks(flat, 4)), "bc1 blocks of (127,127,255) are a normal map");
-  Expect(!plan::LooksLikeNormalMap("bc1", Bc1Blocks(Rgb565(200, 120, 60), 4)), "bc1 blocks of (200,120,60) are not");
+  Expect(plan::ClassifyTexture("bc1", Bc1Blocks(flat, 4)) == plan::Content::kNormalMap,
+         "bc1 blocks of (127,127,255) are a normal map");
+  Expect(plan::ClassifyTexture("bc1", Bc1Blocks(Rgb565(200, 120, 60), 4)) == kColor,
+         "bc1 blocks of (200,120,60) are color");
+  const uint16_t gray = Rgb565(128, 128, 128);
+  Expect(plan::ClassifyTexture("bc1", Bc1Blocks(gray, 4)) == plan::Content::kGrayscale,
+         "bc1 blocks of (128,128,128) are grayscale");
   std::vector<uint8_t> bc3{0xff, 0x00, 0x13, 0x77, 0xe2, 0x9c, 0x01, 0xfe};
-  AppendColorBlock(bc3, flat);
-  Expect(plan::LooksLikeNormalMap("bc3", bc3), "bc3 reads the color half after the noisy alpha half");
-  Expect(!plan::LooksLikeNormalMap("bc5", Bc1Blocks(flat, 4)), "bc5 is never a normal map here");
-  Expect(!plan::LooksLikeNormalMap("bc1", std::vector<uint8_t>{0x10, 0x84, 0x10}), "truncated data is not");
-  Expect(!plan::LooksLikeNormalMap("bc3", Bc1Blocks(flat, 1)), "half a bc3 block is not");
-  const std::vector<uint8_t> texels{127, 127, 250, 255, 128, 126, 252, 255};
-  Expect(plan::LooksLikeNormalMap("rgba8", texels), "rgba8 averages its texels");
+  AppendColorBlock(bc3, gray);
+  Expect(plan::ClassifyTexture("bc3", bc3) == plan::Content::kGrayscale,
+         "bc3 reads the color half after the noisy alpha half");
+  Expect(plan::ClassifyTexture("bc5", Bc1Blocks(flat, 4)) == kColor, "bc5 is not classified");
+  Expect(plan::ClassifyTexture("bc1", std::vector<uint8_t>{0x10, 0x84, 0x10}) == kColor, "truncated data is color");
+  Expect(plan::ClassifyTexture("bc3", Bc1Blocks(flat, 1)) == kColor, "half a bc3 block is color");
 }
 
 void TestDdsMip0() {
@@ -156,7 +167,7 @@ void TestVulkanFailureLine() {
 int main() {
   TestParseDumpName();
   TestPlanTexture();
-  TestLooksLikeNormalMap();
+  TestClassifyTexture();
   TestDdsMip0();
   TestPackNameAndMemory();
   TestQuoting();

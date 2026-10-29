@@ -123,9 +123,9 @@ std::vector<uint8_t> ReadBytes(const fs::path& path) {
   return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
 }
 
-bool IsNormalMap(const fs::path& file, const plan::DumpName& dump) {
+plan::Content Classify(const fs::path& file, const plan::DumpName& dump) {
   const auto bytes = ReadBytes(file);
-  return plan::LooksLikeNormalMap(dump.format, plan::DdsMip0(bytes, dump));
+  return plan::ClassifyTexture(dump.format, plan::DdsMip0(bytes, dump));
 }
 
 template <typename Fn>
@@ -287,19 +287,22 @@ class Builder {
     const auto names = DumpNames();
     if (names.empty()) throw Failure{"no dumped textures in " + Utf8(DumpDir())};
     std::vector<Job> jobs;
-    size_t existing = 0, skipped = 0, normal_maps = 0;
+    size_t existing = 0, skipped = 0, normal_maps = 0, grayscale = 0;
     for (const auto& name : names) {
       if (cancel_) throw Cancelled{};
       const auto dump = *plan::ParseDumpName(name);
       if (IsFile(replace_ / name)) { ++existing; continue; }
-      const bool normal = plan::IsColorFormat(dump.format) && IsNormalMap(DumpDir() / name, dump);
-      const auto planned = plan::PlanTexture(dump, normal, scale, high_quality);
+      const auto content =
+          plan::IsColorFormat(dump.format) ? Classify(DumpDir() / name, dump) : plan::Content::kColor;
+      const auto planned = plan::PlanTexture(dump, content, scale, high_quality);
       if (planned.step == plan::Step::kUpscale) jobs.push_back({name, dump, planned});
-      else if (normal) ++normal_maps;
+      else if (content == plan::Content::kNormalMap) ++normal_maps;
+      else if (content == plan::Content::kGrayscale) ++grayscale;
       else ++skipped;
     }
-    REXLOG_INFO("TEXBUILD {} dumps: {} to upscale, {} already built, {} normal maps and {} small or mask "
-                "textures keep the disc version", names.size(), jobs.size(), existing, normal_maps, skipped);
+    REXLOG_INFO("TEXBUILD {} dumps: {} to upscale, {} already built, {} normal maps, {} grayscale and {} small, "
+                "noise or mask textures keep the disc version",
+                names.size(), jobs.size(), existing, normal_maps, grayscale, skipped);
     return jobs;
   }
 

@@ -17,10 +17,14 @@ from the textures your own copy dumps, upscaled on your GPU with Real-ESRGAN (Wi
 3. **Pick.** When it says `Done`, choose the new pack (`dump-2x`, `dump-4x`, `dump-2x-bc7` or
    `dump-4x-bc7`) in **Texture pack** and restart.
 
-Only color textures are upscaled. Normal maps (about a quarter of the color-format textures, recognised
-by their blue-violet average color), single-channel masks and textures smaller than 64 pixels on a
-side keep the disc version: Real-ESRGAN would invent detail in them and a plain resize only costs memory.
-No side goes above 4096.
+Only colored BC1/BC2/BC3 textures of 128 pixels or more on a side are upscaled. Normal maps (recognised
+by their blue-violet average color), grayscale textures (paint-damage masks, specular maps, light cones
+and gradients, emissive masks), noise (the rgba8 dither/jitter textures), single-channel masks and
+textures smaller than 128 pixels keep the disc version: Real-ESRGAN would invent detail in them and a
+plain resize only costs memory. In the chapter 2 hospital, 161 of the 431 color-format textures that
+were upscaled were grayscale: a paint-damage mask came back with harder, darker blobs and drew black
+splotches on a door, two rgba8 noise textures were smoothed flat, and 64-pixel textures came out darker
+and invented. No side goes above 4096.
 
 ## Video memory
 
