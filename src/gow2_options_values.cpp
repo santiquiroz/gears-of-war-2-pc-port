@@ -338,7 +338,10 @@ void AddChoices(OwnedContext* out, std::string_view id,
 #ifdef _WIN32
 std::vector<options_actions::NamedValue> TexturePackChoices() {
   const auto exe_dir = rex::filesystem::GetExecutablePath().parent_path();
-  std::vector<options_actions::NamedValue> choices{{"off", Localized("Off", "Desactivado")}};
+  // "" is the default and what old gow2.toml files hold: without its own choice the row shows no value.
+  std::vector<options_actions::NamedValue> choices{
+      {"", Localized("Automatic (texture_replace)", "Automático (texture_replace)")},
+      {"off", Localized("Off", "Desactivado")}};
   if (texture_packs::IsPackRoot(exe_dir / "textures"))
     choices.push_back({"textures", Localized("textures folder", "Carpeta textures")});
   for (const auto& name : texture_packs::PackNames(exe_dir / "texture_packs")) choices.push_back({name, name});

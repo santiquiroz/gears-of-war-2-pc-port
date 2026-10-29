@@ -607,7 +607,6 @@ void AddGraphicsPatches(std::vector<Setting>& out) {
       .kind = Kind::kToggle,
       .apply = Apply::kRestart,
       .platforms = kWindows,
-      .advanced = true,
       .label_en = "Dump textures",
       .label_es = "Volcar texturas",
       .help_en = "Saves every new texture to textures\\4D53082D\\dump to make packs. Dump with Texture pack set "
