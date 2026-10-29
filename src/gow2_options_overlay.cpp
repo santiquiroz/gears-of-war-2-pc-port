@@ -498,16 +498,25 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     closed_host_original_.reset();
   }
 
+  // The SDK hands fingers to ImGui as plain mouse input, without ImGuiMouseSource_TouchScreen (issue #27).
+  static bool FingerPointer(const ImGuiIO& io) {
+#if defined(__ANDROID__)
+    return true;
+#else
+    return io.MouseSource == ImGuiMouseSource_TouchScreen;
+#endif
+  }
+
   void TrackDevice(const ImGuiIO& io) {
     if (pad_.buttons != previous_pad_.buttons || std::abs(pad_.lx - previous_pad_.lx) > .15f ||
         std::abs(pad_.ly - previous_pad_.ly) > .15f) device_ = Device::kPad;
     previous_pad_ = pad_;
-    if (io.MouseSource != ImGuiMouseSource_TouchScreen &&
+    if (!FingerPointer(io) &&
         (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) device_ = Device::kMouse;
     for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_GamepadStart; ++key)
       if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(key), false)) device_ = Device::kKeyboard;
     if (ImGui::IsMouseClicked(0))
-      device_ = io.MouseSource == ImGuiMouseSource_TouchScreen ? Device::kTouch : Device::kMouse;
+      device_ = FingerPointer(io) ? Device::kTouch : Device::kMouse;
   }
 
   void ReadMenuInput(int64_t now) {
@@ -651,7 +660,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     const auto rows = Rows(state_,Catalog(),values_,context_.ctx);
     for (size_t index=0;index<rows.size();++index) DrawRow(rows[index],static_cast<int>(index));
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.MouseSource == ImGuiMouseSource_TouchScreen &&
+    if (FingerPointer(io) &&
         ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left, std::max(12.f, .02f*h_))) {
       touch_scrolling_ = true;

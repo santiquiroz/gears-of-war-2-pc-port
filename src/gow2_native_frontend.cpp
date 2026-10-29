@@ -80,13 +80,9 @@ bool Enabled() {
   // Read once: the mirror only stays right if it sees every constant write from the start.
   static const bool enabled = [] {
     const std::string mode = REXCVAR_GET(gow2_native_frontend);
-    // auto: off on PC, where it cost 42 % of the frame (hospital, RX 7800 XT, 0.3.8: 151 fps on, 263 off,
-    // same picture); on on Android until the phone is measured the same way.
-#if defined(__ANDROID__)
-    const bool on = mode != "off";
-#else
+    // auto: off. On PC it cost 42 % of the frame (hospital, RX 7800 XT, 0.3.8: 151 fps on, 263 off, same
+    // picture); on a Mali-G615 phone players report far fewer stutters with it off (issue #27).
     const bool on = mode == "on";
-#endif
     REXLOG_INFO("NATIVEFRONT game gow2_native_frontend '{}' -> {}", mode, on ? "on" : "off");
     return on;
   }();
