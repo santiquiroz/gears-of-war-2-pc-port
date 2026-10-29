@@ -97,6 +97,7 @@ Defaults keep the original game and crossplay working.
 | VSync | `vsync` | on, off | now | both |
 | Unlock frame rate | `gow2_unlock_fps` | on, off | now | both |
 | Frame rate limit | `gow2_fps_cap` | off, 30 ... 240 | now | both |
+| Frame counter | `gow2_show_fps` | off, on (game fps and frame time; top-left, top-center on Android) | now | both |
 | Keep 16:9 shape | `present_letterbox` | on (black bars), off (fill: crop up to 10 % top and bottom, stretch the rest) | now | Android |
 | Display refresh hint | `present_android_frame_rate` | phone default, 30 ... 120 | restart | Android |
 
@@ -278,7 +279,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 `gow2_fps_cap`, `gow2_audio_volume`, `gow2_menu_language`,
 `gow2_menu_advanced`, `gow2_host_lease_hours`, `gow2_host_close_on_exit`,
 `gow2_pc_options_entry`, `bind_pc_options` (F10), `user_language`,
-`gow2_voice_language`.
+`gow2_voice_language`, `gow2_show_fps`.
 
 ## Host over the internet
 

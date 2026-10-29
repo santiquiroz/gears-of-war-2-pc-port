@@ -108,9 +108,43 @@ void TestWindowResetAndSingleSlowFrame() {
   Expect(next->over_100_ms == 2, "window reset clears previous threshold counts");
 }
 
+bool NearMs(double actual, double expected) {
+  return std::abs(actual - expected) < 0.05;
+}
+
+void TestRollingFpsThirtyFrames() {
+  rex::glue::RollingFps rolling;
+  Expect(!rolling.RecordFrame(0), "rolling fps starts without a reading");
+  for (int i = 1; i < 30; ++i) {
+    Expect(!rolling.RecordFrame(i * 1'000'000 / 30), "no reading before the second fills");
+  }
+  Expect(!rolling.Latest(999'999), "latest is empty before the first full second");
+  const auto reading = rolling.RecordFrame(1'000'000);
+  Expect(reading.has_value(), "30 frames over one second give a reading");
+  if (!reading) return;
+  Expect(Near(reading->fps, 30), "30 frames over one second is 30 fps");
+  Expect(NearMs(reading->frame_ms, 33.3), "30 fps is 33.3 ms per frame");
+  const auto latest = rolling.Latest(1'500'000);
+  Expect(latest && Near(latest->fps, 30), "latest keeps the reading between updates");
+}
+
+void TestRollingFpsStaleAfterGap() {
+  rex::glue::RollingFps rolling;
+  for (int i = 0; i <= 30; ++i) rolling.RecordFrame(i * 1'000'000 / 30);
+  Expect(rolling.Latest(1'000'000).has_value(), "reading after the first second");
+  Expect(!rolling.Latest(3'500'000), "a 2.5 s gap makes the reading stale");
+  Expect(!rolling.RecordFrame(3'500'000), "the frame after a gap starts a new window");
+  Expect(!rolling.Latest(3'500'000), "no reading right after a gap");
+  for (int i = 1; i < 30; ++i) rolling.RecordFrame(3'500'000 + i * 1'000'000 / 30);
+  const auto reading = rolling.RecordFrame(4'500'000);
+  Expect(reading && Near(reading->fps, 30), "the gap is not counted as a slow second");
+}
+
 }  // namespace
 
 int main() {
+  TestRollingFpsThirtyFrames();
+  TestRollingFpsStaleAfterGap();
   TestFirstFrameAndFiveSecondBoundary();
   TestSteadyFrames();
   TestNearestRankPercentiles();

@@ -27,6 +27,7 @@
 #include "gow2_coop_network.h"
 #include "gow2_crash_watch.h"
 #include "gow2_disc_install.h"
+#include "gow2_fps_counter.h"
 #include "gow2_frame_stats.h"
 #include "gow2_input_activity.h"
 #include "gow2_gpu_pick.h"
@@ -669,6 +670,7 @@ class Gow2App : public rex::ReXApp {
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    fps_counter_ = rex::glue::CreateFpsCounter(drawer);
 #if defined(__ANDROID__)
     touch_overlay_ = rex::glue::CreateTouchOverlay(drawer, touch_);
     const bool touch_controls = touch_ != nullptr;
@@ -696,6 +698,7 @@ class Gow2App : public rex::ReXApp {
     rex::glue::options::ClosePcOptionsForShutdown();
     CloseHostPortsBeforeExit();
     options_overlay_.reset();
+    fps_counter_.reset();
 #if defined(__ANDROID__)
     touch_overlay_.reset();
 #endif
@@ -719,6 +722,7 @@ class Gow2App : public rex::ReXApp {
 
   rex::glue::options::GamePaths options_paths_;
   std::unique_ptr<rex::ui::ImGuiDialog> options_overlay_;
+  std::unique_ptr<rex::ui::ImGuiDialog> fps_counter_;
   std::filesystem::path game_data_root_;
   std::filesystem::path cache_root_;
   std::vector<rex::glue::HashSecEntry> coalesced_hashes_;

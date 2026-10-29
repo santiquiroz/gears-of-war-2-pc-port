@@ -201,7 +201,7 @@ int CountPage(options::Page page) {
 }
 
 void TestCounts() {
-  Expect(CountTab(options::Tab::kDisplay) == 9, "display has 9 rows including keep 16:9 shape");
+  Expect(CountTab(options::Tab::kDisplay) == 10, "display has 10 rows including keep 16:9 shape and the frame counter");
   Expect(CountTab(options::Tab::kGraphics) == 52, "graphics has 52 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
@@ -415,6 +415,18 @@ void TestLetterboxRow() {
   }
 }
 
+void TestFrameCounterRow() {
+  const auto* counter = options::FindSetting("gow2_show_fps");
+  Expect(counter != nullptr, "frame counter row exists");
+  if (!counter) return;
+  Expect(counter->tab == options::Tab::kDisplay && counter->kind == options::Kind::kToggle &&
+             counter->apply == options::Apply::kNow && counter->platforms == options::kAllPlatforms,
+         "frame counter is an apply-now Display toggle on both platforms");
+  Expect(counter->label_en == "Frame counter" && counter->label_es == "Contador de FPS",
+         "frame counter labels");
+  Expect(counter->need == options::Need::kNothing, "frame counter works in the launcher");
+}
+
 void TestLanguageRows() {
   const struct {
     const char* id;
@@ -455,6 +467,7 @@ int main() {
     TestGpuBackendRow();
     TestSkipIntroRow();
     TestLetterboxRow();
+    TestFrameCounterRow();
     TestLauncherRow();
     TestTexturePackRows();
     TestTexturePackBuilderRows();

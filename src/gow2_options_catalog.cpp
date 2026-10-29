@@ -131,6 +131,20 @@ void AddDisplay(std::vector<Setting>& out) {
           V("240"),
       }});
   out.push_back(Setting{
+      .id = "gow2_show_fps",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Frame counter",
+      .label_es = "Contador de FPS",
+      .help_en =
+          "Shows the game's frames per second and frame time in a corner, counted once per game frame "
+          "(so it reads the game's speed, not the screen's refresh).",
+      .help_es =
+          "Muestra en una esquina los cuadros por segundo del juego y el tiempo por cuadro, contados una "
+          "vez por cuadro del juego (mide la velocidad del juego, no el refresco de la pantalla)."});
+  out.push_back(Setting{
       .id = "present_letterbox",
       .tab = Tab::kDisplay,
       .kind = Kind::kToggle,

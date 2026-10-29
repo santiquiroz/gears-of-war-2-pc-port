@@ -146,6 +146,7 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `present_letterbox` — Android: `false` fills a wider screen (cropped up to 10 % at the top and bottom, stretched sideways for the rest).
 - `gow2_unlock_fps` — lifts the game's 30 fps cap.
 - `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit).
+- `gow2_show_fps` — shows the game's frames per second and frame time in a corner.
 - `gow2_audio_volume` — master volume in percent.
 - `gow2_black_shading_fix` — correct character lighting.
 - `gow2_texture_streaming_fix` — bigger texture pool, less pop-in.

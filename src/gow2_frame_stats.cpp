@@ -57,9 +57,14 @@ void LogFrameStats(const FrameStats& stats) {
               stats.over_33_ms, stats.over_50_ms, stats.over_100_ms, thermal);
 }
 
+RollingFps g_rolling;
+
 void CountFrame() {
+  const int64_t now = NowUs();
   std::lock_guard<std::mutex> lock(g_window_mutex);
-  const auto stats = g_window.RecordFrame(NowUs());
+  g_rolling.RecordFrame(now);
+  if (!REXCVAR_GET(gow2_frame_log)) return;
+  const auto stats = g_window.RecordFrame(now);
   if (stats) LogFrameStats(*stats);
 }
 
@@ -70,22 +75,30 @@ void ProcessInputHook(PPCContext& ctx, uint8_t* base) {
 
 }  // namespace
 
+std::optional<FrameReading> LatestFrameReading() {
+  const int64_t now = NowUs();
+  std::lock_guard<std::mutex> lock(g_window_mutex);
+  return g_rolling.Latest(now);
+}
+
 void InstallFrameStats() {
-  if (!REXCVAR_GET(gow2_frame_log)) return;
+  const bool log = REXCVAR_GET(gow2_frame_log);
   rex::Runtime* runtime = rex::Runtime::instance();
   rex::runtime::FunctionDispatcher* dispatcher =
       runtime ? runtime->function_dispatcher() : nullptr;
   uint8_t* base = (runtime && runtime->memory()) ? runtime->memory()->virtual_membase() : nullptr;
   if (!dispatcher || !base || LoadGuestU32(base, kProcessInputSlot) != kProcessInputFn) {
-    REXLOG_WARN("FRAMESTATS frame log off: the input step was not found");
+    if (log) REXLOG_WARN("FRAMESTATS frame log off: the input step was not found");
     return;
   }
   g_process_input = dispatcher->GetFunction(kProcessInputFn);
   if (!g_process_input || !dispatcher->SetFunction(kProcessInputFn, &ProcessInputHook)) {
-    REXLOG_WARN("FRAMESTATS frame log off: the input step could not be hooked");
+    if (log) REXLOG_WARN("FRAMESTATS frame log off: the input step could not be hooked");
     return;
   }
-  REXLOG_INFO("FRAMESTATS frame log on (every {} s)", FrameStatsWindow::kWindowUs / 1'000'000);
+  if (log) {
+    REXLOG_INFO("FRAMESTATS frame log on (every {} s)", FrameStatsWindow::kWindowUs / 1'000'000);
+  }
 }
 
 }  // namespace rex::glue

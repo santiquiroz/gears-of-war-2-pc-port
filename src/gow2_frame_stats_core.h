@@ -71,4 +71,54 @@ class FrameStatsWindow {
   std::vector<int64_t> durations_us_;
 };
 
+struct FrameReading {
+  double fps = 0;
+  double frame_ms = 0;
+};
+
+class RollingFps {
+ public:
+  static constexpr int64_t kWindowUs = 1'000'000;
+  static constexpr int64_t kStaleUs = 2'000'000;
+
+  std::optional<FrameReading> RecordFrame(int64_t now_us) {
+    // A pause (menus, loading) starts over, so it never shows as one slow second.
+    if (!started_ || now_us - last_us_ > kStaleUs) {
+      Restart(now_us);
+      latest_.reset();
+      return std::nullopt;
+    }
+    ++frames_;
+    last_us_ = now_us;
+    if (now_us - start_us_ < kWindowUs) return std::nullopt;
+    latest_ = Summarize(now_us - start_us_);
+    Restart(now_us);
+    return latest_;
+  }
+
+  std::optional<FrameReading> Latest(int64_t now_us) const {
+    if (!started_ || now_us - last_us_ > kStaleUs) return std::nullopt;
+    return latest_;
+  }
+
+ private:
+  FrameReading Summarize(int64_t elapsed_us) const {
+    const double frames = static_cast<double>(frames_);
+    return {frames * 1'000'000.0 / elapsed_us, elapsed_us / frames / 1000.0};
+  }
+
+  void Restart(int64_t now_us) {
+    started_ = true;
+    start_us_ = now_us;
+    last_us_ = now_us;
+    frames_ = 0;
+  }
+
+  bool started_ = false;
+  int64_t start_us_ = 0;
+  int64_t last_us_ = 0;
+  uint64_t frames_ = 0;
+  std::optional<FrameReading> latest_;
+};
+
 }  // namespace rex::glue
