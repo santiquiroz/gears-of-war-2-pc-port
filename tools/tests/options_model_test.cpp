@@ -727,8 +727,27 @@ void TestQualityPresetTransactions() {
   for (const auto& setting : quality::Settings()) Expect(values.Get(setting.id) == "auto", "discard explicit High restores all automatic values");
 }
 
+void TestDisabledRows() {
+  Fixture f;
+  for (auto& row : f.catalog) {
+    if (row.id == "run" || row.id == "keybindings") row.disabled_help_en = "Tools missing";
+  }
+  f.context.disabled = {"run", "keybindings"};
+  Select(f, "run");
+  ExpectOutcome(Send(f, Command::kAccept), Outcome::Kind::kNone, "", "a disabled action does not run");
+  Expect(CurrentHelp(f.state, f.catalog, f.values, f.context) == "Tools missing", "a disabled row says why");
+  const auto rows = Rows(f.state, f.catalog, f.values, f.context);
+  const auto run = rows[static_cast<size_t>(IndexOf(f, "run"))];
+  Expect(run.disabled && run.selectable && run.selected, "a disabled row stays selectable for its help");
+  Expect(!rows[static_cast<size_t>(IndexOf(f, "toggle"))].disabled, "other rows are not disabled");
+  Select(f, "keybindings");
+  Send(f, Command::kAccept);
+  Expect(f.state.page == Page::kMain, "a disabled page action does not open its page");
+}
+
 int main() {
   TestVisibility();
+  TestDisabledRows();
   TestUpscalerVisibility();
   TestTabAndPageFiltering();
   TestStepping();

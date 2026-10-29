@@ -8,6 +8,12 @@
   staging folder, and compresses it to
   <OutDir>\gow2-recomp-<Version>-win64.zip, plus a .sha256 sidecar file.
 
+  It also downloads texconv and Real-ESRGAN-ncnn-vulkan for PC Options' Build texture pack
+  (cached under out\texture-pack-tools, every file checked against its pinned SHA-256; a
+  mismatch stops packaging) and copies only the pinned files into tools\texconv and
+  tools\realesrgan. Their upstream LICENSE files go into tools\licenses, and packaging stops
+  when THIRD_PARTY_NOTICES.md does not quote one of them word for word.
+
   The zip never contains game data. Packaging is refused (exit 1) if a file
   named default.xex or any *.xxx / *.tfc / *.bik file would end up in staging.
 
@@ -193,6 +199,101 @@ function Copy-KeycapTool([string]$Root, [string]$StageDir) {
     Set-Content -Path (Join-Path $StageDir 'Build keycap pack.cmd') -Value $cmd -Encoding ASCII
 }
 
+# Build texture pack (PC Options) runs these on the player's own dump. Pinned by SHA-256; cached under out\.
+$TexconvUrl = 'https://github.com/microsoft/DirectXTex/releases/download/may2026/texconv.exe'
+$TexconvSha = 'dcfdec10244e02cf5037fba089c55fb7e1326b1c8181742d77d15fa5cb5eef06'
+$EsrganUrl = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip'
+$EsrganZipSha = 'abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d'
+$EsrganFiles = [ordered]@{
+    'realesrgan-ncnn-vulkan.exe'       = '07e49f7cbb4ede01ae4dd4c399d3a7e5846e3d2085c3128eff881e55cb7b1a0c'
+    'vcomp140.dll'                     = '8f72ef2e483465444b2059fc6744d6cb22cd8d8a27f6fa56befd2a42dcd0f78b'
+    'models\realesrgan-x4plus.bin'     = '713ee713b0353afaa27976f0563a64a5043bd70b9bd8936c2e26e25ebcdbcddf'
+    'models\realesrgan-x4plus.param'   = '35330ececcea33b6c397a72548e788d5d53becee4734c50b7fada36e89f10a86'
+}
+
+function Test-Sha256([string]$Path, [string]$Expected) {
+    if (-not (Test-Path $Path)) { return $false }
+    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash -ieq $Expected
+}
+
+function Assert-Sha256([string]$Path, [string]$Expected) {
+    if (Test-Sha256 $Path $Expected) { return }
+    $actual = if (Test-Path $Path) { (Get-FileHash -Path $Path -Algorithm SHA256).Hash } else { 'missing' }
+    Fail "SHA-256 mismatch for ${Path}: expected $Expected, got $actual"
+}
+
+function Get-PinnedDownload([string]$Url, [string]$Path, [string]$Sha) {
+    if (Test-Sha256 $Path $Sha) { return }
+    Write-Host "Downloading $Url"
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Path
+    Assert-Sha256 $Path $Sha
+}
+
+# The zip's own folder layout is not assumed: each pinned file is found by its path suffix.
+function Find-ZipFile([string]$Dir, [string]$Relative) {
+    $suffix = '\' + $Relative
+    $found = Get-ChildItem -Path $Dir -Recurse -File | Where-Object { $_.FullName.EndsWith($suffix, 'OrdinalIgnoreCase') } |
+        Select-Object -First 1
+    if (-not $found) { Fail "$Relative not found in the Real-ESRGAN zip" }
+    return $found.FullName
+}
+
+function Copy-TexturePackTools([string]$Root, [string]$StageDir) {
+    $cache = Join-Path $Root 'out\texture-pack-tools'
+    New-Item -ItemType Directory -Force -Path $cache | Out-Null
+    $texconv = Join-Path $cache 'texconv.exe'
+    Get-PinnedDownload $TexconvUrl $texconv $TexconvSha
+    $zip = Join-Path $cache 'realesrgan-ncnn-vulkan-20220424-windows.zip'
+    Get-PinnedDownload $EsrganUrl $zip $EsrganZipSha
+    $extract = Join-Path $cache 'realesrgan'
+    New-CleanDir $extract
+    Expand-Archive -Path $zip -DestinationPath $extract -Force
+
+    $texconvDir = Join-Path $StageDir 'tools\texconv'
+    New-Item -ItemType Directory -Force -Path $texconvDir | Out-Null
+    Copy-Item -Force $texconv (Join-Path $texconvDir 'texconv.exe')
+    Assert-Sha256 (Join-Path $texconvDir 'texconv.exe') $TexconvSha
+    $esrganDir = Join-Path $StageDir 'tools\realesrgan'
+    New-Item -ItemType Directory -Force -Path (Join-Path $esrganDir 'models') | Out-Null
+    foreach ($relative in $EsrganFiles.Keys) {
+        $source = Find-ZipFile $extract $relative
+        Assert-Sha256 $source $EsrganFiles[$relative]
+        $target = Join-Path $esrganDir $relative
+        Copy-Item -Force $source $target
+        Assert-Sha256 $target $EsrganFiles[$relative]
+        Write-Host "Texture pack tool: tools\realesrgan\$relative"
+    }
+    Copy-TexturePackLicenses $Root $cache (Join-Path $StageDir 'tools\licenses')
+}
+
+$TexturePackLicenseRepos = [ordered]@{
+    'DirectXTex'              = 'microsoft/DirectXTex'
+    'Real-ESRGAN-ncnn-vulkan' = 'xinntao/Real-ESRGAN-ncnn-vulkan'
+    'Real-ESRGAN'             = 'xinntao/Real-ESRGAN'
+    'ncnn'                    = 'Tencent/ncnn'
+}
+
+function Get-CollapsedText([string]$Text) {
+    return ($Text -replace '\s+', ' ').Trim()
+}
+
+# The upstream LICENSE files ship verbatim, and THIRD_PARTY_NOTICES.md must quote each one word for word.
+function Copy-TexturePackLicenses([string]$Root, [string]$Cache, [string]$LicenseDir) {
+    New-Item -ItemType Directory -Force -Path $LicenseDir | Out-Null
+    $notices = Get-CollapsedText (Get-Content -Raw -Path (Join-Path $Root 'THIRD_PARTY_NOTICES.md'))
+    foreach ($name in $TexturePackLicenseRepos.Keys) {
+        $repo = $TexturePackLicenseRepos[$name]
+        $path = Join-Path $Cache "$name-LICENSE.txt"
+        Write-Host "Downloading the LICENSE of $repo"
+        Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$repo/license" `
+            -Headers @{ Accept = 'application/vnd.github.raw' } -OutFile $path
+        if (-not $notices.Contains((Get-CollapsedText (Get-Content -Raw -Path $path)))) {
+            Fail "THIRD_PARTY_NOTICES.md does not quote the LICENSE of $repo word for word; paste $path into it"
+        }
+        Copy-Item -Force $path (Join-Path $LicenseDir "$name.txt")
+    }
+}
+
 function Write-QuickstartFile([string]$StageDir) {
     $lines = @(
         'Gears of War 2 - unofficial PC port (gow2-recomp) - QUICKSTART',
@@ -341,6 +442,9 @@ Write-QuickstartFile $stageDir
 
 Step 'Keycap pack tool'
 Copy-KeycapTool $root $stageDir
+
+Step 'Texture pack builder tools'
+Copy-TexturePackTools $root $stageDir
 
 Step 'Game-data safety check'
 Assert-NoGameFiles $stageDir

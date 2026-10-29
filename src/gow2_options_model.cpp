@@ -204,6 +204,7 @@ constexpr PageAction kPageActions[] = {
     {"keybindings", Page::kKeybinds},
     {"pad_buttons", Page::kPadButtons},
     {"host_online", Page::kHost},
+    {"gow2_build_texture_pack", Page::kTexturePackBuilder},
 };
 
 const PageAction* PageActionFor(std::string_view action) {
@@ -222,6 +223,7 @@ std::string_view ActionForPage(Page page) {
 
 Outcome AcceptAction(State& state, const Setting& s, const std::vector<Setting>& catalog,
                      const Values& values, const Context& ctx) {
+  if (ctx.disabled.contains(s.id)) return {};
   const auto* opens = PageActionFor(s.id);
   if (!opens) return {Outcome::Kind::kRunAction, std::string(s.id)};
   state.page = opens->page;
@@ -468,6 +470,7 @@ std::vector<RowView> Rows(const State& state, const std::vector<Setting>& catalo
     view.setting = s;
     view.value_text = FormatValue(*s, value, ctx);
     view.selectable = Selectable(*s);
+    view.disabled = ctx.disabled.contains(s->id);
     view.selected = view.selectable && index == state.row;
     view.changed = s->kind != Kind::kInfo && s->kind != Kind::kAction && Differs(state.opened, s->id, value);
     view.restart_pending = Pending(state, *s, value);
@@ -492,7 +495,8 @@ std::vector<std::string> RestartPending(const State& state, const std::vector<Se
 std::string_view CurrentHelp(const State& state, const std::vector<Setting>& catalog,
                              const Values& values, const Context& ctx) {
   const auto* s = SelectedSetting(state, catalog, values, ctx);
-  return s ? Help(*s, ctx.lang) : std::string_view{};
+  if (!s) return {};
+  return ctx.disabled.contains(s->id) ? DisabledHelp(*s, ctx.lang) : Help(*s, ctx.lang);
 }
 
 }

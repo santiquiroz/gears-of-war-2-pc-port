@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace options = rex::glue::options;
@@ -105,6 +106,10 @@ void TestPageTabs() {
     if (s.page == options::Page::kHost) {
       Expect(s.tab == options::Tab::kMultiplayer, "host row is on the multiplayer tab");
     }
+    if (s.page == options::Page::kTexturePackBuilder) {
+      Expect(s.tab == options::Tab::kGraphics && s.platforms == options::kWindows,
+             "texture pack builder row is on the Windows graphics tab");
+    }
   }
 }
 
@@ -121,6 +126,7 @@ void TestUiTexts() {
       options::TextId::kTabSystem,
       options::TextId::kPageKeybinds,
       options::TextId::kPageHost,
+      options::TextId::kPageTexturePackBuilder,
       options::TextId::kOn,
       options::TextId::kOff,
       options::TextId::kApplyNow,
@@ -146,7 +152,7 @@ void TestUiTexts() {
       options::TextId::kEditTextOk,
       options::TextId::kEditTextCancel,
   };
-  Expect(ids.size() == 35, "all 35 TextIds are listed");
+  Expect(ids.size() == 36, "all 36 TextIds are listed");
   for (options::TextId id : ids) {
     Expect(!options::Text(id, options::Lang::kEn).empty(), "Text EN is non-empty");
     Expect(!options::Text(id, options::Lang::kEs).empty(), "Text ES is non-empty");
@@ -196,7 +202,7 @@ int CountPage(options::Page page) {
 
 void TestCounts() {
   Expect(CountTab(options::Tab::kDisplay) == 9, "display has 9 rows including keep 16:9 shape");
-  Expect(CountTab(options::Tab::kGraphics) == 51, "graphics has 51 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack and its folder");
+  Expect(CountTab(options::Tab::kGraphics) == 52, "graphics has 52 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
@@ -206,6 +212,7 @@ void TestCounts() {
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
+  Expect(CountPage(options::Page::kTexturePackBuilder) == 6, "texture pack builder page has 6 rows");
 }
 
 void TestGraphicsQualityRows() {
@@ -343,6 +350,46 @@ void TestTexturePackRows() {
 // The launcher opens before the runtime: only these rows call into it. Key bindings and controller
 // buttons only write keybind_* / pad_map_* cvars (registered by rexruntime.dll at load) and read keys
 // through ImGui; the input driver picks them up when the game starts.
+void TestTexturePackBuilderRows() {
+  const auto& catalog = options::Catalog();
+  const auto at = [&](std::string_view id) {
+    for (size_t i = 0; i < catalog.size(); ++i) {
+      if (catalog[i].id == id) return static_cast<int>(i);
+    }
+    return -1;
+  };
+  const auto* build = options::FindSetting("gow2_build_texture_pack");
+  Expect(build && build->kind == options::Kind::kAction && build->tab == options::Tab::kGraphics &&
+             build->page == options::Page::kMain && build->platforms == options::kWindows &&
+             build->need == options::Need::kNothing,
+         "build texture pack is a Windows Graphics action that works in the launcher");
+  Expect(at("gow2_build_texture_pack") == at("gow2_open_texture_packs") + 1,
+         "build texture pack comes right after open texture packs folder");
+  Expect(build && !build->disabled_help_en.empty() && !build->disabled_help_es.empty(),
+         "build texture pack says why when the tools are missing");
+  const auto* dump = options::FindSetting("texture_dump");
+  Expect(dump && dump->help_en.find("Build texture pack") != std::string_view::npos &&
+             dump->help_es.find("Crear pack de texturas") != std::string_view::npos,
+         "dump textures help points at Build texture pack");
+  const std::vector<std::pair<std::string_view, options::Kind>> page{
+      {"gow2_texture_build_scale", options::Kind::kChoice}, {"gow2_texture_build_quality", options::Kind::kChoice},
+      {"texture_build_info", options::Kind::kInfo},         {"texture_build_start", options::Kind::kAction},
+      {"texture_build_cancel", options::Kind::kAction},     {"texture_build_status", options::Kind::kInfo}};
+  for (const auto& [id, kind] : page) {
+    const auto* row = options::FindSetting(id);
+    Expect(row && row->page == options::Page::kTexturePackBuilder && row->kind == kind &&
+               row->apply == options::Apply::kNow,
+           std::string("builder page row: ") + std::string(id));
+  }
+  const auto* scale = options::FindSetting("gow2_texture_build_scale");
+  Expect(scale && scale->choices.size() == 2 && scale->choices[0].value == "2" && scale->choices[1].value == "4",
+         "scale offers 2x and 4x");
+  const auto* quality = options::FindSetting("gow2_texture_build_quality");
+  Expect(quality && quality->choices.size() == 2 && quality->choices[0].value == "disc" &&
+             quality->choices[1].value == "bc7",
+         "quality offers the disc formats and BC7");
+}
+
 void TestLauncherAudit() {
   const std::unordered_set<std::string_view> expected{"coop_check", "host_online", "host_status",
                                                       "host_open", "host_close", "runtime_settings"};
@@ -410,6 +457,7 @@ int main() {
     TestLetterboxRow();
     TestLauncherRow();
     TestTexturePackRows();
+    TestTexturePackBuilderRows();
     TestLauncherAudit();
     TestLanguageRows();
   } catch (const std::exception& e) {

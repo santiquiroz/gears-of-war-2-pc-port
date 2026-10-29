@@ -142,6 +142,7 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `gow2_skip_intro_movies` — skips the Epic Games and Microsoft Game Studios logo videos at start.
 - `gow2_launcher` — Windows: opens PC Options before the game loads, with a Play button (`false` goes straight into the game).
 - `gow2_texture_pack` — Windows: the texture pack folder under `texture_packs` next to the exe, `textures` for the old `textures` folder, `off`, or empty to follow `texture_replace`; needs a restart.
+- `gow2_texture_build_scale`, `gow2_texture_build_quality` — Windows: Build texture pack's scale (`2` or `4`) and format (`disc` keeps each texture's own, `bc7`).
 - `present_letterbox` — Android: `false` fills a wider screen (cropped up to 10 % at the top and bottom, stretched sideways for the rest).
 - `gow2_unlock_fps` — lifts the game's 30 fps cap.
 - `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit).
@@ -174,6 +175,8 @@ Chapter 2 hospital, frame rate unlocked: about 260 fps at 1440p internal on a Ry
   ![A title-screen texture replaced by a recoloured 2048x2048 version](docs/screenshots/texture-pack-test.jpg)
 
 ## Texture packs
+
+The easy way on Windows: dump with PC Options → Graphics → Texture pack set to Off, then **Build texture pack** upscales your dump with Real-ESRGAN on your GPU and writes a pack you pick in Texture pack. See [docs/TEXTURE_PACKS.md](docs/TEXTURE_PACKS.md) for the steps and the video memory it costs. The steps below make a pack by hand.
 
 Replace game textures with higher-resolution versions (for example upscaled 4x) for your own use. Each player builds packs from their own copy. An upscaled or recoloured texture is still derived from the game's copyrighted art, so do not share packs made from the game's textures; this project does not host or link them.
 

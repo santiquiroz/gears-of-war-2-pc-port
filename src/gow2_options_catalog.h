@@ -17,7 +17,7 @@ enum class Lang : uint8_t { kEn, kEs };
 enum class Tab : uint8_t { kDisplay, kGraphics, kControls, kTouch, kMultiplayer, kSaves, kAudio, kSystem };
 
 // kMain rows sit in their tab; the other pages open from an action row and close with Back.
-enum class Page : uint8_t { kMain, kKeybinds, kPadButtons, kHost };
+enum class Page : uint8_t { kMain, kKeybinds, kPadButtons, kHost, kTexturePackBuilder };
 
 enum class Kind : uint8_t {
   kToggle,   // "true" / "false"
@@ -65,6 +65,9 @@ struct Setting {
   std::string_view label_es;
   std::string_view help_en;
   std::string_view help_es;
+  // Help shown instead while the context disables the row (Context::disabled).
+  std::string_view disabled_help_en;
+  std::string_view disabled_help_es;
   std::vector<Choice> choices;
   double min = 0;
   double max = 0;
@@ -81,7 +84,7 @@ struct Setting {
 enum class TextId : uint8_t {
   kTitle,
   kTabDisplay, kTabGraphics, kTabControls, kTabTouch, kTabMultiplayer, kTabSaves, kTabAudio, kTabSystem,
-  kPageKeybinds, kPagePadButtons, kPageHost,
+  kPageKeybinds, kPagePadButtons, kPageHost, kPageTexturePackBuilder,
   kOn, kOff,
   kApplyNow, kApplyNextLevel, kApplyRestart,
   kRestartBanner,      // followed by the labels of the pending rows
@@ -99,6 +102,7 @@ const Setting* FindSetting(std::string_view id);
 std::string_view Text(TextId id, Lang lang);
 std::string_view Label(const Setting& s, Lang lang);
 std::string_view Help(const Setting& s, Lang lang);
+std::string_view DisabledHelp(const Setting& s, Lang lang);
 std::string_view ChoiceLabel(const Choice& c, Lang lang);
 std::string_view TabName(Tab tab, Lang lang);
 

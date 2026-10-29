@@ -29,6 +29,7 @@ struct Context {
   Lang lang = Lang::kEn;
   std::map<std::string, std::vector<Choice>, std::less<>> dynamic_choices;
   std::set<std::string, std::less<>> unavailable;  // rows whose cvar this runtime does not have
+  std::set<std::string, std::less<>> disabled;     // rows shown dimmed: Accept does nothing, help says why
 };
 
 enum class Command : uint8_t { kUp, kDown, kLeft, kRight, kAccept, kBack, kTabPrev, kTabNext, kResetRow, kSave };
@@ -56,6 +57,7 @@ struct RowView {
   std::string value_text;
   bool selected = false;
   bool selectable = true;
+  bool disabled = false;
   bool can_decrease = false;
   bool can_increase = false;
   bool changed = false;

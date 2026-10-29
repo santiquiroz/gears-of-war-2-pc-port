@@ -142,6 +142,7 @@ Las voces (inglés, español latino o francés; `gow2_voice_language`) y los sub
 - `gow2_skip_intro_movies` — salta los videos con los logos de Epic Games y Microsoft Game Studios al arrancar.
 - `gow2_launcher` — Windows: abre Opciones de PC antes de cargar el juego, con un botón Jugar (`false` entra directo al juego).
 - `gow2_texture_pack` — Windows: la carpeta del pack de texturas dentro de `texture_packs` junto al exe, `textures` para la carpeta `textures` antigua, `off`, o vacío para seguir `texture_replace`; requiere reiniciar.
+- `gow2_texture_build_scale`, `gow2_texture_build_quality` — Windows: escala (`2` o `4`) y formato (`disc` mantiene el de cada textura, `bc7`) de Crear pack de texturas.
 - `present_letterbox` — Android: `false` llena una pantalla más ancha (recorta hasta un 10 % arriba y abajo y estira a lo ancho el resto).
 - `gow2_unlock_fps` — elimina el límite de 30 fps del juego.
 - `gow2_fps_cap` — límite de FPS con el juego desbloqueado (0 = sin límite).
@@ -174,6 +175,8 @@ Hospital del capítulo 2, tasa de cuadros desbloqueada: unos 260 fps a 1440p int
   ![Una textura de la pantalla de título reemplazada por una versión recoloreada de 2048x2048](docs/screenshots/texture-pack-test.jpg)
 
 ## Paquetes de texturas
+
+La forma fácil en Windows: vuelca con Opciones de PC → Gráficos → Pack de texturas en Desactivado y luego **Crear pack de texturas** escala tu volcado con Real-ESRGAN en tu GPU y escribe un pack que eliges en Pack de texturas. Los pasos y la memoria de video que cuesta están en [docs/TEXTURE_PACKS.md](docs/TEXTURE_PACKS.md) (en inglés). Los pasos de abajo hacen un pack a mano.
 
 Reemplaza las texturas del juego por versiones de mayor resolución (por ejemplo reescaladas 4x) para tu propio uso. Cada jugador crea sus paquetes desde su propia copia. Una textura reescalada o recoloreada sigue siendo una obra derivada del arte del juego, protegido por derechos de autor, así que no compartas paquetes hechos con las texturas del juego; este proyecto no los aloja ni los enlaza.
 

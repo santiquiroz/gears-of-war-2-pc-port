@@ -6,6 +6,8 @@
 #include "gow2_options_actions.h"
 #include "gow2_options_input.h"
 #ifdef _WIN32
+#include "gow2_texture_pack_builder.h"
+#include "gow2_texture_pack_plan.h"
 #include "gow2_update_check.h"
 #endif
 
@@ -48,6 +50,7 @@ constexpr ImU32 kBlue = IM_COL32(106, 168, 232, 255);
 TextId PageTitle(Page page) {
   if (page == Page::kHost) return TextId::kPageHost;
   if (page == Page::kPadButtons) return TextId::kPagePadButtons;
+  if (page == Page::kTexturePackBuilder) return TextId::kPageTexturePackBuilder;
   return TextId::kPageKeybinds;
 }
 ImFont* g_regular = nullptr;
@@ -355,6 +358,9 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     const auto now = NowMs();
     if (reader_.ToggleChord(pad_, now)) Toggle(OpenSource::kChord);
     ObserveHostResult();
+#ifdef _WIN32
+    ObserveTextureBuild();
+#endif
     CheckInputRelease(io, now);
     if (!open_) {
       RetirePopups();
@@ -479,6 +485,8 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       update_notice_until_ = 0;
       return;
     }
+    if (id == "texture_build_start") { StartTextureBuild(); return; }
+    if (id == "texture_build_cancel") { texture_pack_builder::Cancel(); return; }
 #endif
     if (id == "runtime_settings") {
       CloseMenu();
@@ -534,6 +542,21 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     CommitText(state_, "net_public_address", result->peer_name, Catalog(), values_);
     Refresh();
   }
+
+#ifdef _WIN32
+  void StartTextureBuild() {
+    const auto scale = texture_pack_plan::BuildScale(rex::cvar::Query<int32_t>("gow2_texture_build_scale"));
+    texture_pack_builder::Start(scale, rex::cvar::Query<std::string>("gow2_texture_build_quality") == "bc7");
+  }
+
+  // A finished build may have made a new pack: Texture pack lists it without reopening the menu.
+  void ObserveTextureBuild() {
+    const auto finished = texture_pack_builder::GetSnapshot().finished;
+    if (finished == texture_builds_seen_) return;
+    texture_builds_seen_ = finished;
+    if (open_) Refresh();
+  }
+#endif
 
   void RestoreHostChange() {
     if (!closed_host_original_) return;
@@ -767,13 +790,13 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     const float label_max = std::max(row_width*.4f,arrow_left-label_x-gap);
     auto* draw = ImGui::GetWindowDrawList();
     draw->PushClipRect({label_x,pos.y},{label_x+label_max,pos.y+row_height},true);
-    DrawText({label_x,label_y},label,font,row.selectable ? color : IM_COL32(138,138,138,255));
+    DrawText({label_x,label_y},label,font,row.selectable && !row.disabled ? color : IM_COL32(138,138,138,255));
     draw->PopClipRect();
     DrawText({value_x,pos.y+(row_height-font)*.5f},value,font,
              row.selectable ? color : IM_COL32(176,176,176,255));
     if (row.changed) draw->AddCircleFilled({label_x+std::min(label_max,TextWidth(label,font))+.009f*h_,label_y+.014f*h_},.0035f*h_,kAmber);
     if (row.restart_pending) DrawRestartIcon({label_x+std::min(label_max,TextWidth(label,font))+.028f*h_,label_y+.014f*h_});
-    if (row.setting->kind == Kind::kAction || row.setting->kind == Kind::kText)
+    if ((row.setting->kind == Kind::kAction && !row.disabled) || row.setting->kind == Kind::kText)
       DrawTriangle({pos.x+row_width-arrow_width*.5f,pos.y+row_height*.5f},true,color);
     if (row.selected) DrawApplyBadge(*row.setting,{label_x,pos.y+.038f*h_});
     if (row.setting->kind == Kind::kNumber) DrawProgress(row,{value_x,pos.y+row_height-.008f*h_},value_width);
@@ -1305,6 +1328,9 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   bool shift_ = false;
   bool symbols_ = false;
   bool host_pending_ = false;
+#ifdef _WIN32
+  uint64_t texture_builds_seen_ = 0;
+#endif
   bool launcher_ = false;
   bool notify_game_ = false;
   std::function<void()> play_;

@@ -37,6 +37,7 @@
 #include "gow2_options_overlay.h"
 #include "gow2_save_dir.h"
 #include "gow2_sha_table.h"
+#include "gow2_texture_pack_builder.h"
 #include "gow2_texture_packs.h"
 #include "gow2_utf8_guard.h"
 #include "gow2_voice_language_setup.h"
@@ -488,6 +489,22 @@ class Gow2App : public rex::ReXApp {
     REXLOG_INFO("TEXPACK pack '{}' -> replace {} dir '{}'", choice,
                 pack.replace ? (*pack.replace ? "on" : "off") : "from gow2.toml",
                 pack.pack_dir ? *pack.pack_dir : std::string("from gow2.toml"));
+    WarnDumpIntoPack(choice);
+  }
+
+  // Dumps land in the active pack root, where Build texture pack does not look. The GPU plugin usually
+  // registers texture_dump after ApplyTexturePack, so OnPostSetup asks again once it exists.
+  static void WarnDumpIntoPack(const std::string& choice) {
+    static bool checked = false;
+    if (checked || !rex::cvar::GetFlagInfo("texture_dump")) return;
+    checked = true;
+    if (choice.empty() || choice == "off" || choice == "textures" ||
+        !rex::glue::texture_packs::IsPlainName(choice)) {
+      return;
+    }
+    if (rex::cvar::GetFlagByName("texture_dump") != "true") return;
+    REXLOG_WARN("TEXPACK texture_dump writes into texture_packs\\{}\\4D53082D\\dump; set Texture pack to Off "
+                "so Build texture pack finds the dumps", choice);
   }
 #endif
 
@@ -639,6 +656,7 @@ class Gow2App : public rex::ReXApp {
     rex::glue::InstallAudioVolume();
     rex::glue::InstallFrameStats();
 #ifdef _WIN32
+    WarnDumpIntoPack(rex::cvar::Query<std::string>("gow2_texture_pack"));
     rex::glue::InstallPromptSwap(game_data_root_);
     rex::glue::InstallInputActivityWatch(window());
 #endif
@@ -672,6 +690,9 @@ class Gow2App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+#ifdef _WIN32
+    rex::glue::texture_pack_builder::Shutdown();
+#endif
     rex::glue::options::ClosePcOptionsForShutdown();
     CloseHostPortsBeforeExit();
     options_overlay_.reset();

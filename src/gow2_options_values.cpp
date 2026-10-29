@@ -23,6 +23,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include "gow2_texture_pack_builder.h"
+#include "gow2_texture_pack_plan.h"
 #include "gow2_update_check.h"
 #elif defined(__ANDROID__)
 #include <sys/system_properties.h>
@@ -45,6 +47,10 @@ REXCVAR_DEFINE_STRING(gow2_texture_pack, "", "GPU/Textures",
                       "Texture pack folder name under texture_packs, 'textures' for the old folder, 'off', or "
                       "empty to use texture_replace")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_INT32(gow2_texture_build_scale, 2, "GPU/Textures", "Build texture pack: 2x or 4x").range(2, 4);
+REXCVAR_DEFINE_STRING(gow2_texture_build_quality, "disc", "GPU/Textures",
+                      "Build texture pack: disc keeps each texture's format, bc7 is sharper and larger")
+    .allowed({"disc", "bc7"});
 
 namespace {
 
@@ -222,6 +228,33 @@ std::string UpdateStatus() {
   if (!snapshot.checked) return Localized("Not checked yet", "Sin comprobar todavía");
   return Localized("Up to date (v", "Al día (v") + update::CurrentVersion() + ")";
 }
+
+std::string TextureBuildInfo() {
+  const auto scale = texture_pack_plan::BuildScale(rex::cvar::Query<int32_t>("gow2_texture_build_scale"));
+  const bool bc7 = rex::cvar::Query<std::string>("gow2_texture_build_quality") == "bc7";
+  const auto multiplier = std::to_string(texture_pack_plan::MemoryMultiplier(scale, bc7));
+  return std::to_string(texture_pack_builder::DumpCount()) +
+         Localized(" · about " + multiplier + "x the video memory",
+                   " · cerca de " + multiplier + "x la memoria de video");
+}
+
+std::string TextureBuildStatus() {
+  using texture_pack_builder::State;
+  const auto snapshot = texture_pack_builder::GetSnapshot();
+  switch (snapshot.state) {
+    case State::kIdle: return Localized("Not started", "Sin empezar");
+    case State::kRunning:
+      if (snapshot.total == 0) return Localized("Preparing…", "Preparando…");
+      return Localized("Building ", "Creando ") + std::to_string(snapshot.done) + " / " +
+             std::to_string(snapshot.total);
+    case State::kDone:
+      return Localized("Done: pick " + snapshot.message + " in Texture pack",
+                       "Listo: elige " + snapshot.message + " en Pack de texturas");
+    case State::kFailed: return Localized("Failed: ", "Falló: ") + snapshot.message;
+    case State::kCancelled: return Localized("Cancelled", "Cancelado");
+  }
+  return {};
+}
 #endif
 
 std::optional<toml_edit::ValueKind> PersistKind(rex::cvar::FlagType type) {
@@ -351,6 +384,8 @@ std::string CvarValues::Get(std::string_view id) const {
   if (id == "host_status") return HostStatus();
 #ifdef _WIN32
   if (id == "update_status") return UpdateStatus();
+  if (id == "texture_build_info") return TextureBuildInfo();
+  if (id == "texture_build_status") return TextureBuildStatus();
 #endif
   if (id == "save_dir_effective") return Utf8Path(paths_.user_data_root);
   if (id == "config_path") return Utf8Path(paths_.config_path);
@@ -426,6 +461,7 @@ void BuildContext(bool touch_controls, OwnedContext* out) {
   AddChoices(out, "gow2_save_dir", options_actions::ListSaveFolders(CurrentValue("gow2_save_dir")));
 #ifdef _WIN32
   AddChoices(out, "gow2_texture_pack", TexturePackChoices());
+  if (!texture_pack_builder::ToolsPresent()) out->ctx.disabled.emplace("gow2_build_texture_pack");
 #endif
   AddUnavailable(&out->ctx);
 }

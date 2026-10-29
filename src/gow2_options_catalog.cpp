@@ -570,6 +570,24 @@ void AddGraphicsPatches(std::vector<Setting>& out) {
       .help_es = "Crea texture_packs junto al juego y la abre. Pon cada pack en su propia carpeta; aparece en "
                  "Pack de texturas al reabrir Opciones."});
   out.push_back(Setting{
+      .id = "gow2_build_texture_pack",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kAction,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Build texture pack",
+      .label_es = "Crear pack de texturas",
+      .help_en = "Upscales the textures you dumped (Dump textures, then play the parts you want) with Real-ESRGAN "
+                 "on your GPU and writes a pack to texture_packs. 2x needs about 4 times the textures' video "
+                 "memory; 4x about 16 times. It can take a while; you can keep it running in the launcher.",
+      .help_es = "Escala con Real-ESRGAN en tu GPU las texturas que volcaste (Volcar texturas y luego jugar las "
+                 "partes que quieras) y escribe un pack en texture_packs. 2x necesita cerca de 4 veces la memoria "
+                 "de video de las texturas; 4x cerca de 16. Puede tardar; puedes dejarlo corriendo en el launcher.",
+      .disabled_help_en = "The tools are missing: tools\\texconv and tools\\realesrgan next to gow2.exe come in "
+                          "the release zip (a source build gets them from scripts\\package.ps1).",
+      .disabled_help_es = "Faltan las herramientas: tools\\texconv y tools\\realesrgan junto a gow2.exe vienen en "
+                          "el zip de la versión (una compilación propia las saca de scripts\\package.ps1)."});
+  out.push_back(Setting{
       .id = "texture_dump",
       .tab = Tab::kGraphics,
       .kind = Kind::kToggle,
@@ -578,8 +596,10 @@ void AddGraphicsPatches(std::vector<Setting>& out) {
       .advanced = true,
       .label_en = "Dump textures",
       .label_es = "Volcar texturas",
-      .help_en = "Saves every new texture to textures\\4D53082D\\dump to make packs.",
-      .help_es = "Guarda cada textura nueva en textures\\4D53082D\\dump para hacer packs."});
+      .help_en = "Saves every new texture to textures\\4D53082D\\dump to make packs. Dump with Texture pack set "
+                 "to Off so Build texture pack finds them.",
+      .help_es = "Guarda cada textura nueva en textures\\4D53082D\\dump para hacer packs. Vuelca con Pack de "
+                 "texturas en Desactivado para que Crear pack de texturas las encuentre."});
   out.push_back(Setting{
       .id = "gow2_android_sustained_performance",
       .tab = Tab::kGraphics,
@@ -1218,6 +1238,79 @@ void AddHost(std::vector<Setting>& out) {
       .help_es = "Algunos routers ignoran el límite de tiempo; esto los cierra al salir."});
 }
 
+void AddTexturePackBuilder(std::vector<Setting>& out) {
+  out.push_back(Setting{
+      .id = "gow2_texture_build_scale",
+      .tab = Tab::kGraphics,
+      .page = Page::kTexturePackBuilder,
+      .kind = Kind::kChoice,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Scale",
+      .label_es = "Escala",
+      .help_en = "How much larger the textures get. Sides stop at 4096.",
+      .help_es = "Cuánto más grandes quedan las texturas. Los lados llegan como mucho a 4096.",
+      .choices = {
+          C("2", "2x"),
+          C("4", "4x"),
+      }});
+  out.push_back(Setting{
+      .id = "gow2_texture_build_quality",
+      .tab = Tab::kGraphics,
+      .page = Page::kTexturePackBuilder,
+      .kind = Kind::kChoice,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Quality",
+      .label_es = "Calidad",
+      .help_en = "The compression of the new textures.",
+      .help_es = "La compresión de las texturas nuevas.",
+      .choices = {
+          C("disc", "Same as the disc (smaller)", "Igual que el disco (más liviano)"),
+          C("bc7", "BC7 (sharper, about 2x the memory)", "BC7 (más nítido, cerca del doble de memoria)"),
+      }});
+  out.push_back(Setting{
+      .id = "texture_build_info",
+      .tab = Tab::kGraphics,
+      .page = Page::kTexturePackBuilder,
+      .kind = Kind::kInfo,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Dumped textures",
+      .label_es = "Texturas volcadas"});
+  out.push_back(Setting{
+      .id = "texture_build_start",
+      .tab = Tab::kGraphics,
+      .page = Page::kTexturePackBuilder,
+      .kind = Kind::kAction,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Start",
+      .label_es = "Empezar",
+      .help_en = "Builds the pack in the background. Only new dumps are added to a pack that already exists.",
+      .help_es = "Crea el pack en segundo plano. A un pack que ya existe solo se le agregan los volcados nuevos."});
+  out.push_back(Setting{
+      .id = "texture_build_cancel",
+      .tab = Tab::kGraphics,
+      .page = Page::kTexturePackBuilder,
+      .kind = Kind::kAction,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Cancel",
+      .label_es = "Cancelar",
+      .help_en = "Stops the build. The textures already written stay; Start goes on from there.",
+      .help_es = "Detiene la creación. Las texturas ya escritas se quedan; Empezar sigue desde ahí."});
+  out.push_back(Setting{
+      .id = "texture_build_status",
+      .tab = Tab::kGraphics,
+      .page = Page::kTexturePackBuilder,
+      .kind = Kind::kInfo,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Status",
+      .label_es = "Estado"});
+}
+
 void AddSaves(std::vector<Setting>& out) {
   out.push_back(Setting{
       .id = "gow2_save_dir",
@@ -1531,6 +1624,7 @@ std::vector<Setting> BuildCatalog() {
   AddTouch(out);
   AddMultiplayer(out);
   AddHost(out);
+  AddTexturePackBuilder(out);
   AddSaves(out);
   AddAudio(out);
   AddSystem(out);
@@ -1581,6 +1675,8 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("Controller buttons", "Botones del mando", lang);
     case TextId::kPageHost:
       return Pick("Host over the internet", "Alojar por internet", lang);
+    case TextId::kPageTexturePackBuilder:
+      return Pick("Build texture pack", "Crear pack de texturas", lang);
     case TextId::kOn:
       return Pick("On", "Sí", lang);
     case TextId::kOff:
@@ -1636,6 +1732,10 @@ std::string_view Text(TextId id, Lang lang) {
 std::string_view Label(const Setting& s, Lang lang) { return Pick(s.label_en, s.label_es, lang); }
 
 std::string_view Help(const Setting& s, Lang lang) { return Pick(s.help_en, s.help_es, lang); }
+
+std::string_view DisabledHelp(const Setting& s, Lang lang) {
+  return Pick(s.disabled_help_en, s.disabled_help_es, lang);
+}
 
 std::string_view ChoiceLabel(const Choice& c, Lang lang) {
   return Pick(c.label_en, c.label_es, lang);

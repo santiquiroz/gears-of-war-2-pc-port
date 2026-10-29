@@ -121,9 +121,17 @@ Defaults keep the original game and crossplay working.
 | Depth of field fix | `gow2_dof_upscaling_fix` | on, off | now | both |
 | Texture pack | `gow2_texture_pack` | off, textures folder, the folder names in `texture_packs` next to the exe (each holds `4D53082D\replace`); empty uses `texture_replace`; it overrides `texture_replace` and `texture_pack_dir` in gow2.toml, not on the command line | restart | Windows |
 | Open texture packs folder | action | creates `texture_packs` next to the exe and opens it | now | Windows |
-| Dump textures | `texture_dump` | on, off (advanced) | restart | Windows |
+| Build texture pack | opens the page below; dimmed when `tools\texconv` or `tools\realesrgan` is missing | upscales the dumped color textures with Real-ESRGAN into `texture_packs\dump-2x` and the like ([Texture packs](TEXTURE_PACKS.md)) | now | Windows |
+| Dump textures | `texture_dump` | on, off (advanced); dump with Texture pack set to Off so Build texture pack finds them | restart | Windows |
 | Sustained performance | `gow2_android_sustained_performance` | on, off | restart | Android |
 | Engine settings | `gow2_system_settings` | text (advanced) | restart | both |
+
+The "Build texture pack" page holds: Scale (`gow2_texture_build_scale`: 2x, 4x), Quality
+(`gow2_texture_build_quality`: same as the disc, BC7), the dump count with the expected video memory
+(2x about 4 times the textures', 4x about 16 times, double with BC7), Start, Cancel and the status
+(`Building 120 / 724`, then the pack to pick or the failure). The build keeps running when you press
+Play or close the menu; quitting the game cancels it. A finished pack shows up in Texture pack right
+away.
 
 
 ### Game quality
