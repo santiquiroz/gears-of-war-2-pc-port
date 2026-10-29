@@ -429,6 +429,8 @@ class Gow2App : public rex::ReXApp {
     if (unlock_fps) SetLaunchDefault("present_android_frame_rate", "0");
     // Each occlusion query ends the render pass twice; off cut GPU work 6-12 % with no visible change.
     SetIfUnset("occlusion_query_enable", "false");
+    // Mali has no fillModeNonSolid (issue #27); without the requirement line and point polygon modes draw filled.
+    SetIfUnset("vulkan_require_fill_mode_non_solid", "false");
     REXLOG_INFO("DISPLAY frame rate hint {} Hz (gow2_unlock_fps {})",
                 rex::cvar::Query<int32_t>("present_android_frame_rate"), unlock_fps);
 #else
