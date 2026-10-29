@@ -134,6 +134,7 @@ class Checker {
   }
 
   void StartAt(const std::filesystem::path& root) {
+    if (root.empty()) return;
     std::lock_guard lock(mutex_);
     if (worker_.joinable()) return;
     path_ = root / L"update_check.json";

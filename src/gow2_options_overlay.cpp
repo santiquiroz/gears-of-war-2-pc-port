@@ -330,7 +330,12 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     SelectTab(state_, 0, Catalog(), values_, context_.ctx);
   }
 
-  void SetPaths(const GamePaths& paths) { values_.set_paths(paths); }
+  void SetPaths(const GamePaths& paths) {
+    values_.set_paths(paths);
+#ifdef _WIN32
+    update::Start(paths.user_data_root);
+#endif
+  }
 
   void CloseMenu() {
     if (!open_) return;
