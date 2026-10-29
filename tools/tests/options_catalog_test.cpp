@@ -194,7 +194,7 @@ int CountPage(options::Page page) {
 }
 
 void TestCounts() {
-  Expect(CountTab(options::Tab::kDisplay) == 8, "display has 8 rows");
+  Expect(CountTab(options::Tab::kDisplay) == 9, "display has 9 rows including keep 16:9 shape");
   Expect(CountTab(options::Tab::kGraphics) == 50, "graphics has 50 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset and 24 settings");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
@@ -297,6 +297,16 @@ void TestGpuBackendRow() {
   }
 }
 
+void TestLetterboxRow() {
+  const auto* letterbox = options::FindSetting("present_letterbox");
+  Expect(letterbox != nullptr, "keep 16:9 shape row exists");
+  if (letterbox) {
+    Expect(letterbox->tab == options::Tab::kDisplay && letterbox->kind == options::Kind::kToggle &&
+               letterbox->apply == options::Apply::kNow && letterbox->platforms == options::kAllPlatforms,
+           "keep 16:9 shape is an apply-now Display toggle on both platforms");
+  }
+}
+
 void TestLanguageRows() {
   const struct {
     const char* id;
@@ -335,6 +345,7 @@ int main() {
     TestSplitScreenRows();
     TestGraphicsQualityRows();
     TestGpuBackendRow();
+    TestLetterboxRow();
     TestLanguageRows();
   } catch (const std::exception& e) {
     ++g_checks;

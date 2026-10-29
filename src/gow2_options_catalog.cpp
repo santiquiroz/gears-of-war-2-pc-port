@@ -131,6 +131,21 @@ void AddDisplay(std::vector<Setting>& out) {
           V("240"),
       }});
   out.push_back(Setting{
+      .id = "present_letterbox",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Keep 16:9 shape",
+      .label_es = "Mantener formato 16:9",
+      .help_en =
+          "On: a wider screen shows black bars at the sides. Off: the picture fills the screen, cropped up "
+          "to 10 % at the top and bottom (the TV safe area) and stretched sideways for the rest.",
+      .help_es =
+          "Encendido: una pantalla más ancha muestra barras negras a los lados. Apagado: la imagen llena la "
+          "pantalla, recortada hasta un 10 % arriba y abajo (el área segura de la TV) y estirada a lo ancho "
+          "en el resto."});
+  out.push_back(Setting{
       .id = "present_android_frame_rate",
       .tab = Tab::kDisplay,
       .kind = Kind::kChoice,

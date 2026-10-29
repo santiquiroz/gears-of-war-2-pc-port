@@ -86,6 +86,7 @@ Defaults keep the original game and crossplay working.
 | VSync | `vsync` | on, off | now | both |
 | Unlock frame rate | `gow2_unlock_fps` | on, off | now | both |
 | Frame rate limit | `gow2_fps_cap` | off, 30 ... 240 | now | both |
+| Keep 16:9 shape | `present_letterbox` | on (black bars), off (fill: crop up to 10 % top and bottom, stretch the rest) | now | both |
 | Display refresh hint | `present_android_frame_rate` | phone default, 30 ... 120 | restart | Android |
 
 ## Graphics
