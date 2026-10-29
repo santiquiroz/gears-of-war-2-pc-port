@@ -35,13 +35,17 @@ Read in English: [README.md](README.md)
 - [x] Reescalado FSR 1 y nitidez CAS (`present_effect`)
 - [x] Paquetes de texturas: volcar las texturas del juego y cargar tus propias versiones en mayor resolución
 - [x] Puntería con el mouse por los ejes de mouse de PC del propio juego, sin zona muerta de stick (`gow2_mouse_aim`, activado por defecto)
-- [x] Reescalado temporal FSR 4 y FSR 3.1 (`gow2_temporal`, `gow2_upscaler`; apagado por defecto). La versión publicada no trae DLSS
+- [x] Reescalado temporal FSR 4 y FSR 3.1 (Opciones de PC > Gráficos > Reescalador; `gow2_temporal`, `gow2_upscaler`; apagado por defecto). La versión publicada no trae DLSS; DLSS aparece en el menú con DLL del SDK que compiles tú mismo (0.2.8)
 - [x] Teclas y botones del mouse que el juego recibe como en un PC mientras se juega un nivel (`gow2_native_keys`, parche SDK 0022); los menús, el menú de pausa y las escenas siguen pasando por el mando emulado
 - [x] Botones en pantalla que siguen el último dispositivo que usaste, en vivo: teclas dibujadas con tus teclas configuradas para teclado y mouse, los botones de Xbox, o botones de PlayStation (PS4: Share/Options, PS5: Create/Options) para un DualShock o DualSense (idea y parche del SDK de la recompilación de Gears of War 3 de @Flippage, issue #25) (`gow2_keycaps`; el paquete se crea desde tu propia copia con `Build keycap pack.cmd` del zip, sin Python desde la 0.2.9, o con `scripts/build-keycaps.ps1` desde el código, ver [tools/keycaps](tools/keycaps/README.md))
-- [ ] Teclas que el juego reciba como en un PC (todavía pasan por un mando emulado)
-- [x] Ultrawide: una imagen realmente más ancha (Hor+) en vez de 16:9 con barras, hasta 1680 píxeles (`gow2_widescreen`, ver [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); necesita la ruta de render targets ROV (NVIDIA e Intel por defecto)
+- [x] Ultrawide: una imagen realmente más ancha (Hor+) en vez de 16:9 con barras, hasta 1680 píxeles (`gow2_widescreen`, ver [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); funciona con el renderizador nativo (AMD y NVIDIA por defecto) y con la ruta de render targets ROV (Intel por defecto)
+- [x] Renderizador nativo (0.3.0; dibujos tomados de las llamadas Direct3D del juego desde la 0.3.4): los render targets son superficies del host y los resolves escriben texturas directamente en vez de emular la EDRAM de la Xbox 360. Activado por defecto en AMD, NVIDIA (0.3.8) y Android; Gráficos > Renderizador lo cambia (`gow2_native_renderer`)
+- [x] Antialiasing: FXAA y FXAA Extreme (Gráficos > Antialiasing, 0.3.4), en PC y Android
+- [x] API gráfica en PC: Direct3D 12 (por defecto) o Vulkan, experimental (Opciones de PC > Gráficos > API gráfica, `gpu_backend`, 0.3.8). Con Vulkan no están disponibles los reescaladores temporales; FSR 1 y CAS sí
+- [x] Instalación desde tu propio `.iso` en PC (0.3.6) y en Android (0.2.6)
+- [x] Voces y subtítulos en idiomas separados (0.3.7): voces en inglés, español latino o francés; textos en 9 idiomas ([docs/LANGUAGES.md](docs/LANGUAGES.md))
 - [ ] Campaña completa de principio a fin
-- [x] Campaña cooperativa por System Link de hasta cuatro jugadores (`gow2_coop_players`, apagada por defecto): cuatro copias en un mismo PC (loopback) y un PC con un teléfono Android en la misma LAN para dos jugadores, verificado el 2026-10-14 y el 2026-10-15; Etapa 2 (cambios de capítulo, muertes, salida y reingreso, puntos de control y cinemáticas) verificada con cuatro copias en un mismo PC el 2026-10-16; un teléfono y un PC con 0.2.0 entraron al mismo lobby de System Link el 2026-10-16
+- [x] Campaña cooperativa por System Link de hasta cuatro jugadores (`gow2_coop_players`, apagada por defecto): cuatro copias en un mismo PC (loopback) y un PC con un teléfono Android en la misma LAN para dos jugadores, verificado el 2026-10-14 y el 2026-10-15; Etapa 2 (cambios de capítulo, muertes, salida y reingreso, puntos de control y cinemáticas) verificada con cuatro copias en un mismo PC el 2026-10-16; un teléfono y un PC con 0.2.0 entraron al mismo lobby de System Link el 2026-10-16; 8 y 10 jugadores son experimentales (0.3.0, ocho copias se unieron en un mismo PC)
 - [x] Juego por internet, experimental (`net_peers`, `net_public_address`, `net_allow_peers`): un teléfono con datos móviles se unió a una campaña alojada en un PC a través de puertos abiertos por UPnP, verificado el 2026-10-15; todavía no se probó con un amigo en otro PC fuera de la red
 - [x] Menú de opciones en el juego (Opciones de PC; Opciones del dispositivo en Android) ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md)): verificado en un PC y en un Galaxy S25 Ultra el 2026-10-16
 - [x] Opciones de calidad del juego: Gráficos > Calidad del juego con perfiles Bajo/Medio/Alto/Personalizado y 24 ajustes del motor del propio juego (sombras, luces, bloom, desenfoque de movimiento, profundidad de campo, oclusión ambiental, destellos, distorsión, calcomanías, niebla, vegetación, nivel de detalle); las 76 claves en [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)
@@ -49,8 +53,10 @@ Read in English: [README.md](README.md)
 - [x] Ajustes automáticos para GPU integradas (720p interno, filtrado anisotrópico 2x, sin re-subida de memoria guest por cuadro) para portátiles y consolas portátiles
 - [x] Android: los objetos/efectos blancos del renderizador Vulkan están corregidos (0.2.3); las sombras de objetos son una opción, apagada por defecto en Android
 - [x] VSync espera a la pantalla en D3D12 y el límite de 30 fps se mantiene con VSync apagado (0.2.4)
-- [ ] Horda y Versus por System Link
-- [ ] Android: una compilación del repositorio llega a jugar y se une a la campaña de un PC por System Link, pero todavía no está terminado; cada versión desde la v0.1.2 trae un APK experimental (ver [Android](#android-experimental)). Toda la escena se dibuja desde el 15 de octubre; corre a unos 30 fps durante los primeros minutos desde un arranque en frío y baja a unos 10-12,5 fps cuando el teléfono está caliente ([docs/ANDROID.md](docs/ANDROID.md))
+- [x] Campaña cooperativa en pantalla dividida en un mismo PC (Opciones de PC > Multijugador > Jugadores en pantalla dividida, luego Campaña cooperativa > Campaña en pantalla dividida; dos jugadores, el límite del propio juego; el segundo jugador necesita un mando, o el teclado como jugador 1), verificada el 2026-10-22 con dos jugadores
+- [x] Versus por System Link: dos copias en un mismo PC se unieron a un grupo y jugaron Zona de guerra en Avalanche el 2026-10-22
+- [x] Horda por System Link: dos copias en un mismo PC jugaron la oleada 1 en Avalanche el 2026-10-22 (parches SDK 0049 y 0050)
+- [ ] Android: una compilación del repositorio llega a jugar y se une a la campaña de un PC por System Link, pero todavía no está terminado; cada versión desde la v0.1.2 trae un APK experimental (ver [Android](#android-experimental)). El renderizador nativo está activado por defecto desde la 0.3.1. En un Galaxy S25 Ultra el hospital del capítulo 2 corre a unos 46-53 fps desde un arranque en frío y a unos 37 fps cuando el teléfono ya está tibio (batería a 38 °C), con la tasa de cuadros desbloqueada (resolución interna 720p); el límite es la GPU, que baja su velocidad al calentarse. Las GPU Mali sin la función de Vulkan `vertexPipelineStoresAndAtomics` (por ejemplo la Mali-G720 del Dimensity 8300) arrancan desde la 0.3.8 (issue #27) ([docs/ANDROID.md](docs/ANDROID.md))
 
 Ver el plan completo en [ROADMAP.md](ROADMAP.md).
 
@@ -66,7 +72,7 @@ No piratees el juego.
 
 ### PC
 
-Requisitos: Windows 10/11 x64 y una GPU con DirectX 12 (desarrollado en una AMD Radeon RX 7800 XT).
+Requisitos: Windows 10/11 x64 y una GPU con DirectX 12, o una GPU con Vulkan para la opción experimental de Vulkan (desarrollado en una AMD Radeon RX 7800 XT).
 
 1. Descarga `gow2-recomp-<versión>-win64.zip` de la [última versión](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest) (el `.apk` es la versión de Android).
 2. Descomprímelo en cualquier lugar y ejecuta `gow2.exe`. El exe no está firmado, así que Windows puede mostrar «Windows protegió tu PC»: elige **Más información** y luego **Ejecutar de todas formas**.
@@ -80,6 +86,8 @@ gow2.exe --game_data_root="C:\Games\GoW2"
 
 La primera vez que juegues en cooperativo por System Link, Windows pregunta si `gow2.exe` puede usar la red: permítelo, o los demás jugadores no encontrarán tu partida.
 
+El primer arranque, y el primer arranque después de una actualización que cambia los gráficos, vuelve a compilar los shaders: la ventana puede quedarse unos minutos en la pantalla de título y Windows puede decir que «No responde», y el primer nivel tarda un poco más en cargar. Déjalo correr; los arranques siguientes usan los shaders guardados.
+
 ### Android (experimental)
 
 Requisitos: un teléfono arm64 con Android 10 o superior y Vulkan, y espacio libre para una copia completa de los archivos del juego.
@@ -90,7 +98,7 @@ Requisitos: un teléfono arm64 con Android 10 o superior y Vulkan, y espacio lib
 
 En lugar de los pasos 2 y 3 puedes copiar la carpeta por USB desde un PC, de modo que `default.xex` quede en `Android/data/com.santiquiroz.gow2recomp/files/game/`, y luego tocar **Volver a comprobar**.
 
-En Android el menú de ajustes se llama Opciones del dispositivo (el engranaje de la esquina superior derecha). Si el juego se cierra inesperadamente, el siguiente arranque abre primero **Opciones de inicio**: algunos ajustes, un **Driver de GPU** (en Adreno, un .zip de Turnip hecho para AdrenoTools en lugar del driver del teléfono), **Modo seguro** (sin memoria GPU dispersa, resolución 1x, filtro bilineal, el driver del teléfono), **Restablecer ajustes** y **Compartir último registro**. Para abrirla a propósito, mantén pulsado el icono de la app y elige **Opciones de inicio**. Estado y límites conocidos: [docs/ANDROID.md](docs/ANDROID.md).
+En Android el menú de ajustes se llama Opciones del dispositivo (el engranaje de la esquina superior derecha). Si el juego se cierra inesperadamente, el siguiente arranque abre primero **Opciones de inicio**: algunos ajustes, un **Driver de GPU** (en Adreno, un .zip de Turnip hecho para AdrenoTools en lugar del driver del teléfono), **Modo seguro** (sin memoria GPU dispersa, resolución 1x, filtro bilineal, el driver del teléfono), **Restablecer ajustes** y **Compartir último registro**. Para abrirla a propósito, mantén pulsado el icono de la app y elige **Opciones de inicio**. Estado y límites conocidos: [docs/ANDROID.md](docs/ANDROID.md). En Opciones del dispositivo, desliza un dedo sobre la lista para desplazarla (0.3.8).
 
 ## Controles
 
@@ -124,8 +132,10 @@ Las voces (inglés, español latino o francés; `gow2_voice_language`) y los sub
 
 - `fullscreen` — pantalla completa o ventana.
 - `resolution_scale` — resolución interna de renderizado como múltiplo de 720p: 1 = 720p, 2 = 1440p, 3 = 4K.
-- `present_effect` — escalado de la imagen final: `bilinear` con el runtime estándar; `fsr`, `cas` y rutas temporales experimentales con un runtime compilado desde el código fuente (ver abajo).
+- `present_effect` — escalado de la imagen final: `bilinear`, `fsr` (AMD FSR 1 con nitidez, desde un `resolution_scale` menor) o `cas` (solo nitidez).
 - `vsync` — sincronización vertical.
+- `gow2_native_renderer` — `auto` (nativo en AMD, NVIDIA y Android), `on` u `off` (EDRAM emulada).
+- `gpu_backend` — `any` (Direct3D 12), `d3d12` o `vulkan` (experimental); requiere reiniciar.
 - `gow2_unlock_fps` — elimina el límite de 30 fps del juego.
 - `gow2_fps_cap` — límite de FPS con el juego desbloqueado (0 = sin límite).
 - `gow2_audio_volume` — volumen general en por ciento.
@@ -134,7 +144,7 @@ Las voces (inglés, español latino o francés; `gow2_voice_language`) y los sub
 - `gow2_aniso16` — filtrado anisotrópico 16x.
 - `gow2_ao_upscaling_fix` — oclusión ambiental sin artefactos al escalar.
 - `gow2_dof_upscaling_fix` — profundidad de campo sin artefactos al escalar.
-- `gow2_temporal`, `gow2_upscaler` — reescalado temporal: `gow2_temporal = true` con `gow2_upscaler = "fsr4"` (Radeon RX 7000/9000) o `"fsr3"`; apagado por defecto.
+- `gow2_temporal`, `gow2_upscaler` — reescalado temporal: `gow2_temporal = true` con `gow2_upscaler = "fsr4"` (Radeon RX 7000/9000) o `"fsr3"`; apagado por defecto (solo Direct3D 12).
 - `mnk_sensitivity` — sensibilidad del mouse.
 - `gow2_save_dir` — carpeta de partidas guardadas, ajustes del perfil y logros; apúntala a una carpeta de OneDrive, Google Drive o Dropbox para tener la campaña en la nube ([docs/SAVES.md](docs/SAVES.md)).
 
@@ -144,13 +154,13 @@ En Windows, el juego consulta GitHub para buscar una nueva versión como máximo
 
 ## Rendimiento
 
-Medido en un Ryzen 9 7900X3D + Radeon RX 7800 XT, Acto 1, `resolution_scale = 2` (1440p interno): unos 90 cuadros presentados por segundo en promedio, 1% bajo en 55, GPU unos 6 ms por cuadro (PresentMon 2.6, captura de 30 s). Estas cifras son cuadros presentados. Para reportes de errores, `gow2_frame_log = true` registra los tiempos de cuadro FRAMESTATS cada 5 s y `d3d12_stats_log = true` registra los contadores D3D12.
+Hospital del capítulo 2, tasa de cuadros desbloqueada: unos 260 fps a 1440p internos en un Ryzen 9 7900X3D + Radeon RX 7800 XT con el renderizador nativo (0.3.8; de la 0.3.3 a la 0.3.7 iba a unos 150 porque el front end nativo venía activado por defecto); 60 fps (el límite) con la GPU a cerca del 55 % en una GTX 1070; unos 46-53 fps desde un arranque en frío en un Galaxy S25 Ultra a 720p. Dónde se va el tiempo de cada cuadro en PC y Android, por qué el port necesita más GPU que "Hollow" y el plan ordenado para bajarlo: [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (en inglés). Para reportar errores, `gow2_frame_log = true` registra los tiempos de cuadro FRAMESTATS cada 5 s y `d3d12_stats_log = true` los contadores de D3D12.
 
 ## Mejoras modernas
 
 - Resolución nativa mediante `resolution_scale` (ver Ajustes).
 - FSR: el runtime de la versión viene compilado con AMD FidelityFX. `present_effect = "fsr"` renderiza con un `resolution_scale` menor y reescala con FSR 1 más nitidez; `"cas"` solo aplica nitidez. Medido con `resolution_scale = 1` y FSR 1 a 1440p: unos 85 fps en el Acto 1.
-- Reescalado temporal: FSR 4.1 en Radeon RX 7000/9000 y FSR 3.1 en otras GPU, con las DLL firmadas del FidelityFX SDK 2.3 de AMD, portados de la recompilación de Gears of War: Judgment. Apagado por defecto: pon `gow2_temporal = true` y `gow2_upscaler = "fsr4"` o `"fsr3"`, y baja `resolution_scale` para que el reescalador tenga margen. FSR 4 se comprobó en el juego con una Radeon RX 7800 XT (de 1280x704 a 2560x1408).
+- Reescalado temporal: FSR 4.1 en Radeon RX 7000/9000 y FSR 3.1 en otras GPU, con las DLL firmadas del FidelityFX SDK 2.3 de AMD, portados de la recompilación de Gears of War: Judgment. Apagado por defecto: elígelo en Opciones de PC > Gráficos > Reescalador (o pon `gow2_temporal = true` y `gow2_upscaler = "fsr4"` o `"fsr3"`), y baja `resolution_scale` para que el reescalador tenga margen. FSR 4 se comprobó en el juego con una Radeon RX 7800 XT (de 1280x704 a 2560x1408).
 - La versión publicada no trae DLSS: la licencia del SDK de DLSS de NVIDIA no lo permite en una versión de código abierto (ver THIRD_PARTY_NOTICES.md). Solo las compilaciones hechas desde el código fuente con tu propia copia del SDK de DLSS de NVIDIA pueden usarlo. Para usarlo con el `gow2.exe` de la versión publicada, compila las DLL del SDK con `scripts/build-sdk.ps1` (sin `-NoDlss`) y copia `rexruntime.dll`, `rexgpu-xenos.dll` y `nvngx_dlss.dll` junto a él; el menú de opciones de PC ofrece entonces DLSS. Confirmado en una RTX 5060 Ti (issue #18).
 - Paquetes de texturas: ver la siguiente sección. Probado con una textura reemplazada por una versión del doble de tamaño:
 
@@ -176,16 +186,19 @@ La campaña cooperativa por System Link funciona entre PC y entre varias copias 
 - [docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md): la Etapa 2 del cooperativo con más de dos jugadores cubre cambios de capítulo, muertes, salida y reingreso, puntos de control y cinemáticas; aún faltan las pantallas divididas, salir de vehículos, la sección Ride-Reaver y cuatro PC por internet.
 - [docs/ONLINE.md](docs/ONLINE.md): jugar por internet. Desde el repositorio (no viene en el zip de la versión publicada), [`scripts/host-online.ps1`](https://github.com/santiquiroz/gears-of-war-2-pc-port/blob/master/scripts/host-online.ps1) `-Start` abre por UPnP los puertos UDP 14001 y 41000 en cada router entre el PC y internet, con un plazo (6 h por defecto, 24 h como máximo), y programa un `-Stop` automático para el final del plazo; `-Stop` los cierra. Ejecuta `-Stop` después de cada sesión; algunos routers ignoran el plazo. Sin UPnP: reenvío manual; sin abrir puertos: Tailscale o ZeroTier. Verificado el 2026-10-15: un teléfono con datos móviles se unió a un PC anfitrión detrás de dos routers en cadena.
 
-Horda y Versus por System Link no se han probado. Ver [ROADMAP.md](ROADMAP.md).
+Versus funciona por System Link: en Multijugador pon el Tipo de partida en System Link, crea el grupo en una copia y únete desde el Explorador de System Link en las demás (dos copias en un mismo PC jugaron Zona de guerra el 2026-10-22). Horda funciona igual desde el menú de Horda (dos copias jugaron la oleada 1 el 2026-10-22). Ver [ROADMAP.md](ROADMAP.md).
 
 ## Problemas conocidos
+
+- **«Bad Image ... rexruntime.dll ... 0xc0e90002» en Windows 11.** Es el Control inteligente de aplicaciones bloqueando las DLL de la versión publicada porque todavía no tienen firma de código; los archivos no están dañados. Desactivar el Control inteligente de aplicaciones (Seguridad de Windows → Control de aplicaciones y navegador) permite que el juego arranque, pero Windows no puede volver a activarlo sin reinstalar, así que decide teniendo eso en cuenta. Se está estudiando firmar las versiones.
 
 - **La puntería con el mouse cambió en la 0.1.1.** En la 0.1.0 el mouse se traducía a movimiento del stick derecho, y el juego ignoraba cualquier inclinación del stick menor al 30 % (su binding `DeadZone=0.3`). Ahora el mouse va por los ejes de mouse de PC del propio juego (`gow2_mouse_aim`), sin zona muerta, y los mandos conservan la puntería original. Las teclas todavía pasan por un mando emulado. Se agradece contar en un issue cómo se siente.
 - **Las pistas muestran imágenes de botones de Xbox.** Los menús siguen el último dispositivo que usaste y cambian en vivo: teclas ([Espacio], [E]...) tras usar teclado o mouse, los botones de Xbox tras un mando de Xbox, botones de PlayStation (PS4: Share/Options, PS5: Create/Options) tras un DualShock o DualSense (`gow2_prompts` = `auto`; `keyboard`, `controller` y `playstation` fijan una opción al arrancar; en Android la elección se sigue haciendo al arrancar y no hay `playstation`). Los mandos de PlayStation ahora se detectan por SDL (antes solo contaban los mandos XInput); sus botones vienen del paquete de keycaps, así que recréalo con `Build keycap pack.cmd` (sin un paquete de la 0.3.5 muestran botones de Xbox). Idea y parche del SDK de la recompilación de Gears of War 3 de @Flippage (issue #25). Un menú ya abierto cambia la próxima vez que se abre; las imágenes de las pistas del tutorial pierden los círculos de botones de Xbox mientras se muestran teclas (el texto de la pista nombra tu tecla), y cualquier otro arte con botones pintados sigue mostrando botones de Xbox. Las indicaciones durante el juego (recoger, recargar, cubrirse) dibujan el botón directamente desde la fuente de botones del juego (issue #21): con el paquete de keycaps muestran tus teclas (confirmado en el juego en #21 con la v0.3.4), y con etiquetas de texto conservan los botones de Xbox ([docs/PROMPTS_GAMEPLAY_FINDINGS.md](docs/PROMPTS_GAMEPLAY_FINDINGS.md)).
 - **Se reportó iluminación verdosa** en la piel, las luces y las llamas del menú; todavía no se reproduce en el PC de desarrollo. Se agradecen capturas en un issue.
 - **El cooperativo de tres o cuatro jugadores es nuevo.** La Etapa 2 se probó con cuatro copias en un mismo PC: los jugadores 3 y 4 conservan sus cuerpos y armas al cambiar de capítulo y viajar, reaparecen al morir, salen y vuelven a unirse, se restauran al cargar puntos de control, se ocultan durante las cinemáticas, no reciben daño a pie mientras un héroe conduce y el anfitrión los lleva junto a Marcus o Dom si quedan muy atrás. No se han probado las pantallas divididas, salir de un vehículo, la sección Ride-Reaver, unirse durante una cinemática, combates reales prolongados, cuatro PC por LAN o internet ni Android con 3 o más jugadores ([docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md)).
-- **Todos los jugadores necesitan la misma versión publicada.** Todos deben usar la 0.1.2; con tres o más jugadores, las campañas con hashes cooperativos distintos permanecen ocultas, mientras que en cooperativo de dos jugadores no hay comprobación y se espera que la 0.1.1 falle al final del capítulo 2 del Acto 1.
-- Solo se ha jugado el Acto 1 completo; las pruebas cooperativas llegaron a los capítulos 13, 16 y 27 mediante viajes entre capítulos.
+- **Todos los jugadores necesitan la misma versión publicada.** Todos deben usar la misma versión; con tres o más jugadores, las campañas con hashes cooperativos distintos permanecen ocultas, y en cooperativo de dos jugadores no hay comprobación, así que mezclar versiones puede hacer que el juego falle.
+- Solo se ha jugado el Acto 1 completo; las pruebas cooperativas llegaron a los capítulos 13, 16 y 27 mediante viajes entre capítulos. El 2026-10-22 `scripts/chapter-sweep.ps1` viajó a cada uno de los 29 capítulos y jugó en cada uno un minuto de movimiento y disparos programados sin ningún fallo por función faltante; una pasada tuvo un timeout de la GPU (TDR) en el capítulo 23 que no se repitió en tres pasadas posteriores. Jugar los actos 2 a 5 de principio a fin sigue pendiente (issue #8).
+- **Renderizador nativo en algunas tarjetas AMD:** en una Radeon RX 7900 XT pueden verse manchas oscuras en bloques en el suelo donde los personajes proyectan sombras (issue #26); Gráficos > Renderizador > Emulado (EDRAM) las evita mientras se investiga.
 
 ## Compilar desde el código fuente
 
@@ -193,7 +206,7 @@ Ver [BUILDING.md](BUILDING.md). Los scripts principales son `scripts/build.ps1`,
 
 ## Cómo encontrar las funciones que codegen no detecta
 
-`tools/harvest_hints.py` analiza la imagen descifrada (exportada desde Ghidra con `tools/ghidra/ExportImage.java`) contra una generación de código base sin pistas (`scripts/codegen-baseline.sh`) y emite `hints/harvested.toml`: thunks de ajuste, entradas `.pdata`, punteros de código guardados en `.rdata`/`.data` y direcciones construidas en el código con `lis`+`addi`/`ori`. Las pistas que dividirían una función existente se detectan desde el registro de codegen con `tools/hint_fixpoint.py` y se excluyen mediante `hints/denylist.txt`. Lo que siga faltando se encuentra en tiempo de ejecución con `scripts/run-harvest-loop.sh` (arrancar, leer el FATAL de "unregistered function", añadirlo a `hints/runtime.toml`, recompilar).
+`tools/harvest_hints.py` analiza la imagen descifrada (exportada desde Ghidra con `tools/ghidra/ExportImage.java`) contra una generación de código base sin pistas (`scripts/codegen-baseline.sh`) y emite `hints/harvested.toml`: thunks de ajuste, entradas `.pdata`, punteros de código guardados en `.rdata`/`.data` y direcciones construidas en el código con `lis`+`addi`/`ori`. Las pistas que dividirían una función existente se detectan desde el registro de codegen con `tools/hint_fixpoint.py` y se excluyen mediante `hints/denylist.txt`. Lo que siga faltando se encuentra en tiempo de ejecución con `scripts/run-harvest-loop.sh` (arrancar, leer el FATAL de "unregistered function", añadirlo a `hints/runtime.toml`, recompilar). `scripts/chapter-sweep.ps1` hace lo mismo con los 29 capítulos en una sola pasada viajando a cada uno (ver [docs/TEST_TOOLING.md](docs/TEST_TOOLING.md)).
 
 ## Contribuir
 

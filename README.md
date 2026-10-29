@@ -35,13 +35,17 @@ Leer en español: [README.es.md](README.es.md)
 - [x] FSR 1 upscaling and CAS sharpening (`present_effect`)
 - [x] Texture packs: dump the game's textures, load your own higher-resolution versions
 - [x] Mouse aim through the game's own PC mouse axes, with no stick dead zone (`gow2_mouse_aim`, on by default)
-- [x] FSR 4 and FSR 3.1 temporal upscaling (`gow2_temporal`, `gow2_upscaler`; off by default). The release has no DLSS
+- [x] FSR 4 and FSR 3.1 temporal upscaling (PC Options > Graphics > Upscaler; `gow2_temporal`, `gow2_upscaler`; off by default). The release has no DLSS; DLSS shows up in the menu with SDK DLLs you build yourself (0.2.8)
 - [x] Keyboard keys and mouse buttons handled as on a PC while a level is played (`gow2_native_keys`, SDK patch 0022); menus, the pause menu and cutscenes still pass through the emulated controller
 - [x] Button prompts that follow the device you used last, live: keycap pictures of your keybinds for keyboard and mouse, the Xbox buttons, or PlayStation buttons (PS4: Share/Options, PS5: Create/Options) for a DualShock or DualSense (idea and SDK patch from @Flippage's Gears of War 3 recompilation, issue #25) (`gow2_keycaps`; build the pack from your own copy with `Build keycap pack.cmd` in the release zip, no Python needed since 0.2.9, or `scripts/build-keycaps.ps1` from source, see [tools/keycaps](tools/keycaps/README.md))
-- [ ] Keyboard keys handled as on a PC (they still pass through an emulated controller)
-- [x] Ultrawide: a really wider picture (Hor+) instead of 16:9 with bars, up to 1680 pixels wide (`gow2_widescreen`, see [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); needs the ROV render target path (NVIDIA and Intel by default)
+- [x] Ultrawide: a really wider picture (Hor+) instead of 16:9 with bars, up to 1680 pixels wide (`gow2_widescreen`, see [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); works with the native renderer (AMD and NVIDIA by default) and with the ROV render target path (Intel by default)
+- [x] Native renderer (0.3.0; draws taken from the game's Direct3D calls since 0.3.4): render targets are host surfaces and resolves write textures directly instead of emulating the Xbox 360 EDRAM. On by default on AMD, NVIDIA (0.3.8) and Android; Graphics > Renderer switches it (`gow2_native_renderer`)
+- [x] Anti-aliasing: FXAA and FXAA Extreme (Graphics > Anti-aliasing, 0.3.4), on PC and Android
+- [x] Graphics API on PC: Direct3D 12 (default) or Vulkan, experimental (PC Options > Graphics > Graphics API, `gpu_backend`, 0.3.8). On Vulkan the temporal upscalers are not available; FSR 1 and CAS are
+- [x] Install from your own `.iso` on PC (0.3.6) and on Android (0.2.6)
+- [x] Voices and subtitles in separate languages (0.3.7): English, Latin American Spanish or French voices; text in 9 languages ([docs/LANGUAGES.md](docs/LANGUAGES.md))
 - [ ] Full campaign play-through
-- [x] System Link campaign co-op for up to four players (`gow2_coop_players`, off by default): four copies on one PC (loopback), and a PC with an Android phone on one LAN for two players, verified 2026-10-14 and 2026-10-15; Stage 2 (chapter changes, deaths, leave/rejoin, checkpoints, cinematics) verified with four copies on one PC on 2026-10-16; a phone and a PC on 0.2.0 joined one System Link lobby on 2026-10-16
+- [x] System Link campaign co-op for up to four players (`gow2_coop_players`, off by default): four copies on one PC (loopback), and a PC with an Android phone on one LAN for two players, verified 2026-10-14 and 2026-10-15; Stage 2 (chapter changes, deaths, leave/rejoin, checkpoints, cinematics) verified with four copies on one PC on 2026-10-16; a phone and a PC on 0.2.0 joined one System Link lobby on 2026-10-16; 8 and 10 players are experimental (0.3.0, eight copies joined on one PC)
 - [x] Internet play, experimental (`net_peers`, `net_public_address`, `net_allow_peers`): a phone on mobile data joined a PC-hosted campaign through ports opened by UPnP, verified 2026-10-15; a PC friend outside the network has not been tried yet
 - [x] In-game options menu (PC Options; Device Options on Android) ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md)): verified on a PC and on a Galaxy S25 Ultra on 2026-10-16
 - [x] Game quality options: Graphics > Game quality with Low/Medium/High/Custom presets and 24 of the game's own engine settings (shadows, lights, bloom, motion blur, depth of field, ambient occlusion, flares, distortion, decals, fog, foliage, level of detail); all 76 keys in [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)
@@ -49,10 +53,10 @@ Leer en español: [README.es.md](README.es.md)
 - [x] Automatic settings for integrated GPUs (720p internal, 2x anisotropic filtering, no per-frame guest memory re-upload) for handhelds and laptops
 - [x] Android: the white objects/effects of the Vulkan renderer are fixed (0.2.3); object shadows are an option, off by default on Android
 - [x] VSync waits for the display on D3D12 and the 30 fps cap holds with VSync off (0.2.4)
-- [x] Split-screen campaign co-op on one PC (PC Options > Multiplayer > Split-screen players, then Co-op Campaign > Split-screen Campaign; each extra player needs a controller, or the keyboard as player 1), verified 2026-10-22 with two players
+- [x] Split-screen campaign co-op on one PC (PC Options > Multiplayer > Split-screen players, then Co-op Campaign > Split-screen Campaign; two players, the game's own limit; the second player needs a controller, or the keyboard as player 1), verified 2026-10-22 with two players
 - [x] System Link Versus: two copies on one PC joined a party and played Warzone on Avalanche on 2026-10-22
 - [x] System Link Horde: two copies on one PC played wave 1 on Avalanche on 2026-10-22 (SDK patches 0049 and 0050)
-- [ ] Android: a build from the repository reaches gameplay and joins a PC's System Link campaign, but is not finished yet; an experimental APK has been attached to every release since v0.1.2 (see [Android](#android-experimental)). The whole scene has drawn since October 15; it runs at about 30 fps for the first minutes from a cool start, falling to about 10-12.5 fps once the phone is warm ([docs/ANDROID.md](docs/ANDROID.md))
+- [ ] Android: a build from the repository reaches gameplay and joins a PC's System Link campaign, but is not finished yet; an experimental APK has been attached to every release since v0.1.2 (see [Android](#android-experimental)). The native renderer is on by default since 0.3.1. On a Galaxy S25 Ultra (720p internal, frame rate unlocked) the hospital runs at about 46-53 fps from a cool start and about 37 fps once the phone is warm (38 °C battery); the GPU is the limit, and it slows down as the phone heats up. Mali GPUs without the Vulkan feature `vertexPipelineStoresAndAtomics` (for example the Dimensity 8300's Mali-G720) start from 0.3.8 (issue #27) ([docs/ANDROID.md](docs/ANDROID.md))
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
 
@@ -68,7 +72,7 @@ Do not pirate the game.
 
 ### PC
 
-Requirements: Windows 10/11 x64 and a DirectX 12 GPU (developed on an AMD Radeon RX 7800 XT).
+Requirements: Windows 10/11 x64 and a DirectX 12 GPU, or a Vulkan GPU for the experimental Vulkan option (developed on an AMD Radeon RX 7800 XT).
 
 1. Download `gow2-recomp-<version>-win64.zip` from the [latest release](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest) (the `.apk` is the Android build).
 2. Unzip it anywhere and run `gow2.exe`. The exe is not signed, so Windows may show "Windows protected your PC": choose **More info**, then **Run anyway**.
@@ -94,7 +98,7 @@ Requirements: an arm64 phone with Android 10 or newer and Vulkan, and free space
 
 Instead of steps 2-3 you can copy the folder over USB from a PC, so that `default.xex` ends up in `Android/data/com.santiquiroz.gow2recomp/files/game/`, then tap **Check again**.
 
-The settings menu is called Device Options on Android (the gear in the top-right corner). If the game closes unexpectedly, the next launch opens **Launch options** first: a few settings, a **GPU driver** choice (on Adreno, a Turnip .zip made for AdrenoTools in place of the phone's driver), **Safe mode** (no sparse GPU memory, 1x resolution, bilinear filter, the phone's driver), **Reset settings** and **Share last log**. To open it on purpose, long-press the app icon and choose **Launch options**. Status and known limits: [docs/ANDROID.md](docs/ANDROID.md).
+The settings menu is called Device Options on Android (the gear in the top-right corner). If the game closes unexpectedly, the next launch opens **Launch options** first: a few settings, a **GPU driver** choice (on Adreno, a Turnip .zip made for AdrenoTools in place of the phone's driver), **Safe mode** (no sparse GPU memory, 1x resolution, bilinear filter, the phone's driver), **Reset settings** and **Share last log**. To open it on purpose, long-press the app icon and choose **Launch options**. Status and known limits: [docs/ANDROID.md](docs/ANDROID.md). In Device Options, drag a finger over the list to scroll it (0.3.8).
 
 ## Controls
 
@@ -128,8 +132,10 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 
 - `fullscreen` — run fullscreen or windowed.
 - `resolution_scale` — internal render resolution as a multiple of 720p: 1 = 720p, 2 = 1440p, 3 = 4K.
-- `present_effect` — final image scaling: `bilinear` with the stock runtime; `fsr`, `cas` and experimental temporal paths with a source-built runtime (see below).
+- `present_effect` — final image scaling: `bilinear`, `fsr` (AMD FSR 1 with sharpening, from a lower `resolution_scale`) or `cas` (sharpening only).
 - `vsync` — vertical sync.
+- `gow2_native_renderer` — `auto` (native on AMD, NVIDIA and Android), `on` or `off` (emulated EDRAM).
+- `gpu_backend` — `any` (Direct3D 12), `d3d12` or `vulkan` (experimental); needs a restart.
 - `gow2_unlock_fps` — lifts the game's 30 fps cap.
 - `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit).
 - `gow2_audio_volume` — master volume in percent.
@@ -138,7 +144,7 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `gow2_aniso16` — 16x anisotropic filtering.
 - `gow2_ao_upscaling_fix` — ambient occlusion without artifacts when scaled.
 - `gow2_dof_upscaling_fix` — depth of field without artifacts when scaled.
-- `gow2_temporal`, `gow2_upscaler` — temporal upscaling: `gow2_temporal = true` with `gow2_upscaler = "fsr4"` (Radeon RX 7000/9000) or `"fsr3"`; off by default.
+- `gow2_temporal`, `gow2_upscaler` — temporal upscaling: `gow2_temporal = true` with `gow2_upscaler = "fsr4"` (Radeon RX 7000/9000) or `"fsr3"`; off by default (Direct3D 12 only).
 - `mnk_sensitivity` — mouse sensitivity.
 - `gow2_save_dir` — folder for saves, profile settings and achievements; point it at a OneDrive, Google Drive or Dropbox folder to keep the campaign in the cloud ([docs/SAVES.md](docs/SAVES.md)).
 
@@ -148,13 +154,13 @@ On Windows, the game checks GitHub for a new release at most twice a day and sen
 
 ## Performance
 
-Measured on a Ryzen 9 7900X3D + Radeon RX 7800 XT, Act 1, `resolution_scale = 2` (1440p internal): about 90 presented frames per second on average, 1% low 55, GPU about 6 ms per frame (PresentMon 2.6, 30 s capture). These numbers are presented frames. For bug reports, `gow2_frame_log = true` logs FRAMESTATS frame times every 5 s and `d3d12_stats_log = true` logs D3D12 counters.
+Chapter 2 hospital, frame rate unlocked: about 260 fps at 1440p internal on a Ryzen 9 7900X3D + Radeon RX 7800 XT with the native renderer (0.3.8; 0.3.3-0.3.7 ran at about 150 because the native front end was on by default); 60 fps (the limit) with the GPU at about 55 % on a GTX 1070; about 46-53 fps from a cool start on a Galaxy S25 Ultra at 720p. Where the frame time goes on PC and Android, why the port needs more GPU than "Hollow", and the ranked plan to cut it: [docs/PERFORMANCE.md](docs/PERFORMANCE.md). For bug reports, `gow2_frame_log = true` logs FRAMESTATS frame times every 5 s and `d3d12_stats_log = true` logs D3D12 counters.
 
 ## Modern enhancements
 
 - Native resolution via `resolution_scale` (see Settings).
 - FSR: the release runtime is built with AMD FidelityFX. `present_effect = "fsr"` renders at a lower `resolution_scale` and upscales with FSR 1 plus sharpening; `"cas"` only sharpens. Measured with `resolution_scale = 1` and FSR 1 to 1440p: about 85 fps in Act 1.
-- Temporal upscaling: FSR 4.1 on Radeon RX 7000/9000 and FSR 3.1 on other GPUs, through AMD's signed FidelityFX SDK 2.3 DLLs, ported from the Gears of War: Judgment recompilation. Off by default: set `gow2_temporal = true` and `gow2_upscaler = "fsr4"` or `"fsr3"`, and lower `resolution_scale` so the upscaler has room to work. FSR 4 was checked in game on a Radeon RX 7800 XT (1280x704 upscaled to 2560x1408).
+- Temporal upscaling: FSR 4.1 on Radeon RX 7000/9000 and FSR 3.1 on other GPUs, through AMD's signed FidelityFX SDK 2.3 DLLs, ported from the Gears of War: Judgment recompilation. Off by default: choose it in PC Options > Graphics > Upscaler (or set `gow2_temporal = true` and `gow2_upscaler = "fsr4"` or `"fsr3"`), and lower `resolution_scale` so the upscaler has room to work. FSR 4 was checked in game on a Radeon RX 7800 XT (1280x704 upscaled to 2560x1408).
 - No DLSS in the release: NVIDIA's DLSS SDK license does not allow it in an open-source release (see THIRD_PARTY_NOTICES.md). Only builds made from source with your own copy of NVIDIA's DLSS SDK can use it. To use it with the release `gow2.exe`, build the SDK DLLs with `scripts/build-sdk.ps1` (without `-NoDlss`) and copy `rexruntime.dll`, `rexgpu-xenos.dll` and `nvngx_dlss.dll` next to it; the PC Options menu then offers DLSS. Confirmed on an RTX 5060 Ti (issue #18).
 - Texture packs: see the next section. Tested with a texture replaced by a version twice its size:
 
@@ -190,8 +196,9 @@ Versus works over System Link: in Multiplayer set Match Type to System Link, cre
 - **Hints show Xbox button pictures.** Menu prompts follow the device you used last, switching live: keyboard keys ([Space], [E]...) after keyboard or mouse input, the Xbox buttons after an Xbox controller, PlayStation buttons (PS4: Share/Options, PS5: Create/Options) after a DualShock or DualSense (`gow2_prompts` = `auto`; `keyboard`, `controller` and `playstation` fix one choice at launch; on Android the choice is still made at launch and there is no `playstation`). PlayStation controllers are now detected through SDL (before, only XInput pads counted); their buttons come from the keycap pack, so rebuild it with `Build keycap pack.cmd` (without a 0.3.5 pack they show Xbox buttons). Idea and SDK patch from @Flippage's Gears of War 3 recompilation (issue #25). A menu already on screen changes the next time it opens; the tutorial hint pictures have their Xbox button circles removed while keyboard prompts show (the hint text names your key), and any other art with buttons painted in still shows Xbox buttons. Gameplay prompts (pick up, reload, take cover) draw the button straight from the game's button font (issue #21): with the keycap pack they show your keys (confirmed in game in #21 with v0.3.4), and with text labels they keep the Xbox buttons ([docs/PROMPTS_GAMEPLAY_FINDINGS.md](docs/PROMPTS_GAMEPLAY_FINDINGS.md)).
 - **Green-looking lighting** has been reported on skin, lights and the menu flames; it has not been reproduced on the development PC yet. Screenshots are welcome in an issue.
 - **Co-op with three or four players is new.** Stage 2 has been tested with four copies on one PC: players 3 and 4 keep their bodies and weapons through chapter changes and travel, respawn, leave and rejoin, return after checkpoint loads, hide during cinematics, stay unharmed on foot while a hero rides, and are moved next to Marcus or Dom by the host when left far behind. Co-op splits, getting out of a vehicle, the Ride-Reaver section, joining during a cinematic, long real combat, four PCs over a LAN or the internet, and Android with 3+ players have not been tried ([docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md)).
-- **Every player needs the same release.** Everyone must run v0.1.2; with three or more players, campaigns with different co-op hashes stay hidden, while two-player co-op has no check and v0.1.1 is expected to crash at the end of Act 1 chapter 2.
+- **Every player needs the same release.** Everyone must run the same version; with three or more players, campaigns with different co-op hashes stay hidden, and two-player co-op has no check, so mixed versions can crash.
 - Only Act 1 has been played through. On 2026-10-22 `scripts/chapter-sweep.ps1` travelled to each of the 29 chapters and played a minute of scripted movement and fire in each with no missing-function crash; one run hit a GPU timeout (TDR) in chapter 23 that three later runs did not repeat. Playing acts 2-5 start to finish is still open (issue #8).
+- **Native renderer on some AMD cards:** on a Radeon RX 7900 XT, blocky dark patches can show on the floor where characters cast shadows (issue #26); Graphics > Renderer > Emulated (EDRAM) avoids them while it is investigated.
 
 ## Building from source
 
