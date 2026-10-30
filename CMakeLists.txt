@@ -103,7 +103,7 @@ if(GOW2_NATIVE_PROBE)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.3.10" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.3.11" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the
