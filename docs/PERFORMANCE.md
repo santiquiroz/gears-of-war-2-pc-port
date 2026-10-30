@@ -25,8 +25,10 @@ numbers refer to that tree (`out\sdk-build\rexglue-sdk` after `scripts\build-sdk
   default in 0.3.3, it snapshots the game's Direct3D state for every draw while the command processor
   still reads the console's command stream, so today it adds work instead of replacing it: 151 fps with it,
   263 without, same picture (hospital, 1440p internal, RX 7800 XT). With it off, the full frame on that PC
-  runs at the level the game code reaches with no drawing at all. 0.3.10 turns it off on Android too:
-  players on a Mali-G615 phone report far fewer stutters with it off (#27).
+  runs at the level the game code reaches with no drawing at all. 0.3.10 turned it off on Android too,
+  after players on a Mali-G615 phone reported far fewer stutters with it off (#27); 0.3.12 turns it back
+  on for phones without Mali: on an Adreno 825 (POCO F7, Turnip, #33) it ran 60 fps with it on and
+  23-30 fps, with GPU hangs, with it off.
 - **What is left:** CPU time per draw in the command processor (busy scenes, slower CPUs), render passes
   and memory traffic (phones), and heavier translated shaders (both). Section 5 ranks the fixes. Shaders
   specialised per draw and fewer render-pass breaks are the two big ones on Android; the cost per draw is
@@ -71,10 +73,10 @@ per pass, not per pixel.
 
 ### 3.1 PC: CPU time per draw on the GPU command thread
 
-With the native front end on (the PC default from 0.3.3 to 0.3.7, the Android default until 0.3.9), for each
-draw the game-side hook (`src/gow2_native_frontend.cpp`) snapshots the guest Direct3D device
-state, about 2.5 KB, plus the constant blocks the draw changed, and the SDK's command processor turns that
-snapshot back into Xbox 360 GPU registers:
+With the native front end on (the PC default from 0.3.3 to 0.3.7, the Android default until 0.3.9 and again
+from 0.3.12 on phones without Mali), for each draw the game-side hook (`src/gow2_native_frontend.cpp`)
+snapshots the guest Direct3D device state, about 2.5 KB, plus the constant blocks the draw changed, and the
+SDK's command processor turns that snapshot back into Xbox 360 GPU registers:
 
 - **2,415 dword compares per draw** against the register file, 2,048 of them the shader constants reached
   through 128 block pointers (`src/graphics/command_processor.cpp:1341-1364`), and a virtual
@@ -155,7 +157,7 @@ Gain ÷ effort, with the platform each one helps. "Status" says what is done.
 | 1 | **Native front end off by default on PC** (`gow2_native_frontend`): until the command processor stops reading the console's command stream, the per-draw snapshots are extra work | PC | 151 to 263 fps in the hospital (RX 7800 XT) | done | 0.3.8 |
 | 2 | **Write changed register ranges in bulk** instead of one virtual `WriteRegister` call per dword, on the command-stream path that PC uses again | PC, Android CPU | medium in busy scenes | low | planned (skipping unchanged constant blocks by pointer was tried on the front end path: no gain, section 6) |
 | 3 | **Draw buffer of the native front end** 4,096 to 8,192 draws a frame, so busy scenes stay on it where it is on | Android, PC when chosen | removes the fallback seen in #26 | done | 0.3.8 |
-| 4 | **Native front end off by default on Android too**: players on a Mali-G615 phone report far fewer stutters with it off (#27); on PC it cost 42 % of the frame | Android | fewer stutters on Mali (player report); Adreno not measured yet | low | done (0.3.10) |
+| 4 | **Native front end by GPU on Android**: off on Mali (players on a Mali-G615 report far fewer stutters, #27), on elsewhere (Adreno 825: 60 fps on vs 23-30 fps and GPU hangs off, #33); on PC it cost 42 % of the frame | Android | fewer stutters on Mali, about 2x fps on Adreno (player reports) | low | done (0.3.10, 0.3.12) |
 | 5 | **Fewer render pass breaks on phones**: gather the uploads and texture loads a pass needs before it starts, instead of breaking it for each | Android | large (most of the 26 passes end at an upload) | medium-high | planned |
 | 6 | **Load and store only what is needed**: `CLEAR` for full clears, `DONT_CARE` for depth and stencil not read again and for fully overwritten targets, a render area that fits the pass | Android | medium-large (memory traffic is power) | medium | planned |
 | 7 | **Shaders specialised per draw**: texture sign and gamma, bool constants and the alpha test as specialisation constants, so off features compile out and LRZ stays on | Android, PC | medium-large GPU time | medium-high | planned |

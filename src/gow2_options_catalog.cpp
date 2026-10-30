@@ -229,11 +229,12 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .help_en = "Direct3D takes the indexed draws (about 90 % of them), their state and their shaders straight "
                  "from the game's Direct3D calls; the rest still go through the emulated GPU commands. Console "
                  "commands replays every draw from the emulated GPU command stream. Automatic picks console "
-                 "commands, which run faster on PC and on the phones measured so far.",
+                 "commands on PC and on Mali phones, where they run faster, and Direct3D calls on other phones.",
       .help_es = "Direct3D toma los draws indexados (cerca del 90 %), su estado y sus shaders directamente de las "
                  "llamadas Direct3D del juego; el resto aún pasa por los comandos de la GPU emulada. Comandos de "
                  "consola reproduce todos los draws desde el flujo de comandos de la GPU emulada. Automático elige "
-                 "comandos de consola, que corren más rápido en PC y en los teléfonos medidos hasta ahora.",
+                 "comandos de consola en PC y en teléfonos con Mali, donde corren más rápido, y llamadas Direct3D "
+                 "en los demás teléfonos.",
       .choices = {
           C("auto", "Automatic", "Automático"),
           C("on", "Direct3D calls (native)", "Llamadas Direct3D (nativo)"),

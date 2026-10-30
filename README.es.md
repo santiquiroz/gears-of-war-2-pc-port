@@ -138,7 +138,7 @@ Las voces (inglés, español latino o francés; `gow2_voice_language`) y los sub
 - `vsync` — sincronización vertical.
 - `gow2_native_renderer` — `auto` (nativo en AMD, NVIDIA y Android), `on` u `off` (EDRAM emulada).
 - `gpu_backend` — `any` (Direct3D 12), `d3d12` o `vulkan` (experimental); requiere reiniciar.
-- `gow2_native_frontend` — origen de los draws: `auto` (comandos de consola, más rápidos en PC y en los teléfonos medidos hasta ahora), `on` u `off`.
+- `gow2_native_frontend` — origen de los draws: `auto` (comandos de consola en PC y en teléfonos con Mali, llamadas Direct3D en los demás teléfonos), `on` u `off`.
 - `gow2_skip_intro_movies` — salta los videos con los logos de Epic Games y Microsoft Game Studios al arrancar.
 - `gow2_launcher` — Windows: abre Opciones de PC antes de cargar el juego, con un botón Jugar (`false` entra directo al juego).
 - `gow2_texture_pack` — Windows: la carpeta del pack de texturas dentro de `texture_packs` junto al exe, `textures` para la carpeta `textures` antigua, `off`, o vacío para seguir `texture_replace`; requiere reiniciar.

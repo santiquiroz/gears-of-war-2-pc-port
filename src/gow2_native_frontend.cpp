@@ -20,7 +20,12 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -32,7 +37,8 @@
 
 REXCVAR_DEFINE_STRING(gow2_native_frontend, "auto", "Display",
                       "Native frontend: DrawIndexed draws reach the GPU from the device state instead of the "
-                      "library's packets. auto (on), on or off. Read once at start.");
+                      "library's packets. auto (off on PC and on Mali phones, on on other phones), on or off. "
+                      "Read once at start.");
 REXCVAR_DEFINE_BOOL(gow2_native_frontend_suppress, true, "Display",
                     "Native frontend: turn the library's state, constant and shader packets of each rewritten "
                     "draw into NOPs, so they reach the GPU only from the snapshot. Read once at start.");
@@ -76,13 +82,29 @@ constexpr uint32_t kDevBoolConsts = 10112;
 constexpr uint32_t kDevShaderA = 12692;  // pixel shader object
 constexpr uint32_t kDevShaderB = 12696;  // vertex shader object
 
+#if defined(__ANDROID__)
+bool IsMaliGpu() {
+  char value[PROP_VALUE_MAX]{};
+  __system_property_get("ro.hardware.egl", value);
+  return std::string_view(value).find("mali") != std::string_view::npos;
+}
+#endif
+
+bool AutoOn() {
+#if defined(__ANDROID__)
+  return !IsMaliGpu();
+#else
+  return false;
+#endif
+}
+
 bool Enabled() {
   // Read once: the mirror only stays right if it sees every constant write from the start.
   static const bool enabled = [] {
     const std::string mode = REXCVAR_GET(gow2_native_frontend);
-    // auto: off. On PC it cost 42 % of the frame (hospital, RX 7800 XT, 0.3.8: 151 fps on, 263 off, same
-    // picture); on a Mali-G615 phone players report far fewer stutters with it off (issue #27).
-    const bool on = mode == "on";
+    // auto: off on PC (42 % of the frame, RX 7800 XT 0.3.8: 151 fps on, 263 off) and on Mali (far fewer stutters
+    // off, #27); on on other phones (Adreno 825 Turnip, #33: 60 fps on, 23-30 fps and VK_ERROR_DEVICE_LOST off).
+    const bool on = mode == "on" || (mode == "auto" && AutoOn());
     REXLOG_INFO("NATIVEFRONT game gow2_native_frontend '{}' -> {}", mode, on ? "on" : "off");
     return on;
   }();
