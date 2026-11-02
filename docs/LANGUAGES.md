@@ -20,8 +20,12 @@ Design: [superpowers/specs/2026-10-26-voice-and-subtitle-language-design.md](sup
   `PlanVoiceSwap` (`src/gow2_voice_language.cpp`) picks the packages to serve and their TOC lines. The
   edited TOCs and an overrides list are written to `<cache>/voice/`, and SDK patch 0061
   (`GOW2_VFS_OVERRIDES_FILE`) serves them.
-- `GearGame_LOC_*` (UI content, with its own Korean and Chinese versions), `Startup_*` (hash-checked)
-  and the Coalesced bundles are never swapped.
+- `GearGame_LOC_<lang>` holds the fonts and the combat chatter (Marcus, Dom, Locust drones, Anya). Its
+  fonts and textures are the same in `int`, `ESM` and `FRA`, so it follows the voice choice among those.
+  `GearGame_LOC_KOR` and `GearGame_LOC_CHT` carry their own fonts and stay.
+- `Startup_*` is hash-checked and never swapped. It holds one Marcus line ("Bring it") plus interface
+  and weapon sounds, which stay in the text language.
+- The Coalesced bundles are never swapped.
 
 ## Measured on the retail USA multi-language disc (2026-10-26)
 
@@ -54,6 +58,8 @@ Chapter 1 runs (`scripts/chapter-sweep.ps1 -From 1 -To 1`):
 | `--user_language=1 --gow2_voice_language=es` | `VOICES text INT, voices ESM: 369 packages swapped` | chapter loads, English subtitle on screen ("They're getting bolder. Those Gears were guarding Pomeroy Depot."), drawn from a Latin American Spanish voice package |
 | `--user_language=5 --gow2_voice_language=en`, cache under a non-ASCII folder | 369 swapped, the overrides file read from that folder | boots |
 | same folder, then `--gow2_voice_language=auto` | `voices same as text: nothing swapped` | no overrides file line, `overrides.txt` deleted |
+
+Since 0.3.13 `GearGame_LOC` also follows the voices, so those runs would log 370 packages swapped (plus the TOCs).
 
 Not checked yet: a Spanish subtitle on screen while English voices play. The English package does
 carry the Latin American lines ("Te informo más tarde, Dom. Debo regresar a Control."), and the English

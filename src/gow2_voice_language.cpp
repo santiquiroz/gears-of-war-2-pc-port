@@ -33,9 +33,10 @@ struct Package {
   TocEntry entry;
   std::string base;
   std::string lang;
+  bool ui = false;
 };
 
-// <B>_LOC_<L>.xxx with B not GearGame; base and lang come back lowercased.
+// <B>_LOC_<L>.xxx; base and lang come back lowercased.
 bool ParseVoiceName(std::string_view name, std::string& base, std::string& lang) {
   std::string lower = Lower(name);
   if (!lower.ends_with(".xxx")) return false;
@@ -44,7 +45,7 @@ bool ParseVoiceName(std::string_view name, std::string& base, std::string& lang)
   if (loc == std::string::npos || loc == 0 || loc + 5 == lower.size()) return false;
   base = lower.substr(0, loc);
   lang = lower.substr(loc + 5);
-  return base != "geargame";
+  return true;
 }
 
 std::vector<Package> CollectPackages(const std::vector<TocFile>& tocs) {
@@ -63,6 +64,7 @@ std::vector<Package> CollectPackages(const std::vector<TocFile>& tocs) {
         pkg.toc = t;
         pkg.offset = begin;
         pkg.length = length;
+        pkg.ui = pkg.base == "geargame";
         pkg.entry = std::move(*entry);
         packages.push_back(std::move(pkg));
       }
@@ -79,7 +81,23 @@ const Package* Find(const std::vector<Package>& packages, std::string_view base,
 }
 
 bool HasVoiceSet(const std::vector<Package>& packages, std::string_view lang) {
-  return std::any_of(packages.begin(), packages.end(), [&](const Package& pkg) { return pkg.lang == lang; });
+  return std::any_of(packages.begin(), packages.end(),
+                     [&](const Package& pkg) { return !pkg.ui && pkg.lang == lang; });
+}
+
+// GearGame_LOC_KOR and _CHT carry their own fonts, so a UI package only lands on a language with voices.
+const Package* UiTarget(const std::vector<Package>& packages, std::string_view text) {
+  const Package* target = Find(packages, "geargame", text);
+  if (!target) target = Find(packages, "geargame", "int");
+  if (!target || !HasVoiceSet(packages, target->lang)) return nullptr;
+  return target;
+}
+
+const Package* VoiceTarget(const std::vector<Package>& packages, const Package& source, std::string_view text) {
+  if (source.ui) return UiTarget(packages, text);
+  const Package* target = Find(packages, source.base, text);
+  if (!target) target = Find(packages, source.base, "int");
+  return target;
 }
 
 struct LineEdit {
@@ -162,8 +180,7 @@ VoicePlan PlanVoiceSwap(const std::vector<TocFile>& tocs, std::string_view text_
   std::vector<const Package*> targeted;
   for (const auto& source : packages) {
     if (source.lang != voice) continue;
-    const Package* target = Find(packages, source.base, text);
-    if (!target) target = Find(packages, source.base, "int");
+    const Package* target = VoiceTarget(packages, source, text);
     if (!target || target == &source) continue;
     if (std::find(targeted.begin(), targeted.end(), target) != targeted.end()) continue;
     targeted.push_back(target);
