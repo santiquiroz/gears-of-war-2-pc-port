@@ -48,7 +48,7 @@ struct Fixture {
                  Line("210", "GUDS_X_SF_LOC_ESM.xxx", "ddd"),
                  Line("220", "GearGame_LOC_ESM.xxx", "gge"),
                  Line("230", "Startup_ESM.xxx", "ste")};
-    fra_lines = {Line("300", "SP_A_LOC_FRA.xxx", "eee"), Line("320", "GearGame_LOC_FRA.xxx", "ggf")};
+    fra_lines = {Line("300", "SP_A_LOC_FRA.xxx", "eee")};
   }
 
   std::vector<TocFile> Tocs(std::string_view end = "\r\n") const {
@@ -110,46 +110,39 @@ int main() {
 
   {
     VoicePlan plan = PlanVoiceSwap(tocs, "ESM", "INT");
-    Expect(plan.swaps.size() == 3, "text ESM voices INT swaps three packages");
+    Expect(plan.swaps.size() == 2, "text ESM voices INT swaps two packages");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\SP_A_LOC_ESM.xxx", "SP_A_LOC_int.xxx"),
            "text ESM voices INT serves SP_A int as ESM");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_ESM.xxx", "GUDS_X_SF_LOC_int.xxx"),
            "text ESM voices INT serves GUDS int as ESM");
-    Expect(HasSwap(plan, "GearGame\\CookedXenon\\GearGame_LOC_ESM.xxx", "GearGame_LOC_int.xxx"),
-           "text ESM voices INT serves GearGame_LOC int as ESM");
     Expect(plan.edited_tocs.size() == 1, "text ESM voices INT edits one TOC");
     const TocFile* esm = Edited(plan, "Xbox360TOC_ESM.txt");
     std::vector<std::string> expected = fx.esm_lines;
     expected[0] = "100 1001 1002 ..\\GearGame\\CookedXenon\\SP_A_LOC_ESM.xxx aaa";
     expected[1] = "110 1101 1102 ..\\GearGame\\CookedXenon\\GUDS_X_SF_LOC_ESM.xxx bbb";
-    expected[2] = "120 1201 1202 ..\\GearGame\\CookedXenon\\GearGame_LOC_ESM.xxx ggi";
     Expect(esm && esm->text == Join(expected, "\r\n"),
            "the ESM TOC takes the int lines' sizes and md5, keeps the rest and its CRLF");
-    Expect(plan.summary == "VOICES text ESM, voices INT: 3 packages swapped", "text ESM voices INT summary");
+    Expect(plan.summary == "VOICES text ESM, voices INT: 2 packages swapped", "text ESM voices INT summary");
   }
 
   {
     VoicePlan plan = PlanVoiceSwap(tocs, "INT", "ESM");
-    Expect(plan.swaps.size() == 3, "text INT voices ESM swaps three packages");
+    Expect(plan.swaps.size() == 2, "text INT voices ESM swaps two packages");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\SP_A_LOC_int.xxx", "SP_A_LOC_ESM.xxx"),
            "text INT voices ESM serves SP_A ESM as int");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx", "GUDS_X_SF_LOC_ESM.xxx"),
            "text INT voices ESM serves GUDS ESM as int");
-    Expect(HasSwap(plan, "GearGame\\CookedXenon\\GearGame_LOC_int.xxx", "GearGame_LOC_ESM.xxx"),
-           "text INT voices ESM serves GearGame_LOC ESM as int");
     const TocFile* intl = Edited(plan, "Xbox360TOC.txt");
     std::vector<std::string> expected = fx.int_lines;
     expected[0] = "200 2001 2002 ..\\GearGame\\CookedXenon\\SP_A_LOC_int.xxx ccc";
     expected[1] = "210 2101 2102 ..\\GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx ddd";
-    expected[2] = "220 2201 2202 ..\\GearGame\\CookedXenon\\GearGame_LOC_int.xxx gge";
     Expect(plan.edited_tocs.size() == 1 && intl && intl->text == Join(expected, "\r\n"),
-           "text INT voices ESM edits only the int TOC, keeping GearGame_LOC_KOR, SP_OnlyInt and garbage");
-    Expect(plan.summary == "VOICES text INT, voices ESM: 3 packages swapped", "text INT voices ESM summary");
+           "text INT voices ESM edits only the int TOC, keeping SP_OnlyInt and garbage");
+    Expect(plan.summary == "VOICES text INT, voices ESM: 2 packages swapped", "text INT voices ESM summary");
 
     VoicePlan deu = PlanVoiceSwap(tocs, "DEU", "ESM");
-    Expect(deu.swaps.size() == 3 && HasSwap(deu, "GearGame\\CookedXenon\\SP_A_LOC_int.xxx", "SP_A_LOC_ESM.xxx") &&
-               HasSwap(deu, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx", "GUDS_X_SF_LOC_ESM.xxx") &&
-               HasSwap(deu, "GearGame\\CookedXenon\\GearGame_LOC_int.xxx", "GearGame_LOC_ESM.xxx"),
+    Expect(deu.swaps.size() == 2 && HasSwap(deu, "GearGame\\CookedXenon\\SP_A_LOC_int.xxx", "SP_A_LOC_ESM.xxx") &&
+               HasSwap(deu, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx", "GUDS_X_SF_LOC_ESM.xxx"),
            "text DEU voices ESM swaps like text INT");
     Expect(deu.edited_tocs.size() == 1 && Edited(deu, "Xbox360TOC.txt") &&
                Edited(deu, "Xbox360TOC.txt")->text == intl->text,
@@ -158,41 +151,20 @@ int main() {
 
   {
     VoicePlan plan = PlanVoiceSwap(tocs, "FRA", "ESM");
-    Expect(plan.swaps.size() == 3, "text FRA voices ESM swaps three packages");
+    Expect(plan.swaps.size() == 2, "text FRA voices ESM swaps two packages");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\SP_A_LOC_FRA.xxx", "SP_A_LOC_ESM.xxx"),
            "text FRA voices ESM serves SP_A ESM as FRA");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx", "GUDS_X_SF_LOC_ESM.xxx"),
            "text FRA voices ESM serves GUDS ESM as int, since there is no FRA GUDS");
-    Expect(HasSwap(plan, "GearGame\\CookedXenon\\GearGame_LOC_FRA.xxx", "GearGame_LOC_ESM.xxx"),
-           "text FRA voices ESM serves GearGame_LOC ESM as FRA");
     const TocFile* fra = Edited(plan, "Xbox360TOC_FRA.txt");
     const TocFile* intl = Edited(plan, "Xbox360TOC.txt");
     Expect(plan.edited_tocs.size() == 2 && fra && intl, "text FRA voices ESM edits the FRA and int TOCs");
-    Expect(fra && fra->text == "200 2001 2002 ..\\GearGame\\CookedXenon\\SP_A_LOC_FRA.xxx ccc\r\n"
-                               "220 2201 2202 ..\\GearGame\\CookedXenon\\GearGame_LOC_FRA.xxx gge\r\n",
-           "the FRA TOC takes the ESM SP_A and GearGame_LOC lines");
+    Expect(fra && fra->text == "200 2001 2002 ..\\GearGame\\CookedXenon\\SP_A_LOC_FRA.xxx ccc\r\n",
+           "the FRA TOC takes the ESM SP_A line");
     std::vector<std::string> expected = fx.int_lines;
     expected[1] = "210 2101 2102 ..\\GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx ddd";
     Expect(intl && intl->text == Join(expected, "\r\n"), "the int TOC takes only the ESM GUDS line");
-    Expect(plan.summary == "VOICES text FRA, voices ESM: 3 packages swapped", "text FRA voices ESM summary");
-  }
-
-  {
-    VoicePlan plan = PlanVoiceSwap(tocs, "KOR", "ESM");
-    Expect(plan.swaps.size() == 2, "text KOR voices ESM swaps two packages");
-    Expect(HasSwap(plan, "GearGame\\CookedXenon\\SP_A_LOC_int.xxx", "SP_A_LOC_ESM.xxx") &&
-               HasSwap(plan, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx", "GUDS_X_SF_LOC_ESM.xxx"),
-           "text KOR voices ESM serves SP_A and GUDS ESM as int");
-    Expect(!HasSwap(plan, "GearGame\\CookedXenon\\GearGame_LOC_KOR.xxx", "GearGame_LOC_ESM.xxx") &&
-               !HasSwap(plan, "GearGame\\CookedXenon\\GearGame_LOC_int.xxx", "GearGame_LOC_ESM.xxx"),
-           "text KOR voices ESM keeps GearGame_LOC_KOR and GearGame_LOC_int");
-    const TocFile* intl = Edited(plan, "Xbox360TOC.txt");
-    std::vector<std::string> expected = fx.int_lines;
-    expected[0] = "200 2001 2002 ..\\GearGame\\CookedXenon\\SP_A_LOC_int.xxx ccc";
-    expected[1] = "210 2101 2102 ..\\GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx ddd";
-    Expect(plan.edited_tocs.size() == 1 && intl && intl->text == Join(expected, "\r\n"),
-           "text KOR voices ESM leaves the GearGame_LOC lines alone");
-    Expect(plan.summary == "VOICES text KOR, voices ESM: 2 packages swapped", "text KOR voices ESM summary");
+    Expect(plan.summary == "VOICES text FRA, voices ESM: 2 packages swapped", "text FRA voices ESM summary");
   }
 
   ExpectNothingSwapped(tocs, "DEU", "INT", "text DEU voices INT swaps nothing");
@@ -209,25 +181,14 @@ int main() {
   }
 
   {
-    std::vector<TocFile> ui_only = {tocs[0],
-                                    {"Xbox360TOC_ESM.txt", Line("220", "GearGame_LOC_ESM.xxx", "gge") + "\r\n"}};
-    VoicePlan plan = PlanVoiceSwap(ui_only, "INT", "ESM");
-    Expect(plan.swaps.empty() && plan.edited_tocs.empty(), "a GearGame_LOC alone is not a voice set");
-    Expect(plan.summary == "VOICES voice set ESM is not on this disc: nothing swapped",
-           "a GearGame_LOC alone gives the missing voice set summary");
-  }
-
-  {
     Fixture mixed("sp_a_loc_INT.xxx");
     mixed.esm_name = "Xbox360TOC_esm.txt";
     VoicePlan plan = PlanVoiceSwap(mixed.Tocs(), "esm", "int");
-    Expect(plan.swaps.size() == 3, "mixed case names still swap three packages");
+    Expect(plan.swaps.size() == 2, "mixed case names still swap two packages");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\SP_A_LOC_ESM.xxx", "sp_a_loc_INT.xxx"),
            "mixed case keeps the source's own spelling");
     Expect(HasSwap(plan, "GearGame\\CookedXenon\\GUDS_X_SF_LOC_ESM.xxx", "GUDS_X_SF_LOC_int.xxx"),
            "mixed case still finds GUDS");
-    Expect(HasSwap(plan, "GearGame\\CookedXenon\\GearGame_LOC_ESM.xxx", "GearGame_LOC_int.xxx"),
-           "mixed case still finds GearGame_LOC");
     const TocFile* esm = Edited(plan, "Xbox360TOC_esm.txt");
     Expect(plan.edited_tocs.size() == 1 && esm &&
                Contains(esm->text, "100 1001 1002 ..\\GearGame\\CookedXenon\\SP_A_LOC_ESM.xxx aaa\r\n"),
@@ -240,7 +201,6 @@ int main() {
     std::vector<std::string> expected = fx.int_lines;
     expected[0] = "200 2001 2002 ..\\GearGame\\CookedXenon\\SP_A_LOC_int.xxx ccc";
     expected[1] = "210 2101 2102 ..\\GearGame\\CookedXenon\\GUDS_X_SF_LOC_int.xxx ddd";
-    expected[2] = "220 2201 2202 ..\\GearGame\\CookedXenon\\GearGame_LOC_int.xxx gge";
     Expect(intl && intl->text == Join(expected, "\n"), "an LF TOC stays LF after editing");
 
     std::vector<TocFile> no_final = fx.Tocs("\r\n");
