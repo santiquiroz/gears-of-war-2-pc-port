@@ -51,4 +51,6 @@ class FramePacer {
   bool has_deadline_ = false;
 };
 
+void BulkSleepNanos(int64_t nanos);
+
 }  // namespace rex::glue

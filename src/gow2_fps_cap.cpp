@@ -27,18 +27,11 @@ REXCVAR_DEFINE_INT32(gow2_fps_cap, 0, "Display",
     .range(0, 1000);
 
 namespace rex::glue {
-namespace {
-
-int64_t SteadyNowNanos() {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(
-             std::chrono::steady_clock::now().time_since_epoch())
-      .count();
-}
 
 void BulkSleepNanos(int64_t nanos) {
 #ifdef _WIN32
-  static HANDLE timer = nullptr;
-  static bool tried = false;
+  thread_local HANDLE timer = nullptr;
+  thread_local bool tried = false;
   if (!tried) {
     tried = true;
     timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
@@ -59,6 +52,14 @@ void BulkSleepNanos(int64_t nanos) {
   req.tv_nsec = nanos % 1000000000;
   clock_nanosleep(CLOCK_MONOTONIC, 0, &req, nullptr);
 #endif
+}
+
+namespace {
+
+int64_t SteadyNowNanos() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
 }
 
 void PreciseSleepNanos(int64_t nanos) {

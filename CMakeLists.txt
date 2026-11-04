@@ -64,6 +64,7 @@ set(GOW2_SOURCES
     src/gow2_options_overlay.cpp
     src/gow2_host_ui.cpp
     src/gow2_fps_cap.cpp
+    src/gow2_idle_worker.cpp
     src/gow2_audio_volume.cpp
     src/gow2_frame_stats.cpp
     src/gow2_fps_counter.cpp
