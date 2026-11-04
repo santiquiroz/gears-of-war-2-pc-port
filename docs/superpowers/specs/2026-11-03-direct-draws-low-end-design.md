@@ -90,7 +90,30 @@ Step 0 decides the order of the rest; each later step has its own exit check.
    First A/B, front end off, full clock (`out/perf/four-core/`): all cores 230-250 fps, p99 frame
    time 8-11 ms; 4 cores 145 fps, p99 20-27 ms. The SDK's "Too few processor cores" check counted the
    system's processors, not the mask, so its affinity skip did not trigger; the mask was set by a
-   watcher after launch. Next: the same with the clock lowered, and per-thread CPU time.
+   watcher after launch.
+
+   Result of step 0 (2026-11-03, `out/perf/step0/`, hospital, CPU % of one core per host thread):
+
+   | Run | fps | busiest guest thread | render thread | GPU command thread |
+   |---|---|---|---|---|
+   | engine cap (30) | 30 | 105 % | 21 % (7.0 ms/frame) | 12 % (3.9 ms/frame) |
+   | gow2 cap 60 | 60 | 105 % | 38 % (6.5 ms/frame) | 26 % (4.3 ms/frame) |
+   | unlocked, front end off | 180-200 | 106 % | 97 % (5.4 ms/frame) | 58 % (3.2 ms/frame) |
+   | unlocked, front end on | 153 | 106 % | 86 % | 64 % |
+   | 4 cores, clock limit 45 % (perf counter 67 %) | 142-150 | 103 % | 80 % | 59 % |
+
+   - One guest thread (handle F80000C8) uses a whole core at every frame rate. Stack samples (cdb,
+     non-invasive) put it in `sub_823348E0`, called from `sub_82334BA8`: a loop that polls a queue
+     and the guest clock (`sub_82AA7B78` = QueryPerformanceCounter) and never blocks. On a 4-thread
+     CPU that is a quarter of the machine gone before the game draws anything.
+   - At 30 fps the render thread needs 7 ms and the command thread 4 ms per frame: the draw path is
+     not what saturates. The front end on costs fps on PC (153 vs 180-200) without cutting either.
+   - The power plan cannot slow this CPU below 67 % of its rated clock, so the day-to-day proxy cannot
+     reach the i5-3570's speed; CPU time per thread is the working measure, and the #37 reporter's
+     test builds the real one.
+
+   So the order is: step 4 first, aimed at the guest thread above (not only the SDK's waits); then
+   step 1 and step 2 only if the reporter's numbers still show the render thread saturated.
 1. **Game side: no packets for hooked draws.** For draws the front end takes, the library's flush does
    not build console packets; the device's dirty-mask bookkeeping is kept; the ring carries only the
    marker and the packets the snapshot does not cover (the S2b plan in
@@ -104,9 +127,11 @@ Step 0 decides the order of the rest; each later step has its own exit check.
    `MsaaFillAt1x` and `gpu_native`).
 3. **Shader binding cache** keyed by guest address and size, invalidated on packet shader loads and on
    the memory watch, so alternating shaders skip the XXH3 of the whole microcode.
-4. **Spin waits on small CPUs.** With fewer than 6 logical processors: the GPU command thread and
-   `WAIT_REG_MEM` block on their event after a short spin instead of 500 yields; the frame cap sleeps
-   instead of spinning. Kept as is on 6 or more.
+4. **Spin waits on small CPUs.** The guest polling loop `sub_823348E0` (thread F80000C8) blocks or
+   sleeps briefly when it has no work, on every machine if it costs nothing measurable, else on
+   fewer than 6 logical processors. With fewer than 6: the GPU command thread and `WAIT_REG_MEM`
+   block on their event after a short spin instead of 500 yields; the frame cap sleeps instead of
+   spinning. Kept as is on 6 or more.
 
 Order after step 0: if the render thread saturates, 1 then 2; if the command thread does, 2 then 1; if
 spinning threads do, 4 first. Step 3 goes with whichever of 1 or 2 lands second.
