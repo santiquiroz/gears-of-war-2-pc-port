@@ -1,0 +1,141 @@
+# Direct draws for low-end PCs: design
+
+Date: 2026-11-03. Status: approved (the owner delegated the open calls on 2026-11-03).
+
+## Intent
+
+Players with old or 4-core CPUs (issue #37: i5-3570, 4 cores and 4 threads, GTX 970) run the port at
+20-30 fps with the CPU at 100 % and the GPU at about 10 %. The GPU is not the limit; CPU time is. The
+owner wants the port playable on cheap PCs first, and expects the "native GPU call" (the game's Direct3D
+draws reaching the host GPU without the Xbox 360 command emulation in between) to be what fixes it.
+
+Success: on a 4-core, 4-thread CPU, the chapter 2 hospital (the scene of the PC numbers in
+`docs/PERFORMANCE.md`) holds 30 fps, Windows, Direct3D 12, same picture as today.
+
+How it is measured:
+
+- Day to day, on the 7900X3D: 4 physical cores without SMT (affinity mask 0x55) plus the power
+  plan's maximum processor state lowered until one core is about as fast as an i5-3570's. Masking
+  cores alone is not a proxy: on 2026-11-03 the 4-core run still gave about 145 fps in the hospital.
+- Every step also reports CPU milliseconds per frame on the game render thread and the GPU command
+  thread, at full clock and on the proxy. A step counts only if it cuts them.
+- At the end, test builds go to the #37 reporter (i5-3570) to confirm on the real machine.
+
+## Goals
+
+- Cut the CPU time per frame on 4-core CPUs until the success target holds.
+- The draw path: the game's Direct3D state reaches the host backend in bulk, without per-dword
+  compares and virtual register writes, and without the game's Direct3D library building console
+  packets that the port then throws away.
+- Threads that wait by spinning stop stealing cores from the threads that work when the CPU has fewer
+  than 6 logical processors.
+
+## Non-goals
+
+- Phones (Android stays as it is; the front end default by GPU does not change).
+- Higher frame rates on fast PCs (they may improve; not a target).
+- Shaders compiled ahead of time (XenosRecomp, #22): later, separate design.
+- Removing the Xbox 360 register file from the SDK: every backend subsystem (pipeline cache, render
+  target cache, texture cache, primitive processor, `draw_util`) reads `const RegisterFile&`; rewriting
+  about six classes is out of scope. The register file stays the backing store; it is filled in bulk.
+- Proton: measured and reported, not a target (vkd3d-proton adds its own CPU cost; Graphics API →
+  Vulkan avoids it).
+
+## Anti-goals (a failure even if fps goes up)
+
+- Any change in the picture (image diff above 0.02 against the current default path in the hospital
+  and chapters 1, 4, 8).
+- Adreno phones losing their current 60 fps or getting GPU hangs back (#33): the front end is on there.
+- An option hidden or forced by vendor in the menu: Automatic picks the best default, every machine can
+  choose. Automatic may decide by the number of logical processors (the owner agreed on 2026-11-03).
+- System Link / co-op desyncs or saves that stop loading.
+
+## Constraints
+
+- SDK changes stay numbered patches in `sdk/patches`; no layout change of exported classes and no new
+  virtual functions (the exe is built against unpatched headers). Use the existing virtuals
+  (`WriteRegistersFromMem` on D3D12 and Vulkan) and file-local code.
+- Game runs are idle-gated (`out/idle-gate`, `scripts/chapter-sweep.ps1`) or explicitly approved.
+- Every step keeps the current path selectable (a cvar) until it passes its exit check, then becomes
+  the default where it measured better.
+- Delegation: implementation goes to external lanes under contract; Claude reviews, verifies, commits.
+
+## What exists (map from 2026-11-01, read-only research)
+
+- Front end (`src/gow2_native_frontend.cpp`): hooks `sub_82980B20`, `sub_82980210`, `sub_8297FD30`,
+  Clear `sub_82981ED8`; per draw snapshots the guest `D3DDevice` (struct `NativeDrawSnapshot`, 2,560
+  bytes, `src/gow2_native_frontend_snapshot.h`) with 366 byte-swapped loads, two copies of the state,
+  and walks, NOPs and compacts the packets the library already built (`sub_8298F600` flush). The draw's
+  packets become a type-3 NOP marker in the ring pointing at the snapshot.
+- SDK consumer (patches 0056-0058, `CommandProcessor::ExecutePacketType3_NOP`): compares 2,415 dwords
+  against the register file and calls the virtual `WriteRegister` per changed dword, then runs
+  `ExecutePacketType3Draw` and `IssueDraw`.
+- With the front end on, the PC frame drops from 263 to 151 fps (RX 7800 XT, hospital); 0.3.8 turned it
+  off on PC. The research infers most of that cost is on the game's render thread (the hook plus the
+  library still building every packet), not on the command processor: prototype 0064 skipped unchanged
+  constant blocks on the command-processor side with no gain. Not measured yet.
+- Spin waits: the GPU command thread yields 500 times before each 5 ms wait
+  (`command_processor.cpp:599`); `WAIT_REG_MEM` yields when vsync is off; the frame cap spins its last
+  0.5 ms (`src/gow2_fps_cap.cpp:66`). With fewer than 6 logical processors the SDK skips thread
+  affinities (`xthread.cpp:897-903`).
+
+## The plan, decided
+
+Step 0 decides the order of the rest; each later step has its own exit check.
+
+0. **Measure on 4 cores.** Process affinity to 4 physical cores without SMT (mask 0x55 on the 7900X3D)
+   plus `--ignore_thread_affinities=true`, frame rate unlocked, hospital: fps, and CPU time per thread
+   (game render thread, GPU command thread, the other guest threads, audio) with the front end off
+   (today's PC default) and on. Output: which threads saturate the 4 cores, and how far from 30 fps.
+   First A/B, front end off, full clock (`out/perf/four-core/`): all cores 230-250 fps, p99 frame
+   time 8-11 ms; 4 cores 145 fps, p99 20-27 ms. The SDK's "Too few processor cores" check counted the
+   system's processors, not the mask, so its affinity skip did not trigger; the mask was set by a
+   watcher after launch. Next: the same with the clock lowered, and per-thread CPU time.
+1. **Game side: no packets for hooked draws.** For draws the front end takes, the library's flush does
+   not build console packets; the device's dirty-mask bookkeeping is kept; the ring carries only the
+   marker and the packets the snapshot does not cover (the S2b plan in
+   `2026-10-23-full-native-renderer-design.md`). The snapshot is written once, straight into the arena,
+   in raw guest byte order (`memcpy` instead of 366 swapped loads), with bitmasks of the fetch and bool
+   slots that changed.
+2. **SDK side: bulk apply.** In the NOP handler, `memcpy` the non-constant groups into the register
+   file (no side effects there), compare fetch per 6-dword slot and notify only changed slots, skip ALU
+   blocks whose pointer did not change and push the rest through `WriteRegistersFromMem`, then build the
+   index buffer info from the draw words and call `IssueDraw` directly (keeping the viz-query check,
+   `MsaaFillAt1x` and `gpu_native`).
+3. **Shader binding cache** keyed by guest address and size, invalidated on packet shader loads and on
+   the memory watch, so alternating shaders skip the XXH3 of the whole microcode.
+4. **Spin waits on small CPUs.** With fewer than 6 logical processors: the GPU command thread and
+   `WAIT_REG_MEM` block on their event after a short spin instead of 500 yields; the frame cap sleeps
+   instead of spinning. Kept as is on 6 or more.
+
+Order after step 0: if the render thread saturates, 1 then 2; if the command thread does, 2 then 1; if
+spinning threads do, 4 first. Step 3 goes with whichever of 1 or 2 lands second.
+
+## Exit checks
+
+- Picture: image diff at most 0.02 against the default path in the hospital and chapters 1, 4, 8.
+- Stability: 10-minute soak in the hospital; one System Link session between two instances.
+- Performance: the 4-core hospital fps from step 0, after each step. Target 30 fps.
+- Android: one Adreno run (front end on) does not regress; Mali unaffected (front end off).
+- Default: the front end becomes the PC default again only if, on both 4 cores and all cores, it is at
+  least as fast as the console-command path.
+
+## Calls made in the design (not the owner's; check them)
+
+- If step 0 shows a bottleneck outside the three cases (game simulation threads, audio), or the target
+  already holds, the work stops after step 0 and goes back to the owner with the numbers.
+- If one step reaches the target, the remaining steps are still built only where they cut CPU time per
+  frame measurably on 4 cores; otherwise they stop there.
+- Step 1 patches the guest flush so it skips only the emitters the snapshot covers (the uncovered
+  packets, about 1,070 a frame, keep coming from the library as today). Reimplementing the flush in C++
+  is out unless that measures too small.
+- "Fewer than 6 logical processors" (step 4) counts the processors in the process affinity mask, so a
+  masked test run triggers it.
+
+## Left to the builder
+
+- Names of files, functions, cvars and patch numbers (next free after the last in `sdk/patches`).
+- How the per-thread CPU time is taken in step 0 (ETW, `GetThreadTimes` sampling, or the SDK's
+  counters).
+- The exact spin length before blocking in step 4.
+- Whether steps 1 and 2 share one snapshot format bump (NDS4) or two.
