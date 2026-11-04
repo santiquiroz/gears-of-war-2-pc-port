@@ -115,7 +115,8 @@ Step 0 decides the order of the rest; each later step has its own exit check.
    Step 4, first part, done on 2026-11-03 (136d18c, `out/perf/step4/`): the worker sleeps 1 ms when
    its queue is empty (`gow2_idle_worker_sleep`, on everywhere). At 30 fps the game's CPU drops from
    166 % to 69 % of one core; on 4 cores unlocked, 150 to 184 fps (p99 22.9 to 20.5 ms). A 12-minute
-   hospital soak held 30 fps with no errors. Still open for this part: one Adreno run.
+   hospital soak held 30 fps with no errors. Shipped in 0.3.13 without the Adreno run (no Adreno phone
+   available); Android reports from players stand in for it.
 
    So the order is: step 4 first, aimed at the guest thread above (not only the SDK's waits); then
    step 1 and step 2 only if the reporter's numbers still show the render thread saturated.
