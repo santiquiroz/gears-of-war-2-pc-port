@@ -398,9 +398,22 @@ function Assert-NoNgx([string]$StageDir) {
     Fail 'Refusing to package: NVIDIA DLSS (NGX) must not ship in the release. Build the DLLs with scripts\build-sdk.ps1 -NoDlss and package with -SdkDir out\sdk-nodlss (the default).'
 }
 
+# Windows PowerShell 5.1's Compress-Archive writes '\' in entry names, which Linux unzip keeps
+# as part of the file name (issue #37); entries are written by hand with '/' instead.
 function New-ReleaseZip([string]$StageDir, [string]$ZipPath) {
     if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
-    Compress-Archive -Path $StageDir -DestinationPath $ZipPath -Force
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $stage = (Resolve-Path $StageDir).Path.TrimEnd('\')
+    $prefix = Split-Path -Leaf $stage
+    $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, 'Create')
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $stage -Recurse -File) {
+            $entry = $prefix + '/' + $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $entry, 'Optimal') | Out-Null
+        }
+    } finally {
+        $zip.Dispose()
+    }
 }
 
 function Write-HashFile([string]$ZipPath, [string]$HashPath) {
