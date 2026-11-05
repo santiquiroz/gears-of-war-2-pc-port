@@ -1,0 +1,85 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 27eb041..800ded1 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -1336,32 +1336,59 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+       ++stats.verified;
+     }
+ 
+-    // Through WriteRegister, like type-0 packets, so the backend's register write hooks run; only the
+-    // registers that change, since a fetch constant write invalidates that slot's cached resources.
+-    auto write = [this](uint32_t first, const uint32_t* values, uint32_t n) {
+-      for (uint32_t i = 0; i < n; ++i) {
+-        if (register_file_->values[first + i] != values[i]) {
+-          WriteRegister(first + i, values[i]);
++    // No backend hooks writes to 0x2000-0x23FF, so those groups are copied straight in. The constant
++    // groups go through WriteRegistersFromMem one changed run at a time: the backend marks its
++    // cbuffers, textures and vertex buffers dirty once per run instead of once per dword, and only
++    // changed fetch slots are touched, since a fetch write invalidates that slot's cached resources.
++    uint32_t* const values = register_file_->values;
++    auto copy = [values](uint32_t first, const uint32_t* source, uint32_t n) {
++      std::memcpy(values + first, source, n * sizeof(uint32_t));
++    };
++    copy(0x2000, snapshot->surf, 6);
++    copy(0x2180, snapshot->prog, 2);
++    copy(0x2200, snapshot->rs, 12);
++    copy(0x2100, snapshot->vp, 21);
++    copy(0x2081, snapshot->scissor, 2);
++    copy(0x2080, &snapshot->window_offset, 1);
++    copy(0x2280, snapshot->g2280, 21);
++    copy(0x2300, snapshot->g2300, 38);
++    copy(0x2380, snapshot->g2380, 8);
++    copy(0x2388, snapshot->g2388, 24);
++
++    uint32_t guest_order[2048];
++    auto write_run = [&](uint32_t first, const uint32_t* const* units, uint32_t unit_dwords,
++                         uint32_t start, uint32_t end) {
++      uint32_t n = 0;
++      for (uint32_t u = start; u < end; ++u) {
++        for (uint32_t i = 0; i < unit_dwords; ++i) {
++          guest_order[n++] = rex::byte_swap(units[u][i]);
+         }
+       }
++      WriteRegistersFromMem(first + start * unit_dwords, guest_order, n);
+     };
+-    write(0x2000, snapshot->surf, 6);
+-    write(0x2180, snapshot->prog, 2);
+-    write(0x2200, snapshot->rs, 12);
+-    write(0x2100, snapshot->vp, 21);
+-    write(0x2081, snapshot->scissor, 2);
+-    write(0x4800, snapshot->fetch, 192);
+-    for (uint32_t i = 0; i < 128; ++i) {
+-      if (snapshot->alu[i]) {
+-        write(0x4000 + 16 * i, snapshot->alu[i], 16);
++    auto write_changed = [&](uint32_t first, const uint32_t* const* units, uint32_t unit_dwords,
++                             uint32_t unit_count) {
++      uint32_t run_start = unit_count;
++      for (uint32_t u = 0; u <= unit_count; ++u) {
++        bool changed = u < unit_count && units[u] &&
++                       std::memcmp(values + first + u * unit_dwords, units[u],
++                                   unit_dwords * sizeof(uint32_t)) != 0;
++        if (changed && run_start == unit_count) {
++          run_start = u;
++        } else if (!changed && run_start != unit_count) {
++          write_run(first, units, unit_dwords, run_start, u);
++          run_start = unit_count;
++        }
+       }
++    };
++    const uint32_t* fetch_slots[32];
++    for (uint32_t i = 0; i < 32; ++i) {
++      fetch_slots[i] = snapshot->fetch + 6 * i;
+     }
+-    write(0x2080, &snapshot->window_offset, 1);
+-    write(0x2280, snapshot->g2280, 21);
+-    write(0x2300, snapshot->g2300, 38);
+-    write(0x2380, snapshot->g2380, 8);
+-    write(0x2388, snapshot->g2388, 24);
+-    write(0x4900, snapshot->bool_consts, 40);
++    write_changed(0x4800, fetch_slots, 6, 32);
++    write_changed(0x4000, snapshot->alu, 16, 128);
++    const uint32_t* bool_loop = snapshot->bool_consts;
++    write_changed(0x4900, &bool_loop, 40, 1);
+ 
+     // With the library's shader packets turned into NOPs, the snapshot names the shaders; otherwise
+     // those packets already loaded them.
