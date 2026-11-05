@@ -286,6 +286,32 @@ void TestParseHostVerbs() {
   Check(ParseCommandLine("!god P3 maybe").kind == CommandKind::kError, "!god rejects maybe");
   Check(ParseCommandLine("!kill").kind == CommandKind::kError, "!kill needs a target");
   Check(ParseCommandLine("!kill P2 extra").kind == CommandKind::kError, "!kill rejects extras");
+  const Command knockdown = ParseCommandLine("!knockdown P2");
+  Check(knockdown.kind == CommandKind::kHostVerb, "!knockdown is a host verb");
+  Check(knockdown.text == "knockdown", "!knockdown keeps the verb");
+  Check(knockdown.target.kind == TargetKind::kName && knockdown.target.name == "P2",
+        "!knockdown targets name P2");
+  Check(ParseCommandLine("!knockdown").kind == CommandKind::kError, "!knockdown needs a target");
+  Check(ParseCommandLine("!knockdown a b").kind == CommandKind::kError,
+        "!knockdown rejects extras");
+  const Command damage = ParseCommandLine("!damage local 2000");
+  Check(damage.kind == CommandKind::kHostVerb && damage.text == "damage",
+        "!damage is a host verb");
+  Check(damage.target.kind == TargetKind::kLocal, "!damage targets local");
+  Check(damage.args.size() == 1 && damage.args[0] == "2000", "!damage keeps the amount");
+  Check(ParseCommandLine("!damage local").kind == CommandKind::kError, "!damage needs an amount");
+  Check(ParseCommandLine("!damage local 0").kind == CommandKind::kError, "!damage rejects 0");
+  Check(ParseCommandLine("!damage local -5").kind == CommandKind::kError, "!damage rejects -5");
+  Check(ParseCommandLine("!damage local 1000000").kind == CommandKind::kError,
+        "!damage rejects 7 digits");
+  const Command move = ParseCommandLine("!specialmove P1 26");
+  Check(move.kind == CommandKind::kHostVerb && move.text == "specialmove",
+        "!specialmove is a host verb");
+  Check(move.args.size() == 1 && move.args[0] == "26", "!specialmove keeps the move");
+  Check(ParseCommandLine("!specialmove P1 256").kind == CommandKind::kError,
+        "!specialmove rejects 256");
+  Check(ParseCommandLine("!specialmove P1 0").kind == CommandKind::kError,
+        "!specialmove rejects 0");
   const Command bad_call = ParseCommandLine("!call P1 Bad-Name");
   Check(bad_call.kind == CommandKind::kError, "!call rejects Bad-Name");
   Check(bad_call.text == "bad function name 'Bad-Name'", "!call error names the function");

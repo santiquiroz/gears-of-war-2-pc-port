@@ -66,6 +66,9 @@ Three kinds of line:
 | `!selftest` | none | Runs ToggleDropDetail twice on each player controller, local first, and checks the GearGRI bit flips and back. Returns `N/M routes ok`. | no | `!selftest` |
 | `!god` | `<target> on\|off` | Sets or clears bGodMode on the targets. | yes (`only the host decides damage`) | `!god P1 on` |
 | `!kill` | `<target>` | Runs Suicide on each target's pawn. Targets with no pawn are skipped. | yes (`only the host decides damage`) | `!kill P2` |
+| `!knockdown` | `<target>` | Runs GearPawn.Knockdown on each target's pawn with a 192 uu/s push along X and no spin, like an explosion knockdown. | yes (`only the host decides damage`) | `!knockdown P1` |
+| `!damage` | `<target> <amount>` | Runs TakeDamage(<amount>) on each target's pawn with no instigator, no damage type (GearDamageType) and no hit info. | yes (`only the host decides damage`) | `!damage local 2000` |
+| `!specialmove` | `<target> <n>` | Runs ServerDoSpecialMove(<n>, forced) on each target's pawn; <n> is the index in the pawn's SpecialMoveClasses (GearPawn_Infantry: 25 StumbleGoDown, 26 StumbleGoDownFromExplosion, 28 StumbleGetUp, 31 DBNO, 38 RecoverFromRagdoll). | yes (`only the host decides damage`) | `!specialmove local 26` |
 | `!call` | `<target> <Function>` | Runs a script function with zero parameters on each target controller. | remote targets only (`remote targets need the host`) | `!call P3 TeleportToPlayer` |
 | `!callpawn` | `<target> <Function>` | Same, on each target's pawn. | remote targets only (`remote targets need the host`) | `!callpawn P2 Suicide` |
 | `!mark` | `<text>` | Logs `DEVCMD mark <text>`. | no | `!mark chapter-2-start` |
@@ -96,7 +99,7 @@ A console line that runs reports `sent to <targets>`, plus `output '...'` when
 the command returns text. A `!list` line looks like this:
 
 ```
-DEVCMD   [<i>] <Obj> class=<Class> pc=<0|1> player='<name>' pawn=<Pawn>(<PawnClass>) health=<h> god=<0|1> state=<State>
+DEVCMD   [<i>] <Obj> class=<Class> pc=<0|1> player='<name>' pawn=<Pawn>(<PawnClass>) health=<h> god=<0|1> state=<State> pawnstate=<PawnState>
 ```
 
 Warning: console commands report no failure. The "Command not recognized" text

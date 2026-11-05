@@ -107,22 +107,27 @@ Target ParseTargetToken(std::string_view token) {
 
 bool IsKnownVerb(std::string_view verb) {
   return verb == "list" || verb == "selftest" || verb == "listmapchanges" || verb == "god" ||
-         verb == "kill" || verb == "call" || verb == "callpawn" || verb == "mapchange" ||
-         verb == "mapcommit" || verb == "mark";
+         verb == "kill" || verb == "knockdown" || verb == "damage" || verb == "specialmove" ||
+         verb == "call" || verb == "callpawn" ||
+         verb == "mapchange" || verb == "mapcommit" || verb == "mark";
 }
 
 bool ArityOk(std::string_view verb, size_t nargs) {
   if (verb == "mark") return true;
   if (verb == "mapchange" || verb == "mapcommit") return nargs <= 1;
-  if (verb == "kill") return nargs == 1;
-  if (verb == "god" || verb == "call" || verb == "callpawn") return nargs == 2;
+  if (verb == "kill" || verb == "knockdown") return nargs == 1;
+  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "damage" ||
+      verb == "specialmove")
+    return nargs == 2;
   return nargs == 0;
 }
 
 std::string_view ArityText(std::string_view verb) {
   if (verb == "mapchange" || verb == "mapcommit") return "0 or 1";
-  if (verb == "kill") return "1";
-  if (verb == "god" || verb == "call" || verb == "callpawn") return "2";
+  if (verb == "kill" || verb == "knockdown") return "1";
+  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "damage" ||
+      verb == "specialmove")
+    return "2";
   return "0";
 }
 
@@ -185,6 +190,50 @@ Command ParseKill(const std::vector<std::string>& tokens) {
   return out;
 }
 
+Command ParseKnockdown(const std::vector<std::string>& tokens) {
+  Command out;
+  out.kind = CommandKind::kHostVerb;
+  out.text = "knockdown";
+  out.target = ParseTargetToken(tokens[1]);
+  return out;
+}
+
+bool IsDamageAmount(std::string_view text) {
+  if (text.empty() || text.size() > 6 || text[0] == '0') return false;
+  for (char c : text)
+    if (c < '0' || c > '9') return false;
+  return true;
+}
+
+Command ParseDamage(const std::vector<std::string>& tokens) {
+  if (!IsDamageAmount(tokens[2]))
+    return MakeError("!damage takes an amount from 1 to 999999, not '" + tokens[2] + "'");
+  Command out;
+  out.kind = CommandKind::kHostVerb;
+  out.text = "damage";
+  out.target = ParseTargetToken(tokens[1]);
+  out.args.push_back(tokens[2]);
+  return out;
+}
+
+bool IsSpecialMoveIndex(std::string_view text) {
+  if (text.empty() || text.size() > 3 || text[0] == '0') return false;
+  for (char c : text)
+    if (c < '0' || c > '9') return false;
+  return std::stoi(std::string(text)) <= 255;
+}
+
+Command ParseSpecialMove(const std::vector<std::string>& tokens) {
+  if (!IsSpecialMoveIndex(tokens[2]))
+    return MakeError("!specialmove takes a move from 1 to 255, not '" + tokens[2] + "'");
+  Command out;
+  out.kind = CommandKind::kHostVerb;
+  out.text = "specialmove";
+  out.target = ParseTargetToken(tokens[1]);
+  out.args.push_back(tokens[2]);
+  return out;
+}
+
 Command ParseCall(std::string_view verb, const std::vector<std::string>& tokens) {
   if (!IsValidFunctionName(tokens[2]))
     return MakeError("bad function name '" + tokens[2] + "'");
@@ -207,6 +256,9 @@ Command ParseHostVerb(std::string_view trimmed) {
   if (verb == "mapcommit") return ParseMapCommit(tokens);
   if (verb == "god") return ParseGod(tokens);
   if (verb == "kill") return ParseKill(tokens);
+  if (verb == "knockdown") return ParseKnockdown(tokens);
+  if (verb == "damage") return ParseDamage(tokens);
+  if (verb == "specialmove") return ParseSpecialMove(tokens);
   if (verb == "call" || verb == "callpawn") return ParseCall(verb, tokens);
   Command out;
   out.kind = CommandKind::kHostVerb;
@@ -514,6 +566,7 @@ std::string DescribeController(const uint8_t* base, const Globals& g, uint32_t c
   out += (flags & layout::kGodModeMask) != 0 ? "1" : "0";
   out += " state=";
   out += StateName(base, g, controller);
+  if (pawn != 0) out += " pawnstate=" + StateName(base, g, pawn);
   return out;
 }
 

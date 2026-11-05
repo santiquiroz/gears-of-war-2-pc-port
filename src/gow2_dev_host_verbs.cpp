@@ -1,6 +1,6 @@
 // gow2 - ReXGlue Recompiled Project
 //
-// Host-side '!' verbs of the dev command file (list, selftest, god, kill, call, mark).
+// Host-side '!' verbs of the dev command file (list, selftest, god, kill, knockdown, damage, specialmove, call, mark).
 #include "gow2_dev_host_verbs.h"
 
 #include "gow2_dev_map_change.h"
@@ -9,6 +9,7 @@
 #include "gow2_guest.h"
 
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <vector>
@@ -288,6 +289,101 @@ VerbResult KillVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
   return Ok(detail);
 }
 
+void AppendFloatBe(float value, std::vector<uint8_t>* out) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  out->push_back(uint8_t(bits >> 24));
+  out->push_back(uint8_t(bits >> 16));
+  out->push_back(uint8_t(bits >> 8));
+  out->push_back(uint8_t(bits));
+}
+
+void AppendU32Be(uint32_t value, std::vector<uint8_t>* out) {
+  out->push_back(uint8_t(value >> 24));
+  out->push_back(uint8_t(value >> 16));
+  out->push_back(uint8_t(value >> 8));
+  out->push_back(uint8_t(value));
+}
+
+void RunPawnEventRoute(const PPCContext& ctx, uint8_t* base, const KillTarget& target,
+                       uint64_t name, const std::string& function,
+                       const std::vector<uint8_t>& parms, std::vector<std::string>* done,
+                       std::vector<std::string>* skipped) {
+  if (target.pawn == 0) {
+    skipped->push_back(target.who + " has no pawn");
+    return;
+  }
+  const uint32_t fn = guest_call::FindFunction(ctx, base, target.pawn, name);
+  if (fn == 0) {
+    skipped->push_back(target.who + ": " + target.pawn_class + " has no function " + function);
+    return;
+  }
+  if (!guest_call::ProcessEventWithParms(ctx, base, target.pawn, fn, parms, nullptr, 0)) {
+    skipped->push_back(target.who + ": guest call failed");
+    return;
+  }
+  done->push_back(target.who);
+}
+
+VerbResult PawnEventVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
+                         const dev_commands::Command& command, const std::string& function,
+                         const std::vector<uint8_t>& parms, const std::string& done_text) {
+  const uint32_t world_info = GuardedWorldInfo(base);
+  if (!IsHost(base, world_info)) return Fail("only the host decides damage");
+  const std::optional<std::vector<uint32_t>> targets =
+      GuardedTargets(base, engine, world_info, command.target);
+  if (!targets.has_value()) return Fail("fault while reading guest objects");
+  if (targets->empty()) return Fail(NoTargetText(command.target));
+  std::vector<KillTarget> prepared;
+  if (!GuardedKillTargets(base, *targets, &prepared))
+    return Fail("fault while reading guest objects");
+  const std::optional<uint64_t> name = guest_call::MakeName(ctx, base, function, false);
+  if (!name.has_value()) return Fail("no name " + function);
+  std::vector<std::string> done;
+  std::vector<std::string> skipped;
+  for (const KillTarget& target : prepared)
+    RunPawnEventRoute(ctx, base, target, *name, function, parms, &done, &skipped);
+  if (done.empty()) return Fail(JoinComma(skipped));
+  std::string detail = done_text + " " + JoinComma(done);
+  if (!skipped.empty()) detail += "; skipped " + JoinComma(skipped);
+  return Ok(detail);
+}
+
+VerbResult KnockdownVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
+                         const dev_commands::Command& command) {
+  std::vector<uint8_t> parms;
+  AppendFloatBe(192.0f, &parms);
+  for (int i = 0; i < 5; ++i) AppendFloatBe(0.0f, &parms);
+  return PawnEventVerb(ctx, base, engine, command, "Knockdown", parms, "knocked down");
+}
+
+// TakeDamage(Damage, InstigatedBy, HitLocation, Momentum, DamageType, HitInfo, DamageCauser):
+// 4 + 4 + 12 + 12 + 4 + 28 (TraceHitInfo) + 4 bytes; all but Damage stay zero / None.
+constexpr size_t kTakeDamageParmsBytes = 68;
+
+VerbResult DamageVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
+                      const dev_commands::Command& command) {
+  std::vector<uint8_t> parms;
+  AppendU32Be(uint32_t(std::stoul(command.args[0])), &parms);
+  parms.resize(kTakeDamageParmsBytes, 0);
+  return PawnEventVerb(ctx, base, engine, command, "TakeDamage", parms,
+                       "damaged (" + command.args[0] + ")");
+}
+
+// ServerDoSpecialMove(byte NewMove, bool bForceMove, Pawn InInteractionPawn,
+// int InSpecialMoveFlags, byte SMToChain): forced, no interaction pawn, no flags, no chain.
+VerbResult SpecialMoveVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
+                           const dev_commands::Command& command) {
+  std::vector<uint8_t> parms;
+  AppendU32Be(uint32_t(std::stoul(command.args[0])) << 24, &parms);
+  AppendU32Be(1, &parms);
+  AppendU32Be(0, &parms);
+  AppendU32Be(0, &parms);
+  AppendU32Be(0, &parms);
+  return PawnEventVerb(ctx, base, engine, command, "ServerDoSpecialMove", parms,
+                       "special move " + command.args[0] + " on");
+}
+
 struct CallTarget {
   uint32_t object = 0;
   std::string who;
@@ -391,6 +487,9 @@ VerbResult RunHostVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
   if (verb == "selftest") return SelfTestVerb(ctx, base, engine);
   if (verb == "god") return GodVerb(base, engine, command);
   if (verb == "kill") return KillVerb(ctx, base, engine, command);
+  if (verb == "knockdown") return KnockdownVerb(ctx, base, engine, command);
+  if (verb == "damage") return DamageVerb(ctx, base, engine, command);
+  if (verb == "specialmove") return SpecialMoveVerb(ctx, base, engine, command);
   if (verb == "call") return CallVerb(ctx, base, engine, command, false);
   if (verb == "callpawn") return CallVerb(ctx, base, engine, command, true);
   if (verb == "mark") return MarkVerb(command);
