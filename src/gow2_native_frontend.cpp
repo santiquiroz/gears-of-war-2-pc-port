@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -42,6 +43,9 @@ REXCVAR_DEFINE_STRING(gow2_native_frontend, "auto", "Display",
 REXCVAR_DEFINE_BOOL(gow2_native_frontend_suppress, true, "Display",
                     "Native frontend: turn the library's state, constant and shader packets of each rewritten "
                     "draw into NOPs, so they reach the GPU only from the snapshot. Read once at start.");
+REXCVAR_DEFINE_BOOL(gow2_native_frontend_timing, false, "Testing",
+                    "Native frontend: time the hook work on the game's render thread (snapshots and packet walk "
+                    "after each draw call, constant mirror) and log it with the NATIVEFRONT game line.");
 
 // tools/native/native_probe.cpp hooks the same functions; CMake defines GOW2_NATIVE_PROBE_BUILD when it adds it.
 #if !defined(GOW2_NATIVE_PROBE_BUILD)
@@ -194,6 +198,55 @@ thread_local uint32_t g_clear_depth = 0;
 thread_local uint32_t g_ring_kicks = 0;
 
 std::array<std::atomic<uint64_t>, uint32_t(DrawFunction::kCount)> g_rewritten{};
+std::atomic<uint64_t> g_hook_ns{0};
+std::atomic<uint64_t> g_hook_calls{0};
+std::atomic<uint64_t> g_mirror_ns{0};
+std::atomic<uint64_t> g_mirror_calls{0};
+// ponytail: diagnostic phase split of OnDraw, only filled with gow2_native_frontend_timing.
+enum Phase { kPhaseRead, kPhaseState, kPhasePlan, kPhaseAlloc, kPhaseStore, kPhaseCount };
+std::array<std::atomic<uint64_t>, kPhaseCount> g_phase_ns{};
+
+bool Timing() {
+  static const bool timing = REXCVAR_GET(gow2_native_frontend_timing);
+  return timing;
+}
+
+uint64_t NowNs() {
+  return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count());
+}
+
+struct PhaseClock {
+  bool on = false;
+  uint64_t last = 0;
+  void Start();
+  void Mark(Phase phase);
+};
+
+template <class F>
+void Timed(std::atomic<uint64_t>& total_ns, std::atomic<uint64_t>& calls, F&& work) {
+  if (!Timing()) {
+    work();
+    return;
+  }
+  const uint64_t start = NowNs();
+  work();
+  total_ns.fetch_add(NowNs() - start, std::memory_order_relaxed);
+  calls.fetch_add(1, std::memory_order_relaxed);
+}
+void PhaseClock::Start() {
+  on = Timing();
+  if (on) last = NowNs();
+}
+
+void PhaseClock::Mark(Phase phase) {
+  if (!on) return;
+  const uint64_t now = NowNs();
+  g_phase_ns[phase].fetch_add(now - last, std::memory_order_relaxed);
+  last = now;
+}
+
 std::atomic<uint64_t> g_unsupported{0};
 std::atomic<uint64_t> g_short_draw{0};
 std::atomic<uint64_t> g_not_inline{0};
@@ -300,7 +353,8 @@ void FoldAluWritesLocked(std::span<const RegisterWrite> writes) {
 // so this call's packets are the dwords before + 4 through write. Every DRAW_INDX / DRAW_INDX_2 among them becomes a
 // marker, each with the state as of its own segment (the packets since the previous draw); packets after the last
 // draw (sub_82980210 and sub_8297FD30 restore state and bin masks, Clear the scissor) stay in place.
-void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction function, bool shaders, uint32_t after_offset) {
+void OnDrawUntimed(uint8_t* base, uint32_t device, uint32_t before, DrawFunction function, bool shaders,
+                   uint32_t after_offset) {
   const uint32_t write = LoadU32(base, device + after_offset);
   if (write == before) return;  // nothing emitted (Clear with no flags left)
   // write < before: the ring wrapped (sub_8298C1A0) during the call.
@@ -308,6 +362,8 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
     g_ring_moved.fetch_add(1, std::memory_order_relaxed);
     return;
   }
+  PhaseClock clock;
+  clock.Start();
   const uint32_t start = before + 4;
   thread_local std::vector<uint32_t> emitted;
   emitted.resize((write - before) / 4);
@@ -323,6 +379,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
     return;
   }
 
+  clock.Mark(kPhaseRead);
   // The running register state: the shadows at the end of the call (the current fill), then each segment's writes in
   // ring order (sub_829813F0 and Clear write the ring without touching the shadows).
   thread_local NativeDrawSnapshot state;
@@ -352,6 +409,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
     state.flags |= kSnapshotFlagShaders;
   }
 
+  clock.Mark(kPhaseState);
   const bool suppress = Suppress();
   static const SuppressPlan kNoPlan{};  // without suppression only draws of kMarkerDwords or more get a marker
   thread_local SuppressPlan plan;
@@ -387,6 +445,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
       if (!span_start) g_short_draw.fetch_add(1, std::memory_order_relaxed);
     }
 
+    clock.Mark(kPhasePlan);
     NativeDrawSnapshot* snapshot = nullptr;
     {
       std::lock_guard<std::mutex> hold(g_lock);
@@ -408,6 +467,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
       g_segments_kept.fetch_add(1, std::memory_order_relaxed);
       continue;
     }
+    clock.Mark(kPhaseAlloc);
     std::memset(snapshot->draw_words, 0, sizeof(snapshot->draw_words));
     ReadDwords(base, header + 4, snapshot->draw_words, draw.payload);
     snapshot->draw_opcode = draw.opcode;
@@ -428,6 +488,7 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
       g_suppressed_packets.fetch_add(plan.nops.size(), std::memory_order_relaxed);
       g_kept_packets.fetch_add(plan.kept, std::memory_order_relaxed);
       g_rewritten[uint32_t(function)].fetch_add(1, std::memory_order_relaxed);
+      clock.Mark(kPhaseStore);
       continue;
     }
 
@@ -441,6 +502,28 @@ void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction functi
     for (uint32_t i = 4; i < span_dwords; ++i) StoreU32(base, marker + 4 * i, 0);
     g_rewritten[uint32_t(function)].fetch_add(1, std::memory_order_relaxed);
   }
+}
+
+void OnDraw(uint8_t* base, uint32_t device, uint32_t before, DrawFunction function, bool shaders, uint32_t after_offset) {
+  Timed(g_hook_ns, g_hook_calls, [&] { OnDrawUntimed(base, device, before, function, shaders, after_offset); });
+}
+
+void LogTiming() {
+  const uint64_t hook_calls = g_hook_calls.exchange(0, std::memory_order_relaxed);
+  const uint64_t hook_ns = g_hook_ns.exchange(0, std::memory_order_relaxed);
+  const uint64_t mirror_calls = g_mirror_calls.exchange(0, std::memory_order_relaxed);
+  const uint64_t mirror_ns = g_mirror_ns.exchange(0, std::memory_order_relaxed);
+  if (hook_calls == 0) return;
+  std::array<uint64_t, kPhaseCount> phase{};
+  for (uint32_t i = 0; i < kPhaseCount; ++i) phase[i] = g_phase_ns[i].exchange(0, std::memory_order_relaxed);
+  REXLOG_INFO("NATIVEFRONT game phases us/call: read {:.2f} state {:.2f} plan {:.2f} alloc {:.2f} store {:.2f}",
+              phase[kPhaseRead] / 1e3 / hook_calls, phase[kPhaseState] / 1e3 / hook_calls,
+              phase[kPhasePlan] / 1e3 / hook_calls, phase[kPhaseAlloc] / 1e3 / hook_calls,
+              phase[kPhaseStore] / 1e3 / hook_calls);
+  REXLOG_INFO("NATIVEFRONT game timing: hook {:.3f} ms/frame ({} calls, {:.2f} us each) mirror {:.3f} ms/frame ({} "
+              "calls, {:.2f} us each)",
+              hook_ns / 1e6 / kFramesPerReport, hook_calls, hook_ns / 1e3 / hook_calls,
+              mirror_ns / 1e6 / kFramesPerReport, mirror_calls, mirror_calls ? mirror_ns / 1e3 / mirror_calls : 0.0);
 }
 
 void OnEngineTick(const PPCContext&, uint8_t*) {
@@ -475,6 +558,7 @@ void OnEngineTick(const PPCContext&, uint8_t*) {
               g_segments_kept.exchange(0, std::memory_order_relaxed));
   const uint64_t full = g_arena_full.exchange(0, std::memory_order_relaxed);
   if (full != 0) REXLOG_INFO("NATIVEFRONT game arena_full {}", full);
+  LogTiming();
 }
 
 [[maybe_unused]] const bool kTickRegistered = (rex::glue::AddEngineTickListener(&OnEngineTick), true);
@@ -492,8 +576,10 @@ REX_HOOK_RAW(sub_8298F378) {
   const uint32_t desc = ctx.r4.u32;
   const uint32_t data = ctx.r5.u32;
   __imp__sub_8298F378(ctx, base);
-  std::lock_guard<std::mutex> hold(rex::glue::native_frontend::g_lock);
-  rex::glue::native_frontend::MirrorLoadAluConstants(base, desc, data);
+  rex::glue::native_frontend::Timed(rex::glue::native_frontend::g_mirror_ns, rex::glue::native_frontend::g_mirror_calls, [&] {
+    std::lock_guard<std::mutex> hold(rex::glue::native_frontend::g_lock);
+    rex::glue::native_frontend::MirrorLoadAluConstants(base, desc, data);
+  });
 }
 
 // ALU constant shadow flush.
@@ -507,8 +593,10 @@ REX_HOOK_RAW(sub_8298E5B8) {
   const uint32_t register_base = ctx.r5.u32;
   const uint32_t shadow = ctx.r6.u32;
   __imp__sub_8298E5B8(ctx, base);
-  std::lock_guard<std::mutex> hold(rex::glue::native_frontend::g_lock);
-  rex::glue::native_frontend::MirrorFlushAluShadow(base, mask, register_base, shadow);
+  rex::glue::native_frontend::Timed(rex::glue::native_frontend::g_mirror_ns, rex::glue::native_frontend::g_mirror_calls, [&] {
+    std::lock_guard<std::mutex> hold(rex::glue::native_frontend::g_lock);
+    rex::glue::native_frontend::MirrorFlushAluShadow(base, mask, register_base, shadow);
+  });
 }
 
 // The four draw functions; all take the device in r3 (mr r31,r3: 183.cpp for sub_82980B20, 1.cpp:18869 for

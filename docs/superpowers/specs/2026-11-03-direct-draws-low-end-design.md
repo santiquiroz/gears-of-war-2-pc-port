@@ -120,6 +120,39 @@ Step 0 decides the order of the rest; each later step has its own exit check.
 
    So the order is: step 4 first, aimed at the guest thread above (not only the SDK's waits); then
    step 1 and step 2 only if the reporter's numbers still show the render thread saturated.
+
+   Front end cost, 2026-11-04 night (hospital, unlocked; other programs were busy on the PC, so fps
+   swing between runs and only consecutive runs compare; `out/perf/step2/`):
+
+   - Step 2, first part, SDK patch 0066 (c45d120): bulk apply as above, except that ALU blocks are
+     compared rather than skipped by pointer (a kept packet can write ALU registers between two native
+     draws, so a pointer match alone is not safe). Front end on, A/B/A/B: 112 and 160 fps without it,
+     211 and 185 with it.
+   - Front end on against off after 0066, consecutive runs: all cores 194 on, 235 off; 4 cores (mask
+     0x55, clock at the 67 % floor) 177 on, 182 and 189 off. Still slower on PC, so the PC default stays
+     off (exit check not met).
+   - Where the on-path time goes (`gpu_native_frontend_timing`, SDK patch 0067, and
+     `gow2_native_frontend_timing`, both off by default), about 330 draws a frame:
+
+     | Thread | Part | Per draw call | Per frame |
+     |---|---|---|---|
+     | game render | hook after each draw call (snapshot, packet walk, ring rewrite) | 3.0-3.3 us | about 1.0 ms |
+     | game render | constant mirror | 0.15 us per constant load | 0.13 ms |
+     | GPU command | snapshot apply (after 0066) | 1.2 us | 0.4 ms |
+     | GPU command | shader binding | 0.2 us | 0.06 ms |
+     | GPU command | draw issue (same as the console path) | 2.4 us | |
+
+     The hook splits into read 0.35, state 0.68, plan 1.0, alloc 0.85 and store 0.35 us. A register slot
+     table (one load per register instead of a range test) took plan to 0.8 us; verification without
+     suppression showed 0 mismatches in every group over about 870,000 draws. Most of what is left in
+     state and alloc is writing about 3.5 KB a draw into arena memory that is never in cache; shrinking
+     it needs a new snapshot format (state and ALU tables shared between draws), and fetch and ALU
+     change on most draws, so the gain is small.
+   - Step 3 is not built: a shader binding costs about 0.2 us (the XXH3 of a few KB of microcode and a
+     map lookup), 0.06 ms a frame on a thread that is not the bottleneck.
+   - What remains between on and off is the game-side hook, about 1 ms a frame on the game render
+     thread. Step 1 (the library no longer building the packets the front end replaces) is the change
+     that removes both the packet building and most of the hook; it is the next step for the front end.
 1. **Game side: no packets for hooked draws.** For draws the front end takes, the library's flush does
    not build console packets; the device's dirty-mask bookkeeping is kept; the ring carries only the
    marker and the packets the snapshot does not cover (the S2b plan in

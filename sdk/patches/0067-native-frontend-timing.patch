@@ -1,0 +1,87 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 800ded1..9a93d1f 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -67,6 +67,9 @@ REXCVAR_DEFINE_BOOL(gpu_native_frontend, true, "GPU",
+ REXCVAR_DEFINE_BOOL(gpu_native_frontend_verify, false, "GPU",
+                     "Compare each native draw's device snapshot with the register file before writing it "
+                     "and count the mismatching register groups (NATIVEFRONT log line)");
++REXCVAR_DEFINE_BOOL(gpu_native_frontend_timing, false, "GPU",
++                    "Time each native draw's snapshot apply, shader binding and draw issue on the command "
++                    "thread and log the averages per draw next to the NATIVEFRONT line");
+ 
+ #if REX_PLATFORM_ANDROID
+ REXCVAR_DEFINE_INT32(gpu_worker_spin_us, -1, "GPU",
+@@ -373,8 +376,17 @@ struct NativeFrontendStats {
+   uint64_t shader_loads = 0;
+   uint64_t shader_load_skipped = 0;
+   uint64_t bad_snapshot = 0;
++  uint64_t timed_draws = 0;
++  uint64_t apply_ticks = 0;
++  uint64_t shader_ticks = 0;
++  uint64_t issue_ticks = 0;
+   uint32_t swaps = 0;
+ };
++
++double TicksToMicrosecondsPerDraw(uint64_t ticks, uint64_t draws) {
++  const uint64_t frequency = rex::chrono::Clock::QueryHostTickFrequency();
++  return draws && frequency ? double(ticks) * 1e6 / double(frequency) / double(draws) : 0.0;
++}
+ NativeFrontendStats g_native_frontend_stats;
+ 
+ void ReportNativeFrontendOnSwap() {
+@@ -390,6 +402,12 @@ void ReportNativeFrontendOnSwap() {
+       s.mismatch_scis, s.mismatch_fetch, s.mismatch_alu, s.mismatch_g2280, s.mismatch_g2300,
+       s.mismatch_g2380, s.mismatch_g2388, s.mismatch_bool, s.mismatch_wofs, s.shader_loads,
+       s.shader_load_skipped, s.bad_snapshot);
++  if (s.timed_draws) {
++    REXGPU_INFO("NATIVEFRONT timing per draw: apply {:.3f} us shader {:.3f} us issue {:.3f} us ({} draws)",
++                TicksToMicrosecondsPerDraw(s.apply_ticks, s.timed_draws),
++                TicksToMicrosecondsPerDraw(s.shader_ticks, s.timed_draws),
++                TicksToMicrosecondsPerDraw(s.issue_ticks, s.timed_draws), s.timed_draws);
++  }
+   s = NativeFrontendStats();
+ }
+ 
+@@ -1340,8 +1358,10 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+     // groups go through WriteRegistersFromMem one changed run at a time: the backend marks its
+     // cbuffers, textures and vertex buffers dirty once per run instead of once per dword, and only
+     // changed fetch slots are touched, since a fetch write invalidates that slot's cached resources.
++    const bool timing = REXCVAR_GET(gpu_native_frontend_timing);
++    const uint64_t apply_start = timing ? rex::chrono::Clock::QueryHostTickCount() : 0;
+     uint32_t* const values = register_file_->values;
+-    auto copy = [values](uint32_t first, const uint32_t* source, uint32_t n) {
++    auto copy =[values](uint32_t first, const uint32_t* source, uint32_t n) {
+       std::memcpy(values + first, source, n * sizeof(uint32_t));
+     };
+     copy(0x2000, snapshot->surf, 6);
+@@ -1390,6 +1410,7 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+     const uint32_t* bool_loop = snapshot->bool_consts;
+     write_changed(0x4900, &bool_loop, 40, 1);
+ 
++    const uint64_t shader_start = timing ? rex::chrono::Clock::QueryHostTickCount() : 0;
+     // With the library's shader packets turned into NOPs, the snapshot names the shaders; otherwise
+     // those packets already loaded them.
+     if (snapshot->flags & native_frontend::kSnapshotFlagShaders) {
+@@ -1415,6 +1436,7 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+       }
+     }
+ 
++    const uint64_t issue_start = timing ? rex::chrono::Clock::QueryHostTickCount() : 0;
+     ++stats.draws;
+     g_decoded_draw_words = snapshot->draw_words;
+     bool result;
+@@ -1425,6 +1447,13 @@ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32
+       result = ExecutePacketType3_DRAW_INDX(nullptr, packet, 4);
+     }
+     g_decoded_draw_words = nullptr;
++    if (timing) {
++      const uint64_t issue_end = rex::chrono::Clock::QueryHostTickCount();
++      ++stats.timed_draws;
++      stats.apply_ticks += shader_start - apply_start;
++      stats.shader_ticks += issue_start - shader_start;
++      stats.issue_ticks += issue_end - issue_start;
++    }
+     return result;
+   }
+ 

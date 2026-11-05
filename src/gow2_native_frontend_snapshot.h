@@ -6,6 +6,7 @@
 // types must match on both sides.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -170,19 +171,54 @@ inline std::span<const uint32_t> DrawSegment(std::span<const uint32_t> emitted, 
   return emitted.subspan(first, all.draws[k].index - first);
 }
 
-// Registers the snapshot carries; a library packet that only writes these can become a NOP.
-inline bool SnapshotCoversRegister(uint32_t r) {
-  return (r >= 0x2000 && r <= 0x2005) || (r >= 0x2080 && r <= 0x2082) || (r >= 0x2100 && r <= 0x2114) ||
-         (r >= 0x2180 && r <= 0x2181) || (r >= 0x2200 && r <= 0x220B) || (r >= 0x2280 && r <= 0x2294) ||
-         (r >= 0x2300 && r <= 0x2325) || (r >= 0x2380 && r <= 0x239F) || (r >= 0x4000 && r <= 0x47FF) ||
-         (r >= 0x4800 && r <= 0x48BF) || (r >= 0x4900 && r <= 0x4927);
+// Where each register from 0x2000 to 0x4927 lives in the snapshot, in dwords from its start: kNotCarried for registers
+// the snapshot does not carry, kAluSlot for 0x4000-0x47FF (folded through the mirror). Built once; one load per
+// register instead of a range test, since a fetch write alone is 192 registers.
+inline constexpr uint32_t kSlotTableFirst = 0x2000;
+inline constexpr uint32_t kSlotTableEnd = 0x4928;
+inline constexpr int16_t kNotCarried = -1;
+inline constexpr int16_t kAluSlot = -2;
+
+inline const std::array<int16_t, kSlotTableEnd - kSlotTableFirst>& SnapshotSlotTable() {
+  static const auto table = [] {
+    std::array<int16_t, kSlotTableEnd - kSlotTableFirst> t;
+    t.fill(kNotCarried);
+    auto put = [&t](uint32_t first, uint32_t count, size_t byte_offset) {
+      for (uint32_t i = 0; i < count; ++i) t[first - kSlotTableFirst + i] = int16_t(byte_offset / 4 + i);
+    };
+    put(0x2000, 6, offsetof(NativeDrawSnapshot, surf));
+    put(0x2080, 1, offsetof(NativeDrawSnapshot, window_offset));
+    put(0x2081, 2, offsetof(NativeDrawSnapshot, scissor));
+    put(0x2100, 21, offsetof(NativeDrawSnapshot, vp));
+    put(0x2180, 2, offsetof(NativeDrawSnapshot, prog));
+    put(0x2200, 12, offsetof(NativeDrawSnapshot, rs));
+    put(0x2280, 21, offsetof(NativeDrawSnapshot, g2280));
+    put(0x2300, 38, offsetof(NativeDrawSnapshot, g2300));
+    put(0x2380, 8, offsetof(NativeDrawSnapshot, g2380));
+    put(0x2388, 24, offsetof(NativeDrawSnapshot, g2388));
+    for (uint32_t r = 0x4000; r <= 0x47FF; ++r) t[r - kSlotTableFirst] = kAluSlot;
+    put(0x4800, 192, offsetof(NativeDrawSnapshot, fetch));
+    put(0x4900, 40, offsetof(NativeDrawSnapshot, bool_consts));
+    return t;
+  }();
+  return table;
 }
 
+inline int16_t SnapshotSlotOf(uint32_t r) {
+  if (r < kSlotTableFirst || r >= kSlotTableEnd) return kNotCarried;
+  return SnapshotSlotTable()[r - kSlotTableFirst];
+}
+
+// Registers the snapshot carries; a library packet that only writes these can become a NOP.
+inline bool SnapshotCoversRegister(uint32_t r) { return SnapshotSlotOf(r) != kNotCarried; }
+
 inline bool SnapshotCoversRange(uint32_t first, uint32_t count) {
+  if (count == 0 || first < kSlotTableFirst || first + count > kSlotTableEnd) return false;
+  const int16_t* slots = SnapshotSlotTable().data() + (first - kSlotTableFirst);
   for (uint32_t i = 0; i < count; ++i) {
-    if (!SnapshotCoversRegister(first + i)) return false;
+    if (slots[i] == kNotCarried) return false;
   }
-  return count != 0;
+  return true;
 }
 
 // Type-3 NOP consuming the same payload as the packet whose header is h (count field in bits 16-29 for types 0
@@ -289,21 +325,10 @@ inline std::span<const uint32_t> PlanSegment(std::span<const uint32_t> emitted, 
 }
 
 // The snapshot dword holding register r, nullptr for 0x4000-0x47FF (the ALU blocks, folded through the mirror) and
-// registers the snapshot does not carry. Same register ranges as SnapshotCoversRegister.
+// registers the snapshot does not carry.
 inline uint32_t* SnapshotRegisterSlot(NativeDrawSnapshot& s, uint32_t r) {
-  if (r >= 0x2000 && r <= 0x2005) return &s.surf[r - 0x2000];
-  if (r == 0x2080) return &s.window_offset;
-  if (r >= 0x2081 && r <= 0x2082) return &s.scissor[r - 0x2081];
-  if (r >= 0x2100 && r <= 0x2114) return &s.vp[r - 0x2100];
-  if (r >= 0x2180 && r <= 0x2181) return &s.prog[r - 0x2180];
-  if (r >= 0x2200 && r <= 0x220B) return &s.rs[r - 0x2200];
-  if (r >= 0x2280 && r <= 0x2294) return &s.g2280[r - 0x2280];
-  if (r >= 0x2300 && r <= 0x2325) return &s.g2300[r - 0x2300];
-  if (r >= 0x2380 && r <= 0x2387) return &s.g2380[r - 0x2380];
-  if (r >= 0x2388 && r <= 0x239F) return &s.g2388[r - 0x2388];
-  if (r >= 0x4800 && r <= 0x48BF) return &s.fetch[r - 0x4800];
-  if (r >= 0x4900 && r <= 0x4927) return &s.bool_consts[r - 0x4900];
-  return nullptr;
+  const int16_t slot = SnapshotSlotOf(r);
+  return slot >= 0 ? reinterpret_cast<uint32_t*>(&s) + slot : nullptr;
 }
 
 // Applies the non-ALU writes, in order, over a snapshot already filled from the shadows.
