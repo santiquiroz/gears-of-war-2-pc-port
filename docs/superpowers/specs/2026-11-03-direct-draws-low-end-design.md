@@ -153,6 +153,15 @@ Step 0 decides the order of the rest; each later step has its own exit check.
    - What remains between on and off is the game-side hook, about 1 ms a frame on the game render
      thread. Step 1 (the library no longer building the packets the front end replaces) is the change
      that removes both the packet building and most of the hook; it is the next step for the front end.
+   - Map for step 1 (read on 2026-11-04, not changed): the flush `sub_8298F600` is about 1,270 generated
+     lines (`gow2_recomp.120.cpp:20218`) and writes almost all state inline as type-0 packets; it calls
+     only `sub_8298DC90` (once, at the start; may kick the ring through `sub_8298C1A0`), `sub_8298F378`
+     (three times, ALU constant loads), `sub_8298F210` (twice, about 205 lines, vertex shader binding:
+     `sub_8298AFC0`, `sub_8298E710`, `sub_8298EEA8`, `sub_82990018`, `sub_82A92B70`), `sub_8298F4C0` (twice,
+     about 188 lines, pixel shader binding through `sub_8298E710`) and `sub_8298C1A0` (four times, ring
+     kicks). The recompiler offers whole-function hooks only, so step 1 means a C++ version of the flush
+     that keeps the dirty masks, the shader bookkeeping and the resource fences exactly as the library
+     leaves them and writes only the packets the snapshot does not cover; several sessions of work.
 1. **Game side: no packets for hooked draws.** For draws the front end takes, the library's flush does
    not build console packets; the device's dirty-mask bookkeeping is kept; the ring carries only the
    marker and the packets the snapshot does not cover (the S2b plan in
