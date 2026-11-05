@@ -1,0 +1,177 @@
+diff --git a/src/graphics/d3d12/pipeline_cache.cpp b/src/graphics/d3d12/pipeline_cache.cpp
+--- a/src/graphics/d3d12/pipeline_cache.cpp
++++ b/src/graphics/d3d12/pipeline_cache.cpp
+@@ -55,1 +55,22 @@
++
++static std::atomic<uint32_t> shader_storage_play_shader_count{0};
++static std::atomic<uint32_t> shader_storage_play_pipeline_count{0};
++static std::atomic<bool> shader_storage_play_counting{false};
++
++static void LogShaderStoragePlayCount(uint32_t count) {
++  if (count < 16 || (count & (count - 1)) != 0) {
++    return;
++  }
++  REXGPU_INFO("SHADERSTORAGE compiled during play: {} shaders, {} pipelines",
++              shader_storage_play_shader_count.load(std::memory_order_relaxed),
++              shader_storage_play_pipeline_count.load(std::memory_order_relaxed));
++}
++
++static void CountShaderStoragePlay(std::atomic<uint32_t>& counter) {
++  if (!shader_storage_play_counting.load(std::memory_order_relaxed)) {
++    return;
++  }
++  const uint32_t count = counter.fetch_add(1, std::memory_order_relaxed) + 1;
++  LogShaderStoragePlayCount(count);
++}
+ REXCVAR_DEFINE_BOOL(d3d12_dxbc_disasm, false, "GPU/D3D12", "Dump DXBC disassembly");
+@@ -237,5 +261,10 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+                                             uint32_t title_id, bool blocking) {
+   ShutdownShaderStorage();
++  shader_storage_play_counting.store(false, std::memory_order_relaxed);
++  shader_storage_play_shader_count.store(0, std::memory_order_relaxed);
++  shader_storage_play_pipeline_count.store(0, std::memory_order_relaxed);
++  const auto shader_storage_load_start = std::chrono::steady_clock::now();
++
+   storage_shaders_done_ = 0;
+   storage_shaders_total_ = 0;
+   storage_pipelines_done_ = 0;
+@@ -751,5 +780,13 @@ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+   assert_not_null(storage_write_thread_);
+   storage_write_thread_->set_name("D3D12 Storage writer");
++  REXGPU_INFO(
++      "SHADERSTORAGE loaded {} shaders and {} pipelines in {} ms ({})",
++      storage_shaders_total_.load(std::memory_order_relaxed), pipeline_stored_descriptions.size(),
++      std::chrono::duration_cast<std::chrono::milliseconds>(
++          std::chrono::steady_clock::now() - shader_storage_load_start)
++          .count(),
++      rex::path_to_utf8(pipeline_storage_file_path));
++  shader_storage_play_counting.store(true, std::memory_order_relaxed);
+ }
+ 
+ void PipelineCache::ShutdownShaderStorage() {
+@@ -754,5 +790,10 @@ void PipelineCache::ShutdownShaderStorage() {
+   shader_storage_cache_root_.clear();
+   shader_storage_title_id_ = 0;
++  if (shader_storage_play_counting.exchange(false, std::memory_order_relaxed)) {
++    REXGPU_INFO("SHADERSTORAGE compiled during play: {} shaders, {} pipelines",
++                shader_storage_play_shader_count.load(std::memory_order_relaxed),
++                shader_storage_play_pipeline_count.load(std::memory_order_relaxed));
++  }
+ }
+ 
+ void PipelineCache::EndSubmission() {
+@@ -1137,6 +1174,7 @@ bool PipelineCache::TranslateAnalyzedShader(DxbcShaderTranslator& translator,
+     REXGPU_ERROR("Shader {:016X} translation failed; marking as ignored", shader.ucode_data_hash());
+     return false;
+   }
++  CountShaderStoragePlay(shader_storage_play_shader_count);
+ 
+   const char* host_shader_type;
+   if (shader.type() == xenos::ShaderType::kVertex) {
+@@ -3029,5 +3067,6 @@ ID3D12PipelineState* PipelineCache::CreateD3D12Pipeline(
+   }
+   stats::Record(stats::Counter::kPipelines);
++  CountShaderStoragePlay(shader_storage_play_pipeline_count);
+   std::u16string name;
+   if (runtime_description.pixel_shader != nullptr) {
+     name = rex::string::to_utf16(fmt::format(
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -13,5 +13,6 @@
+ #include <array>
+ #include <atomic>
++#include <chrono>
+ #include <cstdint>
+ #include <cstring>
+ #include <memory>
+@@ -50,3 +50,24 @@
+ #include <rex/ui/vulkan/util.h>
+ 
++static std::atomic<uint32_t> shader_storage_play_shader_count{0};
++static std::atomic<uint32_t> shader_storage_play_pipeline_count{0};
++static std::atomic<bool> shader_storage_play_counting{false};
++
++static void LogShaderStoragePlayCount(uint32_t count) {
++  if (count < 16 || (count & (count - 1)) != 0) {
++    return;
++  }
++  REXGPU_INFO("SHADERSTORAGE compiled during play: {} shaders, {} pipelines",
++              shader_storage_play_shader_count.load(std::memory_order_relaxed),
++              shader_storage_play_pipeline_count.load(std::memory_order_relaxed));
++}
++
++static void CountShaderStoragePlay(std::atomic<uint32_t>& counter) {
++  if (!shader_storage_play_counting.load(std::memory_order_relaxed)) {
++    return;
++  }
++  const uint32_t count = counter.fetch_add(1, std::memory_order_relaxed) + 1;
++  LogShaderStoragePlayCount(count);
++}
++
+ REXCVAR_DEFINE_INT32(
+@@ -676,5 +700,9 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+                                                   uint32_t title_id, bool blocking) {
+   ShutdownShaderStorage();
++  shader_storage_play_counting.store(false, std::memory_order_relaxed);
++  shader_storage_play_shader_count.store(0, std::memory_order_relaxed);
++  shader_storage_play_pipeline_count.store(0, std::memory_order_relaxed);
++  const auto shader_storage_load_start = std::chrono::steady_clock::now();
+   {
+     std::lock_guard<std::mutex> lock(creation_request_lock_);
+     startup_loading_ = false;
+@@ -813,6 +842,7 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+   } shader_storage_file_header;
+   // 'XESH'.
+   const uint32_t shader_storage_magic = 0x48534558;
++  size_t shaders_loaded_from_storage = 0;
+   if (fread(&shader_storage_file_header, sizeof(shader_storage_file_header), 1,
+             shader_storage_file_) &&
+       shader_storage_file_header.magic == shader_storage_magic &&
+@@ -842,5 +872,6 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+       }
+       // Loaded from the current storage - don't write again.
+       shader->set_ucode_storage_index(shader_storage_index_);
++      ++shaders_loaded_from_storage;
+     }
+     rex::filesystem::TruncateStdioFile(shader_storage_file_, shader_storage_valid_bytes);
+@@ -1009,5 +1040,13 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+   assert_not_null(storage_write_thread_);
+   storage_write_thread_->set_name("Vulkan Storage writer");
++  REXGPU_INFO(
++      "SHADERSTORAGE loaded {} shaders and {} pipelines in {} ms ({})",
++      shaders_loaded_from_storage, pipeline_stored_descriptions.size(),
++      std::chrono::duration_cast<std::chrono::milliseconds>(
++          std::chrono::steady_clock::now() - shader_storage_load_start)
++          .count(),
++      rex::path_to_utf8(pipeline_storage_file_path));
++  shader_storage_play_counting.store(true, std::memory_order_relaxed);
+ }
+ 
+ void VulkanPipelineCache::ShutdownShaderStorage() {
+@@ -1040,5 +1079,10 @@ void VulkanPipelineCache::ShutdownShaderStorage() {
+   shader_storage_cache_root_.clear();
+   shader_storage_title_id_ = 0;
++  if (shader_storage_play_counting.exchange(false, std::memory_order_relaxed)) {
++    REXGPU_INFO("SHADERSTORAGE compiled during play: {} shaders, {} pipelines",
++                shader_storage_play_shader_count.load(std::memory_order_relaxed),
++                shader_storage_play_pipeline_count.load(std::memory_order_relaxed));
++  }
+ }
+ 
+ void VulkanPipelineCache::EndSubmission() {
+@@ -1607,6 +1647,7 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(SpirvShaderTranslator& translator,
+   if (translation.GetOrCreateShaderModule() == VK_NULL_HANDLE) {
+     return false;
+   }
++  CountShaderStoragePlay(shader_storage_play_shader_count);
+ 
+   // TODO(Triang3l): Log that the shader has been successfully translated in
+   // common code.
+@@ -3897,5 +3938,6 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments& creation_arguments,
+     return false;
+   }
++  CountShaderStoragePlay(shader_storage_play_pipeline_count);
+ #if REX_PLATFORM_ANDROID
+   android_pipelines_since_cache_save_.fetch_add(1, std::memory_order_relaxed);
+ #endif
