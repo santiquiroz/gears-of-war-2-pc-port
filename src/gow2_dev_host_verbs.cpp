@@ -351,9 +351,14 @@ VerbResult PawnEventVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
 
 VerbResult KnockdownVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
                          const dev_commands::Command& command) {
+  // With a speed the push also lifts the pawn by half of it, like a heavy blast (a Mauler's flail).
+  const bool lift = !command.args.empty();
+  const float speed = lift ? float(std::stoul(command.args[0])) : 192.0f;
   std::vector<uint8_t> parms;
-  AppendFloatBe(192.0f, &parms);
-  for (int i = 0; i < 5; ++i) AppendFloatBe(0.0f, &parms);
+  AppendFloatBe(speed, &parms);
+  AppendFloatBe(0.0f, &parms);
+  AppendFloatBe(lift ? speed / 2 : 0.0f, &parms);
+  for (int i = 0; i < 3; ++i) AppendFloatBe(0.0f, &parms);
   return PawnEventVerb(ctx, base, engine, command, "Knockdown", parms, "knocked down");
 }
 

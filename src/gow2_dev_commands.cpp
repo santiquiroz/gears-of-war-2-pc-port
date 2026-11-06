@@ -115,7 +115,8 @@ bool IsKnownVerb(std::string_view verb) {
 bool ArityOk(std::string_view verb, size_t nargs) {
   if (verb == "mark") return true;
   if (verb == "mapchange" || verb == "mapcommit") return nargs <= 1;
-  if (verb == "kill" || verb == "knockdown") return nargs == 1;
+  if (verb == "kill") return nargs == 1;
+  if (verb == "knockdown") return nargs == 1 || nargs == 2;
   if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "damage" ||
       verb == "specialmove")
     return nargs == 2;
@@ -124,7 +125,8 @@ bool ArityOk(std::string_view verb, size_t nargs) {
 
 std::string_view ArityText(std::string_view verb) {
   if (verb == "mapchange" || verb == "mapcommit") return "0 or 1";
-  if (verb == "kill" || verb == "knockdown") return "1";
+  if (verb == "kill") return "1";
+  if (verb == "knockdown") return "1 or 2";
   if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "damage" ||
       verb == "specialmove")
     return "2";
@@ -190,20 +192,25 @@ Command ParseKill(const std::vector<std::string>& tokens) {
   return out;
 }
 
-Command ParseKnockdown(const std::vector<std::string>& tokens) {
-  Command out;
-  out.kind = CommandKind::kHostVerb;
-  out.text = "knockdown";
-  out.target = ParseTargetToken(tokens[1]);
-  return out;
-}
-
-bool IsDamageAmount(std::string_view text) {
-  if (text.empty() || text.size() > 6 || text[0] == '0') return false;
+bool IsPositiveNumber(std::string_view text, size_t max_digits) {
+  if (text.empty() || text.size() > max_digits || text[0] == '0') return false;
   for (char c : text)
     if (c < '0' || c > '9') return false;
   return true;
 }
+
+Command ParseKnockdown(const std::vector<std::string>& tokens) {
+  if (tokens.size() > 2 && !IsPositiveNumber(tokens[2], 4))
+    return MakeError("!knockdown takes a speed from 1 to 9999, not '" + tokens[2] + "'");
+  Command out;
+  out.kind = CommandKind::kHostVerb;
+  out.text = "knockdown";
+  out.target = ParseTargetToken(tokens[1]);
+  if (tokens.size() > 2) out.args.push_back(tokens[2]);
+  return out;
+}
+
+bool IsDamageAmount(std::string_view text) { return IsPositiveNumber(text, 6); }
 
 Command ParseDamage(const std::vector<std::string>& tokens) {
   if (!IsDamageAmount(tokens[2]))

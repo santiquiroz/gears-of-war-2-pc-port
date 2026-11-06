@@ -293,7 +293,16 @@ void TestParseHostVerbs() {
         "!knockdown targets name P2");
   Check(ParseCommandLine("!knockdown").kind == CommandKind::kError, "!knockdown needs a target");
   Check(ParseCommandLine("!knockdown a b").kind == CommandKind::kError,
+        "!knockdown rejects a speed that is not a number");
+  Check(ParseCommandLine("!knockdown a 0").kind == CommandKind::kError, "!knockdown rejects speed 0");
+  Check(ParseCommandLine("!knockdown a 10000").kind == CommandKind::kError,
+        "!knockdown rejects speed 10000");
+  Check(ParseCommandLine("!knockdown a 800 1").kind == CommandKind::kError,
         "!knockdown rejects extras");
+  const Command fast = ParseCommandLine("!knockdown local 800");
+  Check(fast.kind == CommandKind::kHostVerb && fast.args.size() == 1 && fast.args[0] == "800",
+        "!knockdown keeps the speed");
+  Check(knockdown.args.empty(), "!knockdown without a speed has no arguments");
   const Command damage = ParseCommandLine("!damage local 2000");
   Check(damage.kind == CommandKind::kHostVerb && damage.text == "damage",
         "!damage is a host verb");
