@@ -41,6 +41,8 @@ set(GOW2_SOURCES
     src/gow2_coop_scenes.cpp
     src/gow2_coop_leash_plan.cpp
     src/gow2_coop_leash.cpp
+    src/gow2_cine_hint_plan.cpp
+    src/gow2_cine_hint.cpp
     src/gow2_test_input.cpp
     src/gow2_test_input_hook.cpp
     # Stage 2 test tooling (d-tools): dev only, every piece off unless its gow2_dev_* setting is set.
@@ -159,6 +161,12 @@ add_executable(gow2_coop_leash_test EXCLUDE_FROM_ALL
 )
 target_include_directories(gow2_coop_leash_test PRIVATE src)
 
+add_executable(gow2_cine_hint_test EXCLUDE_FROM_ALL
+    tools/tests/cine_hint_test.cpp
+    src/gow2_cine_hint_plan.cpp
+)
+target_include_directories(gow2_cine_hint_test PRIVATE src)
+
 # Host-side tests of the PC Options menu's pure parts (no game data, no SDK).
 add_executable(gow2_toml_edit_test EXCLUDE_FROM_ALL tools/tests/toml_edit_test.cpp src/gow2_toml_edit.cpp)
 add_executable(gow2_options_catalog_test EXCLUDE_FROM_ALL
@@ -193,7 +201,7 @@ foreach(_options_test gow2_toml_edit_test gow2_options_catalog_test gow2_options
         gow2_options_input_test gow2_options_values_test gow2_options_actions_test gow2_fps_cap_test
         gow2_audio_volume_test gow2_coalesced_text_test gow2_keycaps_test gow2_gpu_pick_test gow2_widescreen_math_test gow2_xex_identity_test gow2_frame_stats_test
         gow2_update_check_test gow2_native_renderer_math_test gow2_native_frontend_test gow2_prompt_device_test
-        gow2_disc_install_test gow2_key_names_test gow2_voice_language_test gow2_launcher_test
+        gow2_disc_install_test gow2_key_names_test gow2_voice_language_test gow2_launcher_test gow2_cine_hint_test
         gow2_texture_packs_test gow2_texture_pack_plan_test)
     target_include_directories(${_options_test} PRIVATE src)
 endforeach()

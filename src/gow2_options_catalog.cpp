@@ -1540,6 +1540,16 @@ void AddSystem(std::vector<Setting>& out) {
       .help_en = "Skips the Epic Games and Microsoft Game Studios logos at start. The game's own cinematics still play.",
       .help_es = "Salta los logos de Epic Games y Microsoft Game Studios al arrancar. Las cinemáticas del juego se siguen viendo."});
   out.push_back(Setting{
+      .id = "gow2_skip_hint",
+      .tab = Tab::kSystem,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Show how to skip cinematics",
+      .label_es = "Mostrar cómo saltar cinemáticas",
+      .help_en = "While a cinematic plays, a corner note shows the button that skips it (Back on a controller, Tab on the keyboard). Only the host can skip.",
+      .help_es = "Mientras se ve una cinemática, una nota en la esquina muestra el botón que la salta (Back en el mando, Tab en el teclado). Solo el anfitrión puede saltarla."});
+  out.push_back(Setting{
       .id = "gow2_launcher",
       .tab = Tab::kSystem,
       .kind = Kind::kToggle,
@@ -1744,6 +1754,10 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("Cancel", "Cancelar", lang);
     case TextId::kQuitSavesNote:
       return Pick("Your changes are saved first.", "Tus cambios se guardan antes de salir.", lang);
+    case TextId::kCineSkip:
+      return Pick("Skip cinematic", "Saltar cinemática", lang);
+    case TextId::kCineHostOnly:
+      return Pick("Only the host can skip the cinematic", "Solo el anfitrión puede saltar la cinemática", lang);
     case TextId::kHintPlay:
       return Pick("Play", "Jugar", lang);
     case TextId::kEditTextTitle:

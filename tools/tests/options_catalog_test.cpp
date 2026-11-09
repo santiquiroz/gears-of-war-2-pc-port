@@ -151,8 +151,10 @@ void TestUiTexts() {
       options::TextId::kEditTextTitle,
       options::TextId::kEditTextOk,
       options::TextId::kEditTextCancel,
+      options::TextId::kCineSkip,
+      options::TextId::kCineHostOnly,
   };
-  Expect(ids.size() == 36, "all 36 TextIds are listed");
+  Expect(ids.size() == 38, "all 38 TextIds are listed");
   for (options::TextId id : ids) {
     Expect(!options::Text(id, options::Lang::kEn).empty(), "Text EN is non-empty");
     Expect(!options::Text(id, options::Lang::kEs).empty(), "Text ES is non-empty");
@@ -208,7 +210,7 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
-  Expect(CountTab(options::Tab::kSystem) == 17, "system has 17 rows including skip intro videos and show options at start");
+  Expect(CountTab(options::Tab::kSystem) == 18, "system has 18 rows including skip intro videos, the skip hint and show options at start");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");

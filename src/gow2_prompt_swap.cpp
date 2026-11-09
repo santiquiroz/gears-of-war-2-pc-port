@@ -532,6 +532,8 @@ void PromptSwapTick(const PPCContext& ctx, uint8_t* base) {
 
 }  // namespace
 
+prompt_device::Device CurrentPromptDevice() { return CurrentDevice(); }
+
 void PrepareKeycapPack() {
   if (!PromptsFollowController() || (!KeycapFilesPresent() && !VariantPresent())) return;
   // The pages are swapped in by the texture pack. The GPU plugin registers texture_replace after

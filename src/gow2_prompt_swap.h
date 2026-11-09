@@ -8,11 +8,14 @@
 
 #include <filesystem>
 
+#include "gow2_prompt_device.h"
+
 namespace rex::glue {
 
 // Windows with gow2_prompts = auto, keyboard or playstation; anywhere else (or controller) it does nothing.
 void InstallPromptSwap(const std::filesystem::path& game_root);
 // Turns the texture pack on when the keycap pages are installed. Call before the runtime starts.
 void PrepareKeycapPack();
+prompt_device::Device CurrentPromptDevice();
 
 }  // namespace rex::glue

@@ -5,6 +5,10 @@
 #include "gow2_host_ui.h"
 #include "gow2_options_actions.h"
 #include "gow2_options_input.h"
+#include "gow2_cine_hint.h"
+#include "gow2_cine_hint_plan.h"
+#include "gow2_input_activity.h"
+#include "gow2_prompt_swap.h"
 #ifdef _WIN32
 #include "gow2_texture_pack_builder.h"
 #include "gow2_texture_pack_plan.h"
@@ -28,6 +32,7 @@
 #include <utility>
 #include <imgui.h>
 #include <rex/cvar.h>
+#include <rex/chrono/clock.h>
 #include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -356,7 +361,9 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
  protected:
 #if defined(__ANDROID__)
-  bool WantsContinuousPaint() const override { return open_ || releasing_ || toast_until_ > NowMs(); }
+  bool WantsContinuousPaint() const override {
+    return open_ || releasing_ || toast_until_ > NowMs() || CurrentCinematic().cinematic;
+  }
 #endif
   void OnDraw(ImGuiIO& io) override {
     pad_ = CurrentPad();
@@ -370,6 +377,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     if (!open_) {
       RetirePopups();
       DrawToast(io);
+      DrawCineHint(io);
 #ifdef _WIN32
       DrawUpdateNotice(io, now);
 #endif
@@ -1404,9 +1412,51 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::PopStyleVar();
   }
 
+  std::string KeyboardBackLabel() const {
+    std::string value = rex::cvar::Query<std::string>("keybind_back");
+    if (value.empty()) value = "Tab";
+    const size_t comma = value.find(',');
+    if (comma != std::string::npos) value.resize(comma);
+    if (value.empty()) value = "Tab";
+    return "[" + value + "]";
+  }
+
+  void DrawCineHint(const ImGuiIO& io) {
+    if (!rex::cvar::Query<bool>("gow2_skip_hint")) return;
+    const uint64_t now = rex::chrono::Clock::QueryHostUptimeMillis();
+    int pad_type = 0;
+    const uint64_t last_input = std::max(LastKeyboardMouseActivityMs(), LastPadActivityMs(&pad_type));
+    const CineNow game = CurrentCinematic();
+    const cine_hint::Hint hint = cine_hint::NextHint(
+        {game.cinematic, game.host, now, last_input}, &cine_state_);
+    if (hint == cine_hint::Hint::kNone) return;
+    std::string text;
+    if (hint == cine_hint::Hint::kSkip) {
+      const auto device = CurrentPromptDevice();
+      const std::string key = device == prompt_device::Device::kKeyboard
+                                  ? KeyboardBackLabel()
+                                  : "[" + std::string(cine_hint::PadKeyLabel(static_cast<int>(device))) + "]";
+      text = key + "  " + std::string(T(TextId::kCineSkip));
+    } else {
+      text = T(TextId::kCineHostOnly);
+    }
+    ImGui::SetNextWindowPos({io.DisplaySize.x * .96f, io.DisplaySize.y * .90f}, ImGuiCond_Always,
+                            {1, 1});
+    ImGui::SetNextWindowBgAlpha(.75f);
+    ImGui::Begin("##cine-hint", nullptr,
+                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    PushFont(.024f * io.DisplaySize.y);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopFont();
+    ImGui::End();
+  }
+
   CvarValues values_;
   OwnedContext context_;
   State state_;
+  cine_hint::HintState cine_state_;
   PadReader reader_;
   PadReader popup_pad_;
   PadSample pad_{};
