@@ -1236,10 +1236,11 @@ void AddHost(std::vector<Setting>& out) {
       .label_en = "Friends allowed",
       .label_es = "Amigos permitidos",
       .help_en =
-          "Friends' public IPs or DNS names, comma-separated. Empty: only your LAN and the Join addresses.",
+          "Friends' public IPs or DNS names, comma-separated. Empty: only your LAN and the Join addresses. "
+          "0.0.0.0/0: anyone who has your address.",
       .help_es =
           "IP públicas o nombres DNS de tus amigos, separados por comas. Vacío: solo tu LAN y las "
-          "direcciones de Unirse.",
+          "direcciones de Unirse. 0.0.0.0/0: cualquiera que tenga tu dirección.",
       .max_length = 255});
   out.push_back(Setting{
       .id = "gow2_host_close_on_exit",

@@ -60,6 +60,11 @@ struct HostResult {
   std::vector<HostRouter> routers;
   int open_ports = 0;
   std::vector<std::string> warnings;
+  std::string error_code;
+  std::string error_router;
+  bool partial = false;
+  std::string unmanaged_router;
+  std::string unmanaged_target;
 };
 
 // The script's last stdout line, "GOW2HOST {...}"; nullopt when it is not one.

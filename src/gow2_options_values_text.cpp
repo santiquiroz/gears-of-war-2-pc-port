@@ -10,6 +10,7 @@
 #include <limits>
 #include <locale>
 #include <sstream>
+#include <utility>
 
 namespace rex::glue::options::values_text {
 namespace {
@@ -120,6 +121,101 @@ std::string UpscaleRatio(std::string_view scale, std::string_view target_w,
   text << internal << " \xe2\x86\x92 " << target_w << 'x' << target_h << " ("
        << std::fixed << std::setprecision(1) << *height / (720 * factor) << "x)";
   return text.str();
+}
+
+namespace {
+
+std::string Pick(bool spanish, std::string english, std::string spanish_text) {
+  return spanish ? std::move(spanish_text) : std::move(english);
+}
+
+std::string PortPair(const options_actions::HostResult& result, std::string_view joiner) {
+  const bool has_pair = result.ports.size() == 2;
+  const int beacon = has_pair ? result.ports[0] : 14001;
+  const int game = has_pair ? result.ports[1] : 41000;
+  return std::to_string(beacon) + std::string(joiner) + std::to_string(game);
+}
+
+std::string HostStartText(const options_actions::HostResult& result, bool spanish,
+                          const std::string& time) {
+  if (!result.partial) {
+    return Pick(spanish, "Open until " + time + " at " + result.peer_name,
+                "Abierto hasta " + time + " en " + result.peer_name);
+  }
+  return Pick(spanish,
+              "Open until " + time + "; router " + result.unmanaged_router +
+                  " must send the ports to " + result.unmanaged_target + " (DMZ)",
+              "Abierto hasta " + time + "; el router " + result.unmanaged_router +
+                  " debe enviar los puertos a " + result.unmanaged_target + " (DMZ)");
+}
+
+std::string HostOkText(const options_actions::HostResult& result, bool spanish,
+                       const std::string& time) {
+  if (result.mode == "Start") return HostStartText(result, spanish, time);
+  if (result.mode == "Status" && result.open_ports > 0) {
+    const std::string count = std::to_string(result.open_ports);
+    return Pick(spanish, "Open (" + count + " ports)", "Abierto (" + count + " puertos)");
+  }
+  return Pick(spanish, "Closed", "Cerrado");
+}
+
+std::string RouterErrorText(const std::string& code, const std::string& router,
+                            const options_actions::HostResult& result, bool spanish) {
+  if (code == "upnp_off") {
+    return Pick(spanish,
+                "Router " + router + " has UPnP off: forward UDP " + PortPair(result, " and ") +
+                    " by hand",
+                "El router " + router + " tiene UPnP apagado: reenvía UDP " +
+                    PortPair(result, " y ") + " a mano");
+  }
+  if (code == "upnp_unresponsive") {
+    return Pick(spanish,
+                "Router " + router + " did not answer UPnP: restart it or forward the ports by hand",
+                "El router " + router +
+                    " no respondió por UPnP: reinícialo o reenvía los puertos a mano");
+  }
+  if (code == "outer_no_upnp") {
+    return Pick(spanish,
+                "Router " + router + " has no UPnP: point its DMZ here or forward the ports",
+                "El router " + router + " no tiene UPnP: apunta su DMZ aquí o reenvía los puertos");
+  }
+  if (code == "refused") {
+    return Pick(spanish,
+                "Router " + router + " does not allow UPnP changes: forward the ports by hand",
+                "El router " + router + " no permite cambios por UPnP: reenvía los puertos a mano");
+  }
+  if (code == "mapping_failed") {
+    return Pick(spanish, "Router " + router + " refused the ports: forward them by hand",
+                "El router " + router + " rechazó los puertos: reenvíalos a mano");
+  }
+  if (code == "conflict") {
+    return Pick(spanish, "The ports already go to another device on " + router,
+                "Los puertos ya van a otro equipo en " + router);
+  }
+  return {};
+}
+
+std::string HostErrorText(const options_actions::HostResult& result, bool spanish) {
+  const std::string& code = result.error_code;
+  if (code == "cgnat") {
+    return Pick(spanish, "Your ISP shares your address (CGNAT): use Tailscale or ZeroTier",
+                "Tu proveedor comparte tu dirección (CGNAT): usa Tailscale o ZeroTier");
+  }
+  if (code == "no_route") {
+    return Pick(spanish, "Could not follow the route to the internet",
+                "No se pudo seguir la ruta a internet");
+  }
+  std::string text = RouterErrorText(code, result.error_router, result, spanish);
+  if (!text.empty()) return text;
+  return "Error: " + result.error;
+}
+
+}  // namespace
+
+std::string HostResultText(const options_actions::HostResult& result, bool spanish,
+                           std::string_view lease_time) {
+  if (result.ok) return HostOkText(result, spanish, std::string(lease_time));
+  return HostErrorText(result, spanish);
 }
 
 std::string LeaseTime(std::string_view lease_end) {

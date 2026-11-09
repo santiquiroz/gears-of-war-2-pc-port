@@ -455,6 +455,11 @@ std::optional<options_actions::HostResult> ParseHostLine(std::string_view line) 
   if (!TakeRouters(FindField(root, "routers"), &result.routers)) return std::nullopt;
   if (!TakeInt(FindField(root, "open_ports"), &result.open_ports)) return std::nullopt;
   if (!TakeStringList(FindField(root, "warnings"), &result.warnings)) return std::nullopt;
+  if (!TakeString(FindField(root, "error_code"), &result.error_code)) return std::nullopt;
+  if (!TakeString(FindField(root, "error_router"), &result.error_router)) return std::nullopt;
+  if (!TakeBool(FindField(root, "partial"), &result.partial)) return std::nullopt;
+  if (!TakeString(FindField(root, "unmanaged_router"), &result.unmanaged_router)) return std::nullopt;
+  if (!TakeString(FindField(root, "unmanaged_target"), &result.unmanaged_target)) return std::nullopt;
   return result;
 }
 

@@ -1,6 +1,21 @@
 # Dot-sourced by host-online.ps1: IPv4 address checks, router discovery (traceroute hops, SSDP) and the
 # UPnP IGD calls (description, SOAP, port mappings). Uses the constants host-online.ps1 defines first.
 
+$script:UnresponsiveIgds = @{}
+$script:LastWanFailure = ''
+$script:HostErrors = @{}
+
+# The code travels keyed by the thrown message, so a tolerated failure caught earlier cannot label a later error.
+function Set-HostError([string]$Code, [string]$Router, [string]$Message) {
+    $script:HostErrors[$Message] = [pscustomobject]@{ Code = $Code; Router = $Router }
+    $Message
+}
+
+function Get-HostError([string]$Message) {
+    if ($script:HostErrors.ContainsKey($Message)) { return $script:HostErrors[$Message] }
+    [pscustomobject]@{ Code = 'other'; Router = '' }
+}
+
 function Test-DottedQuad([string]$Address) { $Address -match $DottedQuadPattern }
 
 function Get-IPv4Bytes([string]$Address) {
@@ -173,9 +188,22 @@ function Find-WanService([string]$Location, [string]$Address) {
     $null
 }
 
+function Get-ShortFailure([string]$Detail) {
+    # HttpClient reports its own timeout as a canceled task
+    if ($Detail -match '(?i)time[sd]?\s*out|timeout|task was cancel') { return 'timeout' }
+    $first = ([string](($Detail -split "`r?`n")[0])).Trim()
+    if ($first.Length -gt 80) { return $first.Substring(0, 80) }
+    $first
+}
+
 function Find-WanServiceOrWarn([string]$Location, [string]$Address) {
     try { Find-WanService $Location $Address }
-    catch { Write-Warn "Could not read the UPnP description at ${Location}: $($_.Exception.GetBaseException().Message)"; $null }
+    catch {
+        $detail = $_.Exception.GetBaseException().Message
+        $script:LastWanFailure = Get-ShortFailure $detail
+        Write-Warn "Could not read the UPnP description at ${Location}: $detail"
+        $null
+    }
 }
 
 function New-Igd([string]$Address, [string]$Server, [string]$Location, $Service) {
@@ -190,14 +218,17 @@ function Select-PinnedReplies($Replies, [string]$Address) {
 }
 
 function Find-RouterIgd([string]$Address, [string]$LocalAddress, $LanReplies) {
+    $script:UnresponsiveIgds.Remove($Address)
     $replies = @(Select-PinnedReplies $LanReplies $Address)
     if (-not $replies) { $replies = @(Select-PinnedReplies (Search-Igds $LocalAddress $Address) $Address) }
     $byVersion = @($replies | Sort-Object { $_.SearchTarget -notlike '*:2' })
+    $script:LastWanFailure = 'no WAN service'
     foreach ($location in @($byVersion | ForEach-Object { $_.Location } | Select-Object -Unique)) {
         $service = Find-WanServiceOrWarn $location $Address
         $reply = $byVersion | Where-Object { $_.Location -eq $location } | Select-Object -First 1
         if ($service) { return New-Igd $Address $reply.Server $location $service }
     }
+    if ($replies) { $script:UnresponsiveIgds[$Address] = $script:LastWanFailure }
     $null
 }
 
@@ -216,7 +247,7 @@ function Send-SoapRequest($Igd, [string]$Action, [string]$Body) {
         $response = $script:Http.SendAsync($request).GetAwaiter().GetResult()
         [pscustomobject]@{ Status = [int]$response.StatusCode; Text = (Read-ContentText $response) }
     } catch {
-        throw "The UPnP service of $($Igd.Address) did not answer $Action ($($Igd.ControlUrl)): $($_.Exception.GetBaseException().Message)"
+        throw (Set-HostError 'upnp_unresponsive' $Igd.Address "The UPnP service of $($Igd.Address) did not answer $Action ($($Igd.ControlUrl)): $($_.Exception.GetBaseException().Message)")
     }
 }
 
@@ -251,17 +282,17 @@ function Invoke-UpnpAction($Igd, [string]$Action, $Arguments) {
     ConvertFrom-SoapResponse $response
 }
 
-function Assert-UpnpSuccess($Result, [string]$What) {
+function Assert-UpnpSuccess($Result, [string]$What, [string]$Router) {
     if ($Result.Code -eq 0) { return }
     if ($Result.Code -eq $UpnpNotAuthorized) {
-        throw "$What was refused (UPnP error 606, Action not authorized): the router answers UPnP but does not let this PC change it. Allow UPnP port mapping in its settings."
+        throw (Set-HostError 'refused' $Router "$What was refused (UPnP error 606, Action not authorized): the router answers UPnP but does not let this PC change it. Allow UPnP port mapping in its settings.")
     }
     throw "$What failed: UPnP error $($Result.Code) $($Result.Description)."
 }
 
 function Get-ExternalAddress($Igd) {
     $result = Invoke-UpnpAction $Igd 'GetExternalIPAddress' ([ordered]@{})
-    Assert-UpnpSuccess $result "GetExternalIPAddress on $($Igd.Address)"
+    Assert-UpnpSuccess $result "GetExternalIPAddress on $($Igd.Address)" $Igd.Address
     $address = [string]$result.Values['NewExternalIPAddress']
     if (-not $address -or $address -eq '0.0.0.0') { throw "The router at $($Igd.Address) reports no WAN address: is it connected to the internet?" }
     if (-not (Test-DottedQuad $address) -or (Test-UnusableIPv4 $address)) { throw "The router at $($Igd.Address) reports '$address' as its WAN address, which is not a usable IPv4 address." }
@@ -293,14 +324,14 @@ function Get-PortMapping($Router, [int]$Port, [string]$Protocol = 'UDP', [string
     $arguments = [ordered]@{ NewRemoteHost = $RemoteHost; NewExternalPort = $Port; NewProtocol = $Protocol }
     $result = Invoke-UpnpAction $Router.Igd 'GetSpecificPortMappingEntry' $arguments
     if ($result.Code -eq $UpnpNoSuchEntry) { return $null }
-    Assert-UpnpSuccess $result "Reading the $Protocol $Port mapping on $($Router.Address)"
+    Assert-UpnpSuccess $result "Reading the $Protocol $Port mapping on $($Router.Address)" $Router.Address
     ConvertTo-Mapping $result.Values $Port $Protocol
 }
 
 function Get-GenericMapping($Router, [int]$Index) {
     $result = Invoke-UpnpAction $Router.Igd 'GetGenericPortMappingEntry' ([ordered]@{ NewPortMappingIndex = $Index })
     if ($result.Code -eq $UpnpInvalidArrayIndex -or $result.Code -eq $UpnpNoSuchEntry) { return $null }
-    Assert-UpnpSuccess $result "Reading mapping number $Index on $($Router.Address)"
+    Assert-UpnpSuccess $result "Reading mapping number $Index on $($Router.Address)" $Router.Address
     ConvertTo-Mapping $result.Values 0 ''
 }
 
@@ -317,7 +348,7 @@ function Get-DescribedMappings($Router) { @(Get-AllMappings $Router | Where-Obje
 function Remove-PortMappingEntry($Router, [int]$Port, [string]$Protocol, [string]$RemoteHost) {
     $arguments = [ordered]@{ NewRemoteHost = $RemoteHost; NewExternalPort = $Port; NewProtocol = $Protocol }
     $result = Invoke-UpnpAction $Router.Igd 'DeletePortMapping' $arguments
-    Assert-UpnpSuccess $result "Deleting $Protocol $Port on $($Router.Address)"
+    Assert-UpnpSuccess $result "Deleting $Protocol $Port on $($Router.Address)" $Router.Address
 }
 
 function Remove-PortMapping($Router, $Mapping) {

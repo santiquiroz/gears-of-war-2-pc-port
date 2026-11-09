@@ -3,6 +3,8 @@
 // Pure text conversions for PC Options values.
 #pragma once
 
+#include "gow2_options_actions.h"
+
 #include <optional>
 #include <string>
 #include <string_view>
@@ -22,5 +24,7 @@ std::string WindowSize(std::string_view width, std::string_view height);
 std::string UpscaleRatio(std::string_view scale, std::string_view target_w,
                          std::string_view target_h);
 std::string LeaseTime(std::string_view lease_end);
+std::string HostResultText(const options_actions::HostResult& result, bool spanish,
+                           std::string_view lease_time);
 
 }

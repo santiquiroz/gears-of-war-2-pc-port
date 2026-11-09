@@ -201,14 +201,8 @@ std::string CoopCheck() {
 }
 
 std::string HostResultText(const options_actions::HostResult& result) {
-  if (!result.ok) return "Error: " + result.error;
-  if (result.mode == "Start")
-    return Localized("Open until ", "Abierto hasta ") + values_text::LeaseTime(result.lease_end) +
-           Localized(" at ", " en ") + result.peer_name;
-  if (result.mode == "Status" && result.open_ports > 0)
-    return Localized("Open (", "Abierto (") + std::to_string(result.open_ports) +
-           Localized(" ports)", " puertos)");
-  return Localized("Closed", "Cerrado");
+  return values_text::HostResultText(result, MenuLang() == Lang::kEs,
+                                     values_text::LeaseTime(result.lease_end));
 }
 
 std::string HostStatus() {

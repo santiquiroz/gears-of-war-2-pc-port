@@ -4,7 +4,10 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\host-online.ps1 -Status [-Json]
 #   powershell -ExecutionPolicy Bypass -File scripts\host-online.ps1 -Stop [-Json]
 # With -Json, the last stdout line is "GOW2HOST <compact JSON>" with mode, ok, error, public_address,
-# peer_name, ports, lease_hours, lease_end, stop_scheduled_at, routers, open_ports and warnings.
+# peer_name, ports, lease_hours, lease_end, stop_scheduled_at, routers, open_ports, warnings,
+# error_code, error_router, partial, unmanaged_router and unmanaged_target.
+# error_code is '' when ok: upnp_off, upnp_unresponsive, outer_no_upnp, cgnat, refused,
+# mapping_failed, conflict, no_route or other. error_router names the router at fault or ''.
 # The game's in-game "Host over the internet" menu runs the script hidden with -Json and reads that line.
 param(
     [switch]$Start,
@@ -154,13 +157,29 @@ function Show-Router($Router) {
     Write-Note ("  its mappings point to {0}; control URL {1}" -f (Format-Known $Router.InternalClient), $igd.ControlUrl)
 }
 
+function Test-SharedOuterHop($Path) { $Path.EndHop -ge 2 -and (Test-SharedIPv4 $Path.EndAddress) }
+
+function Test-UnresponsiveEnd($Path) { $Path.End -eq 'no-igd' -and $script:UnresponsiveIgds.ContainsKey([string]$Path.EndAddress) }
+
+function Get-ForwardTarget($Path) {
+    if ($Path.EndHop -eq 1) { return Get-LocalIPv4 }
+    Format-Known $Path.Routers[-1].ExternalAddress
+}
+
+function Get-UnresponsiveMessage($Path) {
+    $target = Get-ForwardTarget $Path
+    $reason = $script:UnresponsiveIgds[$Path.EndAddress]
+    "The router at $($Path.EndAddress) (hop $($Path.EndHop)) answered the UPnP search but its UPnP service did not respond ($reason). Restart that router, or forward UDP $($script:Ports -join ' and ') to $target by hand, or point its DMZ at $target (docs/ONLINE.md)."
+}
+
 function Get-NoIgdMessage($Path) {
     $address = $Path.EndAddress
+    if (Test-SharedOuterHop $Path) { return Get-CgnatMessage "the next hop $address is in 100.64.0.0/10" }
+    if (Test-UnresponsiveEnd $Path) { return Get-UnresponsiveMessage $Path }
     if ($Path.EndHop -eq 1) {
         return "Your router $address answers no UPnP search: UPnP (IGD) is off or blocked. Turn it on in the router's settings, or forward UDP $($script:Ports -join ' and ') by hand (docs/ONLINE.md)."
     }
     $inner = $Path.Routers[-1]
-    if (Test-SharedIPv4 $address) { return Get-CgnatMessage "the next hop $address is in 100.64.0.0/10" }
     "The router at $address (hop $($Path.EndHop)) answers no UPnP search. The router before it has the private WAN address $(Format-Known $inner.ExternalAddress), so $address is either a second router of yours with UPnP off (turn UPnP on, or forward UDP $($script:Ports -join ' and ') to $(Format-Known $inner.ExternalAddress) by hand) or the ISP's carrier-grade NAT (then no forward can work)."
 }
 
@@ -199,9 +218,44 @@ function Get-OutermostAddress($Path) {
     $Path.Routers[-1].ExternalAddress
 }
 
-function Assert-ReachableFromInternet($Path) {
+function Get-PathEndErrorCode($Path) {
+    if ($Path.End -eq 'shared') { return 'cgnat' }
+    if (@('no-hop', 'too-deep') -contains $Path.End) { return 'no_route' }
+    if ($Path.End -ne 'no-igd') { return 'other' }
+    if (Test-SharedOuterHop $Path) { return 'cgnat' }
+    if (Test-UnresponsiveEnd $Path) { return 'upnp_unresponsive' }
+    if ($Path.EndHop -eq 1) { return 'upnp_off' }
+    'outer_no_upnp'
+}
+
+function Assert-PathComplete($Path) {
     $message = Get-PathEndMessage $Path
-    if ($message) { throw $message }
+    if (-not $message) { return }
+    $code = Get-PathEndErrorCode $Path
+    $router = if (@('upnp_off', 'upnp_unresponsive', 'outer_no_upnp') -contains $code) { $Path.EndAddress } else { '' }
+    throw (Set-HostError $code $router $message)
+}
+
+function Test-UnmanagedOuterRouter($Path) {
+    $Path.End -eq 'no-igd' -and $Path.EndHop -ge 2 -and @($Path.Routers).Count -gt 0 -and -not (Test-SharedOuterHop $Path)
+}
+
+function Use-UnmanagedOuterRouter($Path) {
+    $internetView = Get-InternetIPv4
+    if (-not $internetView) { Assert-PathComplete $Path }
+    Write-Section 'Public address'
+    Write-Note "$PublicAddressService sees this PC as: $internetView"
+    $target = [string]$Path.Routers[-1].ExternalAddress
+    Write-Warn "The router at $($Path.EndAddress) (hop $($Path.EndHop)) was not changed: friends reach this PC only if it already sends UDP $($script:Ports -join ' and ') to $(Format-Known $target) (a DMZ or a port forward), and only if it is your own router, not the ISP's carrier-grade NAT."
+    $script:JsonResult['partial'] = $true
+    $script:JsonResult['unmanaged_router'] = $Path.EndAddress
+    $script:JsonResult['unmanaged_target'] = $target
+    $internetView
+}
+
+function Assert-ReachableFromInternet($Path) {
+    if (Test-UnmanagedOuterRouter $Path) { return Use-UnmanagedOuterRouter $Path }
+    Assert-PathComplete $Path
     $routerView = Get-OutermostAddress $Path
     $internetView = Get-InternetIPv4
     Write-Section 'Public address'
@@ -209,7 +263,7 @@ function Assert-ReachableFromInternet($Path) {
     if (-not $internetView) { Write-Warn "$PublicAddressService did not answer; the address was not cross-checked."; return $routerView }
     Write-Note "$PublicAddressService sees this PC as: $internetView"
     if ($internetView -ne $routerView) {
-        throw (Get-CgnatMessage "the outermost router reports $routerView but the internet sees $internetView; a VPN or proxy on this PC gives the same symptom")
+        throw (Set-HostError 'cgnat' '' (Get-CgnatMessage "the outermost router reports $routerView but the internet sees $internetView; a VPN or proxy on this PC gives the same symptom"))
     }
     $routerView
 }
@@ -249,10 +303,11 @@ function Assert-NoConflicts($Plan) {
     if (-not $taken) { return }
     Write-Section 'Ports already taken'
     foreach ($item in $taken) { Write-Warn ("taken " + (Format-Mapping $item.Router $item.Mapping)) }
-    if (@($taken | Where-Object { $_.Verdict -eq 'conflict' })) {
-        throw "Refusing to map: the ports above already go to another device or port. Free them on the router (or stop the program that made them), then run -Start again."
+    $conflicts = @($taken | Where-Object { $_.Verdict -eq 'conflict' })
+    if ($conflicts) {
+        throw (Set-HostError 'conflict' $conflicts[0].Router.Address "Refusing to map: the ports above already go to another device or port. Free them on the router (or stop the program that made them), then run -Start again.")
     }
-    throw "Refusing to map: the ports above carry this script's description but point elsewhere: an earlier -Start from another LAN address, or another PC that hosts. Run -Stop on that PC, or -Stop here (it deletes every mapping with this description), then -Start again."
+    throw (Set-HostError 'conflict' $taken[0].Router.Address "Refusing to map: the ports above carry this script's description but point elsewhere: an earlier -Start from another LAN address, or another PC that hosts. Run -Stop on that PC, or -Stop here (it deletes every mapping with this description), then -Start again.")
 }
 
 function Request-Mapping($Router, [int]$Port, [int]$LeaseSeconds) {
@@ -279,8 +334,14 @@ function Add-MappingWithLease($Router, [int]$Port, [int]$LeaseSeconds, [bool]$Is
         Remove-PortMappingEntry $Router $Port 'UDP' ''
         $result = Request-Mapping $Router $Port $LeaseSeconds
     }
-    if ($result.Code -eq $UpnpConflictInMapping) { throw "$($Router.Address) refused UDP ${Port}: it is already mapped to another device (UPnP error 718)." }
-    Assert-UpnpSuccess $result "Mapping UDP $Port on $($Router.Address) to $($Router.InternalClient)"
+    Assert-MappingSuccess $Router $Port $result
+}
+
+function Assert-MappingSuccess($Router, [int]$Port, $Result) {
+    if ($Result.Code -eq 0) { return }
+    if ($Result.Code -eq $UpnpNotAuthorized) { Assert-UpnpSuccess $Result "Mapping UDP $Port on $($Router.Address) to $($Router.InternalClient)" $Router.Address }
+    $message = "Router $($Router.Address) refused the mapping (UPnP $($Result.Code) $($Result.Description)): another rule may already use the port; forward UDP $($script:Ports -join ' and ') to $(Format-Known $Router.InternalClient) by hand."
+    throw (Set-HostError 'mapping_failed' $Router.Address $message)
 }
 
 function Confirm-Mapping($Router, [int]$Port, [string]$Label) {
@@ -572,6 +633,8 @@ $script:JsonResult = [ordered]@{
     mode = 'Status'
     ok = $true
     error = ''
+    error_code = ''
+    error_router = ''
     public_address = ''
     peer_name = ''
     ports = @()
@@ -580,6 +643,9 @@ $script:JsonResult = [ordered]@{
     stop_scheduled_at = ''
     routers = @()
     open_ports = 0
+    partial = $false
+    unmanaged_router = ''
+    unmanaged_target = ''
     warnings = @()
 }
 $exitCode = 0
@@ -601,6 +667,9 @@ try {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     if ($_.FullyQualifiedErrorId -ne $_.Exception.Message) { Write-Host $_.ScriptStackTrace }  # not one of this script's own messages
     $script:JsonResult['error'] = $_.Exception.Message
+    $hostError = Get-HostError $_.Exception.Message
+    $script:JsonResult['error_code'] = $hostError.Code
+    $script:JsonResult['error_router'] = [string]$hostError.Router
     $exitCode = 1
 } finally {
     try { Stop-LogFile } finally {

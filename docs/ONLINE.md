@@ -94,7 +94,7 @@ powershell -ExecutionPolicy Bypass -File scripts\host-online.ps1 -Stop
 file records, both ports on every router, any other mapping with the script's description, and
 the scheduled `-Stop`. `-PortOffset` follows a different `net_port_offset`.
 
-Add `-Json` to any mode for a machine-readable result: the last stdout line is `GOW2HOST <compact JSON>` with the fields `mode`, `ok`, `error`, `public_address`, `peer_name`, `ports`, `lease_hours`, `lease_end`, `stop_scheduled_at`, `routers`, `open_ports` and `warnings`. The game's in-game "Host over the internet" menu runs the script hidden with `-Json` and reads that line; every existing message stays as it is.
+Add `-Json` to any mode for a machine-readable result: the last stdout line is `GOW2HOST <compact JSON>` with the fields `mode`, `ok`, `error`, `public_address`, `peer_name`, `ports`, `lease_hours`, `lease_end`, `stop_scheduled_at`, `routers`, `open_ports`, `warnings`, `error_code`, `error_router`, `partial`, `unmanaged_router` and `unmanaged_target`. The game's in-game "Host over the internet" menu runs the script hidden with `-Json` and reads that line; every existing message stays as it is.
 
 `-Stop` must run on the PC and under the Windows account that ran `-Start`, because it reads that
 account's state file; the PC's LAN address may have changed since. It:
@@ -119,12 +119,46 @@ after the lease ended, and `-Stop` deleted it. With two routers in a row the pat
 inner router drops its mappings, but a modem like that keeps its own until `-Stop`. [V on that
 network]
 
-It stops with a message, and maps nothing, when a router on the path does not answer UPnP (turn
-UPnP on there, or forward by hand as below), when a router refuses changes (UPnP error 606), and
-when it detects carrier-grade NAT: the outermost WAN address is in 100.64.0.0/10, or differs from
-the address the internet sees. If a router's WAN address is private and the next hop does not
-answer UPnP, that hop is either a second router of yours with UPnP off or the ISP's carrier-grade
-NAT; the message names both.
+It stops with a message, and maps nothing, when the first router does not answer UPnP (turn UPnP
+on there, or forward by hand as below), when a router refuses changes (UPnP error 606), and when
+it detects carrier-grade NAT: the outermost WAN address is in 100.64.0.0/10, or differs from the
+address the internet sees. If a router's WAN address is private and the next hop does not answer
+UPnP, that hop is either a second router of yours with UPnP off or the ISP's carrier-grade NAT;
+the message names both. A router that refuses an AddPortMapping with any other UPnP error (501
+ActionFailed, 718) stops the run too: another rule may already use the port, so forward UDP 14001
+and 41000 to the address the message names by hand. [V code]
+
+A router can answer the UPnP search (SSDP) and then not serve its UPnP description or control
+URL, for example an ISP modem whose HTTP server accepts the connection and never replies. The
+message then says that the router answered the search but its UPnP service did not respond, with
+the reason (`timeout`), and suggests restarting that router, forwarding UDP 14001 and 41000 by
+hand, or pointing its DMZ at the device just inside it: this PC for the first router, otherwise
+the WAN address of the router before it. [V code]
+
+Partial mode, `-Start` only: when a router after the first one cannot be managed (no answer to
+the search, or a UPnP service that does not respond) and its address is not in 100.64.0.0/10, the
+script still maps both ports on the routers inside it and succeeds with a warning. The public
+address is then the one https://api.ipify.org reports (the run stops as before when it does not
+answer), with no comparison against a router. The warning says that the outer router was not
+changed: friends reach this PC only if it already sends UDP 14001 and 41000 to the WAN address of
+the router inside it (a DMZ or a port forward), and only if it is your own router, not the ISP's
+carrier-grade NAT. This fits an ISP modem whose DMZ points at your own router. Leases, the state
+file, the conflict checks, the undo on failure and the scheduled `-Stop` work as in a full run;
+`-Stop` and `-Status` do not change. [V code]
+
+With `-Json` the result also carries:
+- `error_code`, empty when `ok` is true: `upnp_off` (the first router answers no search),
+  `upnp_unresponsive` (a router answered the search but its UPnP service did not work),
+  `outer_no_upnp` (a later router answers no search and partial mode does not apply), `cgnat`,
+  `refused` (UPnP error 606), `mapping_failed` (any other AddPortMapping error), `conflict` (a
+  port already goes to another device or port), `no_route` (a traceroute hop did not answer, or
+  too many routers) or `other`;
+- `error_router`, the router the error is about, empty when it is not about one router;
+- `partial`, true after a partial-mode `-Start`, with `unmanaged_router` (the router left
+  unchanged) and `unmanaged_target` (where it must send the ports); both are empty otherwise.
+
+`error` keeps the full English message. The in-game page shows a short English or Spanish text
+for each code and `Error: ` with that message for `other`. [V code, unit tests]
 
 On 2026-10-15, on a home network with two routers in a row (an OpenWRT router behind the ISP's
 cable modem), it ran in both PowerShell versions: `-Start` with a 6-minute lease, whose automatic

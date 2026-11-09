@@ -200,6 +200,51 @@ void TestPeerValidation() {
   Expect(!IsValidAllowPeers(" \t"), "blank peer fails");
 }
 
+void TestPartialFields() {
+  const std::optional<HostResult> parsed = ParseHostLine(
+      "GOW2HOST {\"mode\":\"Start\",\"ok\":true,\"error\":\"\",\"public_address\":\"203.0.113.7\","
+      "\"peer_name\":\"203.0.113.7\",\"ports\":[14001,41000],\"lease_hours\":6,"
+      "\"lease_end\":\"2026-10-16T22:40:00\",\"stop_scheduled_at\":\"\",\"routers\":[],"
+      "\"open_ports\":0,\"warnings\":[],\"error_code\":\"\",\"error_router\":\"\","
+      "\"partial\":true,\"unmanaged_router\":\"192.168.0.1\","
+      "\"unmanaged_target\":\"192.168.0.20\"}");
+  Expect(parsed.has_value(), "partial line parses");
+  if (!parsed) return;
+  Expect(parsed->error_code.empty() && parsed->error_router.empty(), "ok line has no error code");
+  Expect(parsed->partial, "partial is read");
+  Expect(parsed->unmanaged_router == "192.168.0.1", "unmanaged_router is read");
+  Expect(parsed->unmanaged_target == "192.168.0.20", "unmanaged_target is read");
+}
+
+void TestErrorCodeFields() {
+  const std::optional<HostResult> parsed = ParseHostLine(
+      "GOW2HOST {\"mode\":\"Start\",\"ok\":false,\"error\":\"Router 192.168.50.1 refused\","
+      "\"error_code\":\"mapping_failed\",\"error_router\":\"192.168.50.1\",\"partial\":false,"
+      "\"unmanaged_router\":\"\",\"unmanaged_target\":\"\"}");
+  Expect(parsed.has_value(), "error line parses");
+  if (!parsed) return;
+  Expect(parsed->error_code == "mapping_failed", "error_code is read");
+  Expect(parsed->error_router == "192.168.50.1", "error_router is read");
+  Expect(!parsed->partial, "partial false is read");
+}
+
+void TestLineWithoutNewFields() {
+  const std::optional<HostResult> parsed = ParseHostLine("GOW2HOST {\"mode\":\"Status\",\"ok\":true}");
+  Expect(parsed.has_value(), "line without the new fields parses");
+  if (!parsed) return;
+  Expect(parsed->error_code.empty() && parsed->error_router.empty(), "error fields default");
+  Expect(!parsed->partial, "partial defaults to false");
+  Expect(parsed->unmanaged_router.empty() && parsed->unmanaged_target.empty(),
+         "unmanaged fields default");
+}
+
+void TestNewFieldWrongTypes() {
+  Expect(!ParseHostLine("GOW2HOST {\"mode\":\"Start\",\"partial\":\"yes\"}"), "string partial fails");
+  Expect(!ParseHostLine("GOW2HOST {\"mode\":\"Start\",\"error_code\":7}"), "numeric error_code fails");
+  Expect(!ParseHostLine("GOW2HOST {\"mode\":\"Start\",\"unmanaged_target\":[]}"),
+         "array unmanaged_target fails");
+}
+
 int main() {
   TestWindowsArgumentQuoting();
   TestHostnameValidation();
@@ -212,6 +257,10 @@ int main() {
   TestMissingPrefix();
   TestMalformed();
   TestTrailingSpaceAndDefaults();
+  TestPartialFields();
+  TestErrorCodeFields();
+  TestLineWithoutNewFields();
+  TestNewFieldWrongTypes();
   std::printf("options_actions_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }
