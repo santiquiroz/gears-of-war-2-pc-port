@@ -555,6 +555,53 @@ void TestUnsavedPrompt() {
          "Discard restores value and clears prompt");
 }
 
+void TestQuitPrompt() {
+  Fixture cancel;
+  ExpectOutcome(Send(cancel, Command::kQuit), Outcome::Kind::kNone, "", "quit command opens confirmation");
+  Expect(cancel.state.prompt == Prompt::kQuit && cancel.state.prompt_choice == 1,
+         "quit confirmation defaults to Cancel");
+  ExpectOutcome(Send(cancel, Command::kAccept), Outcome::Kind::kNone, "", "default quit choice cancels");
+  Expect(cancel.state.prompt == Prompt::kNone, "cancel closes quit prompt");
+
+  Fixture confirm;
+  Send(confirm, Command::kQuit);
+  Send(confirm, Command::kLeft);
+  ExpectOutcome(Send(confirm, Command::kAccept), Outcome::Kind::kRunAction, "quit_game",
+                "left selects quit action");
+  Expect(confirm.state.prompt == Prompt::kNone, "confirmed quit closes prompt");
+
+  Fixture repeated;
+  Send(repeated, Command::kQuit);
+  ExpectOutcome(Send(repeated, Command::kQuit), Outcome::Kind::kRunAction, "quit_game",
+                "second quit command confirms immediately");
+
+  Fixture back;
+  Send(back, Command::kQuit);
+  ExpectOutcome(Send(back, Command::kBack), Outcome::Kind::kNone, "", "back dismisses quit prompt");
+  Expect(back.state.prompt == Prompt::kNone, "back closes quit prompt");
+
+  Fixture unsaved;
+  Send(unsaved, Command::kRight);
+  Send(unsaved, Command::kBack);
+  Expect(unsaved.state.prompt == Prompt::kUnsaved, "dirty back opens unsaved prompt");
+  ExpectOutcome(Send(unsaved, Command::kQuit), Outcome::Kind::kNone, "", "quit ignored by unsaved prompt");
+  Expect(unsaved.state.prompt == Prompt::kUnsaved, "quit leaves unsaved prompt open");
+
+  Fixture row;
+  row.catalog.push_back(MakeRow("quit_game", Kind::kAction, Tab::kSystem));
+  row.values.current["quit_game"] = "";
+  const auto tabs = VisibleTabs(row.catalog, row.values, row.context);
+  const auto system = std::find(tabs.begin(), tabs.end(), Tab::kSystem);
+  Expect(system != tabs.end(), "system tab is visible for quit action");
+  if (system != tabs.end()) {
+    SelectTab(row.state, static_cast<int>(system - tabs.begin()), row.catalog, row.values, row.context);
+    Select(row, "quit_game");
+    ExpectOutcome(Send(row, Command::kAccept), Outcome::Kind::kNone, "", "quit row opens confirmation");
+    Expect(row.state.prompt == Prompt::kQuit && row.state.prompt_choice == 1,
+           "quit row uses same cancel-default confirmation");
+  }
+}
+
 void TestPointerCommandsAndRows() {
   Fixture f;
   const int original = f.state.row;
@@ -758,6 +805,7 @@ int main() {
   TestEditingAndTouched();
   TestSelectionRevalidation();
   TestUnsavedPrompt();
+  TestQuitPrompt();
   TestPointerCommandsAndRows();
   TestInfoAndActionRowsNeverShowChanged();
   TestRestartPending();

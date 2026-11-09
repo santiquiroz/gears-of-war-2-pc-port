@@ -1734,6 +1734,16 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("Close", "Cerrar", lang);
     case TextId::kHintQuit:
       return Pick("Quit game", "Salir del juego", lang);
+    case TextId::kHintMove:
+      return Pick("Move", "Mover", lang);
+    case TextId::kQuitTitle:
+      return Pick("Quit the game?", "¿Salir del juego?", lang);
+    case TextId::kQuitConfirm:
+      return Pick("Quit", "Salir", lang);
+    case TextId::kQuitCancel:
+      return Pick("Cancel", "Cancelar", lang);
+    case TextId::kQuitSavesNote:
+      return Pick("Your changes are saved first.", "Tus cambios se guardan antes de salir.", lang);
     case TextId::kHintPlay:
       return Pick("Play", "Jugar", lang);
     case TextId::kEditTextTitle:

@@ -594,6 +594,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
   void ReadMenuInput(int64_t now) {
     for (const auto command : reader_.Update(pad_, now)) Dispatch(command);
+    const bool ctrl = ImGui::GetIO().KeyCtrl;
     constexpr std::array<std::pair<ImGuiKey, Command>, 13> keys{{
         {ImGuiKey_UpArrow, Command::kUp}, {ImGuiKey_DownArrow, Command::kDown},
         {ImGuiKey_LeftArrow, Command::kLeft}, {ImGuiKey_RightArrow, Command::kRight},
@@ -603,8 +604,16 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
         {ImGuiKey_E, Command::kTabNext}, {ImGuiKey_PageDown, Command::kTabNext},
         {ImGuiKey_Delete, Command::kResetRow}}};
     for (const auto [key, command] : keys)
-      if (key != ImGuiKey_None && ImGui::IsKeyPressed(key)) Dispatch(command);
-    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) Dispatch(Command::kSave);
+      if (key != ImGuiKey_None && !(ctrl && key == ImGuiKey_Q) && ImGui::IsKeyPressed(key)) Dispatch(command);
+    if (!ctrl) {
+      constexpr std::array<std::pair<ImGuiKey, Command>, 4> movement{{
+          {ImGuiKey_W,Command::kUp},{ImGuiKey_S,Command::kDown},
+          {ImGuiKey_A,Command::kLeft},{ImGuiKey_D,Command::kRight}}};
+      for (const auto [key, command] : movement)
+        if (ImGui::IsKeyPressed(key)) Dispatch(command);
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Q)) Dispatch(Command::kQuit);
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) Dispatch(Command::kSave);
   }
 
   bool Hit(const char* id, ImVec2 pos, ImVec2 size) {
@@ -619,7 +628,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::SetNextWindowSize({1,1});
     ImGui::Begin("##pc-options",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoBackground|
         ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_NoSavedSettings);
-    constexpr std::array<const char*,2> popups{"##unsaved-options","##options-editor"};
+    constexpr std::array<const char*,3> popups{"##unsaved-options","##quit-options","##options-editor"};
     for (const auto* popup : popups) {
       if (!ImGui::IsPopupOpen(popup)) continue;
       if (!ImGui::BeginPopupModal(popup,nullptr,ImGuiWindowFlags_NoDecoration)) continue;
@@ -653,6 +662,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     DrawRestart();
     DrawFooter();
     if (state_.prompt == Prompt::kUnsaved || ImGui::IsPopupOpen("##unsaved-options")) DrawUnsaved();
+    if (state_.prompt == Prompt::kQuit || ImGui::IsPopupOpen("##quit-options")) DrawQuit();
     DrawEditor();
     ImGui::End();
   }
@@ -664,10 +674,44 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     const float title_width = TextWidth(title, .06f*h_, true);
     ImGui::GetWindowDrawList()->AddRectFilled({left_, y + .07f*h_},
         {left_ + title_width, y + .076f*h_}, kRed);
+    DrawHeaderQuit();
     if (state_.page == Page::kMain) return;
     const auto page = T(PageTitle(state_.page));
     DrawTriangle({left_+title_width+.03f*h_,y+.0355f*h_},true,kGray);
     DrawText({left_+title_width+.05f*h_,y+.018f*h_},page,.035f*h_,kGray,true);
+  }
+
+  void DrawHeaderQuit() {
+    const float height = std::max(44.f,.05f*h_);
+    const bool show_key = device_ == Device::kKeyboard || device_ == Device::kPad;
+    const std::string_view key = device_ == Device::kPad ? "View" : "Ctrl+Q";
+    const auto label = T(TextId::kHintQuit);
+    const float font = .022f*h_;
+    const float key_width = show_key ? TextWidth(key,font)+.016f*h_ : 0.f;
+    const float button_width = TextWidth(label,font,true)+key_width+.04f*h_;
+    const float y = .06f*h_+.03f*h_-height*.5f;
+    const ImVec2 pos{left_+width_-button_width,y};
+    const ImVec2 size{button_width,height};
+    const bool clicked = Hit("##quit-header",pos,size);
+    const bool hovered = ImGui::IsItemHovered();
+    auto* draw = ImGui::GetWindowDrawList();
+    if (hovered) draw->AddRectFilled(pos,{pos.x+size.x,pos.y+size.y},IM_COL32(179,25,27,77));
+    draw->AddRect(pos,{pos.x+size.x,pos.y+size.y},IM_COL32(224,80,80,255),0.f,0,1.f);
+    float text_x = pos.x+.02f*h_;
+    if (show_key) {
+      DrawCap({text_x,pos.y+(height-font-.012f*h_)*.5f},key,font);
+      text_x += key_width+.008f*h_;
+    } else {
+      text_x += (button_width-TextWidth(label,font,true))*.5f-.02f*h_;
+    }
+    DrawText({text_x,pos.y+(height-font)*.5f},label,font,IM_COL32(224,80,80,255),true);
+    if (device_ == Device::kPad) {
+      const float progress = reader_.QuitHoldProgress(NowMs());
+      if (progress > 0.f)
+        draw->AddRectFilled({pos.x,pos.y+height-3.f},{pos.x+button_width*progress,pos.y+height},
+                            IM_COL32(224,80,80,255));
+    }
+    if (clicked && !ModalActive()) Dispatch(Command::kQuit);
   }
 
   void DrawCap(ImVec2 pos, std::string_view key, float size) {
@@ -905,21 +949,36 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       DrawPointerFooter();
       return;
     }
+    if (device_ == Device::kPad) {
+      constexpr std::array<Command,4> commands{Command::kAccept,Command::kBack,Command::kResetRow,Command::kSave};
+      const std::array<TextId,4> text{TextId::kHintChange,BackHint(),TextId::kHintDefault,TextId::kHintSave};
+      constexpr std::array<const char*,4> pad_keys{"A","B","X","Y"};
+      constexpr std::array<ImU32,4> colors{kGreen,IM_COL32(224,80,80,255),IM_COL32(74,144,226,255),IM_COL32(232,196,64,255)};
+      const float item_width = width_/4;
+      for (size_t i=0;i<commands.size();++i) {
+        const ImVec2 pos{left_+item_width*static_cast<float>(i),.875f*h_};
+        ImGui::PushID(static_cast<int>(i));
+        DrawPadHint(pos,pad_keys[i],T(text[i]),colors[i]);
+        if (Hit("##footer",pos,{item_width,std::max(44.f,.055f*h_)}) && !ModalActive()) Dispatch(commands[i]);
+        ImGui::PopID();
+      }
+      return;
+    }
     constexpr std::array<Command,4> commands{Command::kAccept,Command::kBack,Command::kResetRow,Command::kSave};
     const std::array<TextId,4> text{TextId::kHintChange,BackHint(),TextId::kHintDefault,TextId::kHintSave};
     constexpr std::array<const char*,4> keys{"Enter","Esc","Del","Ctrl+S"};
-    constexpr std::array<const char*,4> pad_keys{"A","B","X","Y"};
-    constexpr std::array<ImU32,4> colors{kGreen,IM_COL32(224,80,80,255),IM_COL32(74,144,226,255),IM_COL32(232,196,64,255)};
-    const float item_width = width_/4;
+    const float item_width = width_/5;
+    const ImVec2 move_pos{left_,.875f*h_};
+    DrawCap(move_pos,"WASD",.020f*h_);
+    DrawText({move_pos.x+TextWidth("WASD",.020f*h_)+.024f*h_,move_pos.y+.004f*h_},
+             T(TextId::kHintMove),.022f*h_,kGray);
+    Hit("##footer-move",move_pos,{item_width,std::max(44.f,.055f*h_)});
     for (size_t i=0;i<commands.size();++i) {
-      const ImVec2 pos{left_+item_width*static_cast<float>(i),.875f*h_};
+      const ImVec2 item_pos{left_+item_width*static_cast<float>(i+1),.875f*h_};
       ImGui::PushID(static_cast<int>(i));
-      if (device_ == Device::kPad) DrawPadHint(pos,pad_keys[i],T(text[i]),colors[i]);
-      else {
-        DrawCap(pos,keys[i],.020f*h_);
-        DrawText({pos.x+TextWidth(keys[i],.020f*h_)+.024f*h_,pos.y+.004f*h_},T(text[i]),.022f*h_,kGray);
-      }
-      if (Hit("##footer",pos,{item_width,std::max(44.f,.055f*h_)}) && !ModalActive()) Dispatch(commands[i]);
+      DrawCap(item_pos,keys[i],.020f*h_);
+      DrawText({item_pos.x+TextWidth(keys[i],.020f*h_)+.024f*h_,item_pos.y+.004f*h_},T(text[i]),.022f*h_,kGray);
+      if (Hit("##footer",item_pos,{item_width,std::max(44.f,.055f*h_)}) && !ModalActive()) Dispatch(commands[i]);
       ImGui::PopID();
     }
   }
@@ -943,11 +1002,6 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       ImGui::PopID();
       if (clicked && !ModalActive()) Dispatch(commands[i]);
     }
-    ImGui::SetCursorScreenPos({left_+item_width*static_cast<float>(commands.size()),.875f*h_});
-    ImGui::PushID("quit_game");
-    const bool quit = DrawButton(std::string(T(TextId::kHintQuit)).c_str(),size,false);
-    ImGui::PopID();
-    if (quit && !ModalActive()) RunAction("quit_game");
     ImGui::PopFont();
   }
 
@@ -995,6 +1049,12 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
         ImGui::GetStyle().ItemSpacing.y*2+std::max(44.f,.06f*h_);
   }
 
+  float QuitHeight(float width) const {
+    float height = .044f*h_+PanelTextHeight(T(TextId::kQuitTitle),width);
+    if (!state_.touched.empty()) height += ImGui::GetStyle().ItemSpacing.y+PanelTextHeight(T(TextId::kQuitSavesNote),width);
+    return height+ImGui::GetStyle().ItemSpacing.y*2+std::max(44.f,.06f*h_);
+  }
+
   float KeyboardHeight(float available) const {
     const auto& style = ImGui::GetStyle();
     const float minimum_width = 44.f*10+style.ItemSpacing.x*9;
@@ -1037,6 +1097,37 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
         if (clicked) { state_.prompt_choice=i; Dispatch(Command::kAccept); }
       }
       if (state_.prompt != Prompt::kUnsaved || !open_) ImGui::CloseCurrentPopup();
+    }
+    EndPanel(visible);
+  }
+
+  void DrawQuit() {
+    const float width = std::min(width_,.95f*h_);
+    const bool visible = BeginPanel("##quit-options",width,QuitHeight(width));
+    if (visible) {
+      if (state_.prompt != Prompt::kQuit) {
+        ImGui::CloseCurrentPopup();
+        EndPanel(visible);
+        return;
+      }
+      const auto title = T(TextId::kQuitTitle);
+      ImGui::TextWrapped("%.*s",static_cast<int>(title.size()),title.data());
+      if (!state_.touched.empty()) {
+        ImGui::Spacing();
+        const auto note = T(TextId::kQuitSavesNote);
+        ImGui::TextWrapped("%.*s",static_cast<int>(note.size()),note.data());
+      }
+      ImGui::Spacing();
+      constexpr std::array<TextId,2> labels{TextId::kQuitConfirm,TextId::kQuitCancel};
+      for (int i=0;i<2;++i) {
+        if (i) ImGui::SameLine();
+        ImGui::PushID(i);
+        const bool clicked = DrawButton(std::string(T(labels[i])).c_str(),
+            {ImGui::GetWindowWidth()/2-.025f*h_,std::max(44.f,.06f*h_)},state_.prompt_choice == i);
+        ImGui::PopID();
+        if (clicked) { state_.prompt_choice=i; Dispatch(Command::kAccept); }
+      }
+      if (state_.prompt != Prompt::kQuit || !open_) ImGui::CloseCurrentPopup();
     }
     EndPanel(visible);
   }

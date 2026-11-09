@@ -224,6 +224,11 @@ std::string_view ActionForPage(Page page) {
 Outcome AcceptAction(State& state, const Setting& s, const std::vector<Setting>& catalog,
                      const Values& values, const Context& ctx) {
   if (ctx.disabled.contains(s.id)) return {};
+  if (s.id == "quit_game") {
+    state.prompt = Prompt::kQuit;
+    state.prompt_choice = 1;
+    return {};
+  }
   const auto* opens = PageActionFor(s.id);
   if (!opens) return {Outcome::Kind::kRunAction, std::string(s.id)};
   state.page = opens->page;
@@ -272,6 +277,20 @@ Outcome HandlePrompt(State& state, Command command, Values& values) {
   if (state.prompt_choice != 1) return {};
   Discard(state, values);
   return {Outcome::Kind::kClose, {}};
+}
+
+Outcome HandleQuitPrompt(State& state, Command command) {
+  if (command == Command::kLeft) state.prompt_choice = std::clamp(state.prompt_choice - 1, 0, 1);
+  if (command == Command::kRight) state.prompt_choice = std::clamp(state.prompt_choice + 1, 0, 1);
+  if (command == Command::kBack) { state.prompt = Prompt::kNone; return {}; }
+  if (command == Command::kQuit) {
+    state.prompt = Prompt::kNone;
+    return {Outcome::Kind::kRunAction, "quit_game"};
+  }
+  if (command != Command::kAccept) return {};
+  state.prompt = Prompt::kNone;
+  if (state.prompt_choice == 0) return {Outcome::Kind::kRunAction, "quit_game"};
+  return {};
 }
 
 void CycleTab(State& state, int direction, const std::vector<Setting>& catalog,
@@ -396,9 +415,16 @@ void Open(State& state, const std::vector<Setting>& catalog, const Values& value
 
 Outcome Handle(State& state, Command command, const std::vector<Setting>& catalog, Values& values, const Context& ctx) {
   if (state.prompt == Prompt::kUnsaved) {
+    if (command == Command::kQuit) return {};
     const auto outcome = HandlePrompt(state, command, values);
     if (outcome.kind == Outcome::Kind::kClose) ValidateSelection(state, catalog, values, ctx);
     return outcome;
+  }
+  if (state.prompt == Prompt::kQuit) return HandleQuitPrompt(state, command);
+  if (command == Command::kQuit) {
+    state.prompt = Prompt::kQuit;
+    state.prompt_choice = 1;
+    return {};
   }
   ValidateSelection(state, catalog, values, ctx);
   switch (command) {
@@ -411,6 +437,7 @@ Outcome Handle(State& state, Command command, const std::vector<Setting>& catalo
     case Command::kTabPrev: CycleTab(state, -1, catalog, values, ctx); return {};
     case Command::kTabNext: CycleTab(state, 1, catalog, values, ctx); return {};
     case Command::kSave: return {Outcome::Kind::kSave, {}};
+    case Command::kQuit: return {};
     case Command::kResetRow: {
       const auto* s = SelectedSetting(state, catalog, values, ctx);
       if (!s || !CanReset(s->kind)) return {};

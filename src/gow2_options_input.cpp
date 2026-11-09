@@ -3,11 +3,14 @@
 // Implements controller repeat, button edges, and the menu toggle chord.
 #include "gow2_options_input.h"
 
+#include <algorithm>
+
 namespace rex::glue::options {
 namespace {
 
 constexpr uint16_t kBack = 0x0020;
 constexpr uint16_t kStart = 0x0010;
+constexpr int64_t kQuitHoldMs = 700;
 constexpr std::array<Command, 4> kDirections{
     Command::kUp, Command::kDown, Command::kLeft, Command::kRight};
 
@@ -88,6 +91,24 @@ bool ChordGate::Update(bool a, bool b, int64_t now_ms) {
 
 std::vector<Command> PadReader::Update(const PadSample& pad, int64_t now_ms) {
   std::vector<Command> commands;
+  const bool view = HasButton(pad, kBack);
+  const bool start = HasButton(pad, kStart);
+  if (!view) {
+    quit_holding_ = quit_latched_ = quit_cancelled_ = false;
+  } else {
+    if (!quit_holding_ && !quit_latched_) {
+      quit_holding_ = true;
+      quit_started_ms_ = now_ms;
+      quit_cancelled_ = false;
+    }
+    if (start) quit_cancelled_ = true;
+    if (quit_holding_ && !quit_latched_ && !quit_cancelled_ &&
+        now_ms >= quit_started_ms_ && Elapsed(now_ms, quit_started_ms_) >= kQuitHoldMs) {
+      commands.push_back(Command::kQuit);
+      quit_latched_ = true;
+      quit_holding_ = false;
+    }
+  }
   const auto held = HeldDirections(pad);
   for (std::size_t i = 0; i < held.size(); ++i) {
     if (!held[i]) blocked_directions_[i] = false;
@@ -111,6 +132,16 @@ void PadReader::Reset(const PadSample& pad) {
   blocked_directions_ = HeldDirections(pad);
   chord_ = {};
   chord_.latched_ = HasButton(pad, kBack) || HasButton(pad, kStart);
+  quit_holding_ = false;
+  quit_latched_ = HasButton(pad, kBack);
+  quit_cancelled_ = false;
+  quit_started_ms_ = 0;
+}
+
+float PadReader::QuitHoldProgress(int64_t now_ms) const {
+  if (!quit_holding_ || quit_latched_ || quit_cancelled_ || now_ms < quit_started_ms_) return 0.f;
+  return std::min(1.f, static_cast<float>(Elapsed(now_ms, quit_started_ms_)) /
+      static_cast<float>(kQuitHoldMs));
 }
 
 }  // namespace rex::glue::options

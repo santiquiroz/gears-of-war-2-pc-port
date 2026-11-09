@@ -45,11 +45,16 @@ class PadReader {
   std::vector<Command> Update(const PadSample& pad, int64_t now_ms);
   bool ToggleChord(const PadSample& pad, int64_t now_ms);
   void Reset(const PadSample& pad);
+  float QuitHoldProgress(int64_t now_ms) const;
 
  private:
   std::array<RepeatGate, 4> directions_{};
   std::array<bool, 4> blocked_directions_{};
   uint16_t previous_buttons_ = 0;
+  bool quit_holding_ = false;
+  bool quit_latched_ = false;
+  bool quit_cancelled_ = false;
+  int64_t quit_started_ms_ = 0;
   ChordGate chord_;
 };
 

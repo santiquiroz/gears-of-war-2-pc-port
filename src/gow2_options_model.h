@@ -32,8 +32,8 @@ struct Context {
   std::set<std::string, std::less<>> disabled;     // rows shown dimmed: Accept does nothing, help says why
 };
 
-enum class Command : uint8_t { kUp, kDown, kLeft, kRight, kAccept, kBack, kTabPrev, kTabNext, kResetRow, kSave };
-enum class Prompt : uint8_t { kNone, kUnsaved };
+enum class Command : uint8_t { kUp, kDown, kLeft, kRight, kAccept, kBack, kTabPrev, kTabNext, kResetRow, kSave, kQuit };
+enum class Prompt : uint8_t { kNone, kUnsaved, kQuit };
 
 struct State {
   int tab = 0;

@@ -133,12 +133,45 @@ void TestSuppressionAndReset() {
   Expect(!reader.ToggleChord({0x0030}, 1600), "pad chord fires only once");
 }
 
+void TestQuitHold() {
+  PadReader held;
+  Expect(held.Update({0x0020}, 0).empty(), "view hold starts without command");
+  Expect(held.Update({0x0020}, 699).empty(), "view hold waits 700 ms");
+  Expect(IsCommand(held.Update({0x0020}, 700), Command::kQuit), "view held 700 ms emits quit");
+  Expect(held.Update({0x0020}, 2000).empty(), "long view hold emits quit only once");
+
+  PadReader released;
+  released.Update({0x0020}, 0);
+  Expect(released.Update({}, 500).empty(), "early view release emits nothing");
+
+  PadReader cancelled;
+  cancelled.Update({0x0020}, 0);
+  Expect(cancelled.Update({0x0030}, 350).empty(), "start during view hold cancels quit");
+  Expect(cancelled.Update({0x0020}, 800).empty(), "released start cannot revive cancelled hold");
+
+  PadReader reset;
+  reset.Reset({0x0020});
+  Expect(reset.Update({0x0020}, 0).empty(), "reset view hold is latched");
+  Expect(reset.Update({0x0020}, 900).empty(), "reset view hold never emits");
+  reset.Update({}, 910);
+  reset.Update({0x0020}, 920);
+  Expect(IsCommand(reset.Update({0x0020}, 1620), Command::kQuit), "view emits after release and fresh hold");
+
+  PadReader progress;
+  progress.Update({0x0020}, 100);
+  Expect(progress.QuitHoldProgress(450) > .49f && progress.QuitHoldProgress(450) < .51f,
+         "quit hold progress is about one half at 350 ms");
+  progress.Update({}, 800);
+  Expect(progress.QuitHoldProgress(800) == 0.f, "quit hold progress is zero when released");
+}
+
 int main() {
   TestRepeatGate();
   TestChordGate();
   TestButtonEdges();
   TestDirections();
   TestSuppressionAndReset();
+  TestQuitHold();
   std::printf("options_input_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }
