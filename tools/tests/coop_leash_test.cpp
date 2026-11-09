@@ -133,11 +133,13 @@ void TestReturnResetsCounter() {
   const std::vector<LeashPc> away{MakeMarcus(0), MakeExtra(5000)};
   Check(!AnyOrdersIn(away, 5, &state), "5 far seconds give no order");
   Check(state.far_seconds[kExtraPc] == 5, "the counter reaches 5");
-  const std::vector<LeashPc> back{MakeMarcus(0), MakeExtra(1000)};
+  const std::vector<LeashPc> back{MakeMarcus(0), MakeExtra(3900)};
   Check(PlanPulls(back, config, &state).empty(), "back within range gives no order");
   Check(state.far_seconds[kExtraPc] == 0, "coming back resets the counter to 0");
-  Check(!AnyOrdersIn(away, 7, &state), "7 more far seconds give no order");
-  Check(PlanPulls(away, config, &state).size() == 1, "8 more far seconds pull again");
+  // 3900 -> 4100 is a step out of range, not a jump: it counts as one far second
+  const std::vector<LeashPc> out_again{MakeMarcus(0), MakeExtra(4100)};
+  Check(!AnyOrdersIn(out_again, 7, &state), "7 more far seconds give no order");
+  Check(PlanPulls(out_again, config, &state).size() == 1, "8 more far seconds pull again");
 }
 
 void CheckVariantNeverPulled(LeashPc extra, const char* no_order, const char* counter_zero) {
@@ -229,6 +231,123 @@ void TestHeroesAndNoneNeverPulled() {
   Check(!ordered, "heroes and None or empty dpc never get orders");
   Check(state.far_seconds.empty(), "heroes and None or empty dpc leave no far counters");
   Check(state.immediate_cooldown.empty(), "heroes and None or empty dpc leave no cooldown");
+}
+
+void TestHeroFallRescue() {
+  std::vector<LeashPc> pcs{MakeMarcus(0), MakeDom(0), MakeExtra(1000)};
+  LeashState state;
+  const LeashConfig config;
+  const float dom_z[] = {-2100, -2600, -3100, -3600, -4100};
+  for (int i = 0; i < 3; ++i) {
+    pcs[1].z = dom_z[i];
+    const std::vector<PullOrder> orders = PlanPulls(pcs, config, &state);
+    bool hero_fell_order = false;
+    for (const PullOrder& order : orders) {
+      if (order.reason == PullReason::kHeroFell) hero_fell_order = true;
+    }
+    Check(!hero_fell_order, "a falling hero gets no rescue before the threshold");
+  }
+  pcs[1].z = dom_z[3];
+  const std::vector<PullOrder> orders = PlanPulls(pcs, config, &state);
+  Check(orders.size() == 1, "call 4 gives exactly one fallen hero rescue");
+  if (orders.size() == 1) {
+    Check(orders[0].reason == PullReason::kHeroFell, "the rescue reason is kHeroFell");
+    Check(orders[0].extra_pc == kDomPc, "the rescue names Dom");
+    Check(orders[0].anchor_pc == kMarcusPc, "the rescue anchor is Marcus");
+    Check(orders[0].extra_pc != kExtraPc, "the regular extra is not named by the rescue");
+  }
+  pcs[1].z = dom_z[4];
+  const std::vector<PullOrder> cooldown = PlanPulls(pcs, config, &state);
+  bool hero_fell_order = false;
+  for (const PullOrder& order : cooldown) {
+    if (order.reason == PullReason::kHeroFell) hero_fell_order = true;
+  }
+  Check(!hero_fell_order, "call 4 is inside the rescue cooldown");
+}
+
+void TestHeroFallResetsWhenBack() {
+  const LeashConfig config;
+  LeashState state;
+  std::vector<LeashPc> pcs{MakeMarcus(0), MakeDom(0)};
+  const float dom_z[] = {-2100, -2600, -3100, 0, -2100, -2600};
+  for (float z : dom_z) {
+    pcs[1].z = z;
+    const std::vector<PullOrder> orders = PlanPulls(pcs, config, &state);
+    bool hero_fell_order = false;
+    for (const PullOrder& order : orders) {
+      if (order.reason == PullReason::kHeroFell) hero_fell_order = true;
+    }
+    Check(!hero_fell_order, "returning to the standing level resets the fall count");
+  }
+}
+
+void TestHeroFallNeedsReference() {
+  LeashPc marcus = MakeMarcus(0);
+  marcus.cinematic = true;
+  LeashPc dom = MakeDom(0);
+  const std::vector<LeashPc> pcs{marcus, dom};
+  LeashState state;
+  const LeashConfig config;
+  bool hero_fell_order = false;
+  for (int i = 1; i <= 5; ++i) {
+    dom.z = -5000.0f - 500.0f * (i - 1);
+    for (const PullOrder& order : PlanPulls(pcs, config, &state)) {
+      if (order.reason == PullReason::kHeroFell) hero_fell_order = true;
+    }
+  }
+  Check(!hero_fell_order, "a cinematic only reference cannot trigger hero rescue");
+}
+
+void TestHeroOnLowerFloorNotRescued() {
+  const LeashConfig config;
+  LeashState state;
+  std::vector<LeashPc> pcs{MakeMarcus(0), MakeExtra(1000), MakeDom(0)};
+  pcs[2].z = -2500;
+  bool hero_fell_order = false;
+  for (int i = 0; i < 8; ++i) {
+    for (const PullOrder& order : PlanPulls(pcs, config, &state)) {
+      if (order.reason == PullReason::kHeroFell) hero_fell_order = true;
+    }
+  }
+  Check(!hero_fell_order, "a hero standing on a lower floor is not rescued");
+}
+
+void TestExtraNotPulledToFallenHero() {
+  LeashPc dom = MakeDom(6000);
+  dom.z = -5000;
+  const std::vector<LeashPc> pcs{MakeMarcus(0), dom, MakeExtra(5000)};
+  LeashState state;
+  const LeashConfig config;
+  bool extra_ordered = false;
+  for (int i = 0; i < 8; ++i) {
+    for (const PullOrder& order : PlanPulls(pcs, config, &state)) {
+      if (order.extra_pc != kExtraPc) continue;
+      extra_ordered = true;
+      Check(order.hero_pc == kMarcusPc, "an extra is never pulled to fallen Dom");
+    }
+  }
+  Check(extra_ordered, "the regular extra eventually gets an order");
+}
+
+void TestCinematicOverlap() {
+  LeashPc marcus = MakeMarcus(0);
+  marcus.cinematic = true;
+  marcus.hidden = true;
+  LeashPc extra = MakeExtra(0);
+  extra.cinematic = true;
+  extra.hidden = true;
+  const std::vector<LeashPc> pcs{marcus, extra};
+  LeashState state;
+  const LeashConfig config;
+  const std::vector<PullOrder> orders = PlanPulls(pcs, config, &state);
+  Check(orders.size() == 1, "a cinematic overlap gets one immediate order");
+  if (orders.size() == 1) {
+    Check(orders[0].reason == PullReason::kOverlap, "the cinematic overlap reason is kOverlap");
+    Check(orders[0].cinematic, "the overlap order records cinematic handling");
+    Check(orders[0].anchor_pc == kMarcusPc, "the overlapped Marcus is the anchor");
+    Check(orders[0].overlap_pc == kMarcusPc, "the overlap target is Marcus");
+  }
+  Check(PlanPulls(pcs, config, &state).empty(), "the next call is inside cooldown");
 }
 
 void TestDisappearedPcPruned() {
@@ -372,15 +491,29 @@ void CheckImmediateNever(LeashPc extra, const char* what) {
 }
 
 void TestImmediateNeverForUnleashable() {
-  LeashPc cinematic = MakeExtra(0);
+  LeashPc cinematic = MakeExtra(1000);
   cinematic.cinematic = true;
   CheckImmediateNever(cinematic, "a cinematic extra never gets an immediate order");
-  LeashPc hidden = MakeExtra(0);
+  LeashPc hidden = MakeExtra(1000);
   hidden.hidden = true;
   CheckImmediateNever(hidden, "a hidden extra never gets an immediate order");
   LeashPc dead = MakeExtra(0);
   dead.health = 0;
   CheckImmediateNever(dead, "a dead extra never gets an immediate order");
+}
+
+void TestLeftBehindGrowing() {
+  const LeashConfig config;
+  LeashState state;
+  const std::vector<float> positions{5000, 5400, 5800};
+  bool ordered = false;
+  for (float x : positions) {
+    const std::vector<LeashPc> pcs{MakeMarcus(0), MakeExtra(x)};
+    for (const PullOrder& order : PlanPulls(pcs, config, &state)) {
+      if (order.extra_pc == kExtraPc) ordered = true;
+    }
+  }
+  Check(ordered, "a growing distance pulls the extra within three calls");
 }
 
 void TestGodGrantWhenHeroRides() {
@@ -489,6 +622,12 @@ int main() {
   TestNearestHero();
   TestNoUsableHero();
   TestHeroesAndNoneNeverPulled();
+  TestHeroFallRescue();
+  TestHeroFallResetsWhenBack();
+  TestHeroFallNeedsReference();
+  TestHeroOnLowerFloorNotRescued();
+  TestExtraNotPulledToFallenHero();
+  TestCinematicOverlap();
   TestDisappearedPcPruned();
   TestAnchorIsHeroWhenHeroOnFoot();
   TestAnchorIsFootExtraWhenHeroDrives();
@@ -500,6 +639,7 @@ int main() {
   TestFellImmediate();
   TestFellOneHeroNoOrder();
   TestImmediateNeverForUnleashable();
+  TestLeftBehindGrowing();
   TestGodGrantWhenHeroRides();
   TestGodAdoptAndRevoke();
   TestGodRevokeOnlyGranted();

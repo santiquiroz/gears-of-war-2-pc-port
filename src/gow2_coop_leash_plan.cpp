@@ -28,11 +28,32 @@ void PruneState(const std::vector<LeashPc>& pcs, LeashState* state) {
       it = state->far_seconds.erase(it);
     }
   }
+  for (auto it = state->fallen_seconds.begin(); it != state->fallen_seconds.end();) {
+    if (PcListed(pcs, it->first)) {
+      ++it;
+    } else {
+      it = state->fallen_seconds.erase(it);
+    }
+  }
   for (auto it = state->immediate_cooldown.begin(); it != state->immediate_cooldown.end();) {
     if (PcListed(pcs, it->first)) {
       ++it;
     } else {
       it = state->immediate_cooldown.erase(it);
+    }
+  }
+  for (auto it = state->last_distance.begin(); it != state->last_distance.end();) {
+    if (PcListed(pcs, it->first)) {
+      ++it;
+    } else {
+      it = state->last_distance.erase(it);
+    }
+  }
+  for (auto it = state->last_z.begin(); it != state->last_z.end();) {
+    if (PcListed(pcs, it->first)) {
+      ++it;
+    } else {
+      it = state->last_z.erase(it);
     }
   }
   for (auto it = state->god_granted.begin(); it != state->god_granted.end();) {
@@ -54,13 +75,14 @@ void PruneGranted(const std::vector<LeashPc>& pcs, std::set<uint32_t>* granted) 
   }
 }
 
-bool IsAnchorCandidate(const LeashPc& candidate, const LeashPc& extra, const LeashPc& hero,
-                       float max_distance) {
+bool IsAnchorCandidate(const std::vector<LeashPc>& pcs, const LeashPc& candidate,
+                       const LeashPc& extra, const LeashPc& hero, float max_distance) {
   if (candidate.pc == extra.pc) return false;
   if (candidate.pawn == 0) return false;
   if (candidate.cinematic || candidate.hidden) return false;
   if (candidate.health <= 0) return false;
   if (!HasGearPawnBody(candidate)) return false;
+  if (IsFallen(pcs, candidate)) return false;
   return Distance(candidate, hero.x, hero.y, hero.z) <= max_distance;
 }
 
@@ -69,6 +91,16 @@ bool IsOverlapBody(const LeashPc& candidate, uint32_t self) {
   if (candidate.pawn == 0) return false;
   if (candidate.health <= 0) return false;
   return HasGearPawnBody(candidate);
+}
+
+bool IsOverlapCandidate(const LeashPc& extra) {
+  return IsExtra(extra) && extra.pawn != 0 && extra.health > 0 && HasGearPawnBody(extra) &&
+         !extra.riding;
+}
+
+bool IsStandingReference(const LeashPc& p) {
+  return p.pawn != 0 && p.health > 0 && HasGearPawnBody(p) && !p.riding && !p.cinematic &&
+         !p.hidden;
 }
 
 const LeashPc* FindOverlap(const std::vector<LeashPc>& pcs, const LeashPc& extra) {
@@ -140,9 +172,9 @@ bool TryImmediate(const std::vector<LeashPc>& pcs, const LeashPc& extra, const L
 }
 
 void CountFarSecond(const LeashPc& extra, const LeashPc& hero, const LeashPc& anchor, float distance,
-                    const LeashConfig& config, std::map<uint32_t, int>* far_seconds,
+                    int increment, const LeashConfig& config, std::map<uint32_t, int>* far_seconds,
                     std::vector<PullOrder>* orders) {
-  const int counted = (*far_seconds)[extra.pc] + 1;
+  const int counted = (*far_seconds)[extra.pc] + increment;
   if (counted < config.seconds) {
     (*far_seconds)[extra.pc] = counted;
     return;
@@ -155,19 +187,38 @@ void CountFarSecond(const LeashPc& extra, const LeashPc& hero, const LeashPc& an
 void PlanFar(const std::vector<LeashPc>& pcs, const LeashPc& extra, const LeashPc& hero,
              const LeashConfig& config, LeashState* state, std::vector<PullOrder>* orders) {
   const float distance = Distance(extra, hero.x, hero.y, hero.z);
+  const auto previous = state->last_distance.find(extra.pc);
+  const bool growing = previous != state->last_distance.end() &&
+                       distance - previous->second > kLeftBehindGrowth;
+  state->last_distance[extra.pc] = distance;
   if (distance <= config.distance) {
     state->far_seconds[extra.pc] = 0;
     return;
   }
   const LeashPc* anchor = PickAnchor(pcs, extra, hero, config.distance);
-  CountFarSecond(extra, hero, *anchor, distance, config, &state->far_seconds, orders);
+  CountFarSecond(extra, hero, *anchor, distance, growing ? kLeftBehindWeight : 1, config,
+                 &state->far_seconds, orders);
 }
 
 void PlanExtra(const std::vector<LeashPc>& pcs, const LeashPc& extra, const LeashConfig& config,
                LeashState* state, std::vector<PullOrder>* orders) {
   const LeashPc* hero = NearestHero(pcs, extra);
+  if (IsOverlapCandidate(extra) && (extra.cinematic || extra.hidden) &&
+      !CooldownActive(state, extra.pc)) {
+    if (const LeashPc* overlapped = FindOverlap(pcs, extra)) {
+      orders->push_back(MakeOverlapOrder(extra, *overlapped, *overlapped,
+                                         Distance(extra, overlapped->x, overlapped->y,
+                                                  overlapped->z),
+                                         *overlapped));
+      orders->back().cinematic = true;
+      state->immediate_cooldown[extra.pc] = config.seconds;
+      state->far_seconds[extra.pc] = 0;
+      return;
+    }
+  }
   if (!IsLeashableExtra(extra) || hero == nullptr) {
     state->far_seconds[extra.pc] = 0;
+    state->last_distance.erase(extra.pc);
     if (CooldownActive(state, extra.pc)) {
       TickCooldown(state, extra.pc);
     } else {
@@ -182,6 +233,55 @@ void PlanExtra(const std::vector<LeashPc>& pcs, const LeashPc& extra, const Leas
     if (TryImmediate(pcs, extra, *hero, config, state, orders)) return;
   }
   PlanFar(pcs, extra, *hero, config, state, orders);
+}
+
+const LeashPc* NearestStandingReference(const std::vector<LeashPc>& pcs, const LeashPc& fallen) {
+  const LeashPc* nearest = nullptr;
+  float nearest_distance = 0;
+  for (const LeashPc& candidate : pcs) {
+    if (candidate.pc == fallen.pc || !IsStandingReference(candidate) || IsFallen(pcs, candidate)) {
+      continue;
+    }
+    const float distance = Distance(fallen, candidate.x, candidate.y, candidate.z);
+    if (nearest == nullptr || distance < nearest_distance) {
+      nearest = &candidate;
+      nearest_distance = distance;
+    }
+  }
+  return nearest;
+}
+
+bool IsDropping(const LeashState& state, const LeashPc& pc) {
+  const auto last_z = state.last_z.find(pc.pc);
+  return last_z != state.last_z.end() && last_z->second - pc.z > kFallingDropPerSecond;
+}
+
+void PlanFallenHeroes(const std::vector<LeashPc>& pcs, const LeashConfig& config,
+                      LeashState* state, std::vector<PullOrder>* orders) {
+  for (const LeashPc& pc : pcs) {
+    if (!IsHeroClass(pc.dpc)) continue;
+    const bool dropping = IsDropping(*state, pc);
+    state->last_z[pc.pc] = pc.z;
+    if (CooldownActive(state, pc.pc)) {
+      TickCooldown(state, pc.pc);
+      state->fallen_seconds[pc.pc] = 0;
+      continue;
+    }
+    if (!IsFallen(pcs, pc) || !dropping) {
+      state->fallen_seconds[pc.pc] = 0;
+      continue;
+    }
+    if (++state->fallen_seconds[pc.pc] < kHeroFallSeconds) continue;
+    const LeashPc* anchor = NearestStandingReference(pcs, pc);
+    if (anchor == nullptr) continue;
+    PullOrder order{pc.pc, pc.pawn, anchor->pc, anchor->x, anchor->y, anchor->z,
+                    anchor->pc, anchor->x, anchor->y, anchor->z,
+                    Distance(pc, anchor->x, anchor->y, anchor->z)};
+    order.reason = PullReason::kHeroFell;
+    orders->push_back(order);
+    state->fallen_seconds[pc.pc] = 0;
+    state->immediate_cooldown[pc.pc] = config.seconds;
+  }
 }
 
 bool AnyRidingHero(const std::vector<LeashPc>& pcs) {
@@ -225,6 +325,19 @@ bool IsUsableHero(const LeashPc& p) {
   return IsHeroClass(p.dpc) && p.pawn != 0 && !p.cinematic && !p.hidden && p.health > 0;
 }
 
+bool IsFallen(const std::vector<LeashPc>& pcs, const LeashPc& p) {
+  if (p.pawn == 0 || p.health <= 0 || !HasGearPawnBody(p) || p.riding || p.cinematic || p.hidden) {
+    return false;
+  }
+  bool has_reference = false;
+  for (const LeashPc& candidate : pcs) {
+    if (candidate.pc == p.pc || !IsStandingReference(candidate)) continue;
+    has_reference = true;
+    if (!(p.z < candidate.z - kFellBelowHeroes)) return false;
+  }
+  return has_reference;
+}
+
 bool IsLeashableExtra(const LeashPc& p) {
   return IsExtra(p) && p.pawn != 0 && !p.cinematic && !p.hidden && p.health > 0 &&
          HasGearPawnBody(p);
@@ -250,6 +363,7 @@ const LeashPc* NearestHero(const std::vector<LeashPc>& pcs, const LeashPc& extra
   float best_distance = 0;
   for (const LeashPc& candidate : pcs) {
     if (!IsUsableHero(candidate)) continue;
+    if (IsFallen(pcs, candidate)) continue;
     const float distance = Distance(extra, candidate.x, candidate.y, candidate.z);
     if (best == nullptr || distance < best_distance) {
       best = &candidate;
@@ -265,7 +379,7 @@ const LeashPc* PickAnchor(const std::vector<LeashPc>& pcs, const LeashPc& extra,
   const LeashPc* best = nullptr;
   float best_distance = 0;
   for (const LeashPc& candidate : pcs) {
-    if (!IsAnchorCandidate(candidate, extra, hero, max_distance)) continue;
+    if (!IsAnchorCandidate(pcs, candidate, extra, hero, max_distance)) continue;
     const float distance = Distance(candidate, hero.x, hero.y, hero.z);
     if (best == nullptr || distance < best_distance) {
       best = &candidate;
@@ -284,6 +398,7 @@ std::vector<PullOrder> PlanPulls(const std::vector<LeashPc>& pcs, const LeashCon
     if (!IsExtra(pc)) continue;
     PlanExtra(pcs, pc, config, state, &orders);
   }
+  PlanFallenHeroes(pcs, config, state, &orders);
   PruneState(pcs, state);
   return orders;
 }

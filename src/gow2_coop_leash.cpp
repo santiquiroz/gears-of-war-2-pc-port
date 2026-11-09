@@ -30,7 +30,8 @@ REXCVAR_DEFINE_BOOL(gow2_coop_leash, kCoopLeashDefault, "Coop",
                     "Players 3+ who stay far from the nearest human Marcus or Dom are moved next "
                     "to him, and players 3+ on foot cannot be hurt while Marcus or Dom rides a "
                     "vehicle (host only; gow2_coop_players 3 or more). On by default on Windows "
-                    "only: elsewhere a bad guest read would crash the game instead of being skipped");
+                    "only: elsewhere a bad guest read would crash the game instead of being skipped. "
+                    "A player of any slot who falls far below everyone else is moved next to the nearest player.");
 REXCVAR_DEFINE_DOUBLE(gow2_coop_leash_distance, 4000.0, "Coop",
                       "Distance in game units beyond which a player 3+ counts as left behind");
 REXCVAR_DEFINE_INT32(gow2_coop_leash_seconds, 8, "Coop",
@@ -81,8 +82,10 @@ void InitSettings(LeashSettings* settings) {
   settings->distance = float(REXCVAR_GET(gow2_coop_leash_distance));
   settings->seconds = REXCVAR_GET(gow2_coop_leash_seconds);
   REXLOG_INFO("COOPLEASH on: players 3+ further than {} units from the nearest human hero for "
-              "{} s are moved next to him",
-              settings->distance, settings->seconds);
+              "{} s are moved next to him; anyone {} units below every other player for {} s is "
+              "moved next to the nearest one",
+              settings->distance, settings->seconds, coop_leash::kFellBelowHeroes,
+              coop_leash::kHeroFallSeconds);
 }
 
 bool TakeSnapshotTurn() {
@@ -261,9 +264,15 @@ std::string AnchorLabel(const uint8_t* base, const coop_leash::PullOrder& order)
 
 void LogSpotPull(const uint8_t* base, const coop_leash::PullOrder& order, int fell_below) {
   if (order.reason == coop_leash::PullReason::kOverlap) {
-    REXLOG_INFO("COOPLEASH {} moved next to {} (was {} units away; overlapped {})",
+    REXLOG_INFO("COOPLEASH {} moved next to {} (was {} units away; overlapped {}{})",
                 PcName(base, order.extra_pc), AnchorLabel(base, order),
-                std::lround(order.distance), PcName(base, order.overlap_pc));
+                std::lround(order.distance), PcName(base, order.overlap_pc),
+                order.cinematic ? "; during a cinematic" : "");
+    return;
+  }
+  if (order.reason == coop_leash::PullReason::kHeroFell) {
+    REXLOG_INFO("COOPLEASH {} rescued next to {} (fell {} units below every other player)",
+                PcName(base, order.extra_pc), AnchorLabel(base, order), fell_below);
     return;
   }
   if (order.reason == coop_leash::PullReason::kFell) {
@@ -280,9 +289,16 @@ void LogFallbackPull(const uint8_t* base, const coop_leash::PullOrder& order, fl
                      int fell_below) {
   if (order.reason == coop_leash::PullReason::kOverlap) {
     REXLOG_INFO("COOPLEASH {} placed {},{} from {} (was {} units away; overlapped {}; no "
-                "navigation point near him)",
+                "navigation point near him{})",
                 PcName(base, order.extra_pc), dx, dy, AnchorLabel(base, order),
-                std::lround(order.distance), PcName(base, order.overlap_pc));
+                std::lround(order.distance), PcName(base, order.overlap_pc),
+                order.cinematic ? "; during a cinematic" : "");
+    return;
+  }
+  if (order.reason == coop_leash::PullReason::kHeroFell) {
+    REXLOG_INFO("COOPLEASH {} placed {},{} from {} (fell {} units below every other player; no "
+                "navigation point near him)",
+                PcName(base, order.extra_pc), dx, dy, AnchorLabel(base, order), fell_below);
     return;
   }
   if (order.reason == coop_leash::PullReason::kFell) {
