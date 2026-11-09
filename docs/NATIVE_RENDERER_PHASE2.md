@@ -82,6 +82,8 @@ Shipped settings (`resolution_scale` 2, unlocked, hospital, RX 7800 XT, 2026-10-
 Soaks with the native renderer (10 minutes of scripted movement, aiming and firing, 1600x900,
 `resolution_scale` 1, unlocked): chapter 4 mean 186 fps, chapter 2 mean 211 fps, no faults or GPU errors.
 
+2026-11-08 (0.3.15): `auto` now turns the native renderer on only on Android; on PC it stays emulated because of issue #26 (smearing on RX 7900 XT, RX 9070 XT and RTX 3070 Ti, gone with emulated). On PC native is opt-in via Graphics > Renderer > Native.
+
 ## Android (Vulkan): on by default
 
 Galaxy S25 Ultra, v0.3.0 APK, chapter 2 hospital, frame rate unlocked, runs alternated and started below 34.5 °C

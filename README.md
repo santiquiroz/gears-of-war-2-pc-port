@@ -38,8 +38,8 @@ Leer en español: [README.es.md](README.es.md)
 - [x] FSR 4 and FSR 3.1 temporal upscaling (PC Options > Graphics > Upscaler; `gow2_temporal`, `gow2_upscaler`; off by default). The release has no DLSS; DLSS shows up in the menu with SDK DLLs you build yourself (0.2.8)
 - [x] Keyboard keys and mouse buttons handled as on a PC while a level is played (`gow2_native_keys`, SDK patch 0022); menus, the pause menu and cutscenes still pass through the emulated controller
 - [x] Button prompts that follow the device you used last, live: keycap pictures of your keybinds for keyboard and mouse, the Xbox buttons, or PlayStation buttons (PS4: Share/Options, PS5: Create/Options) for a DualShock or DualSense (idea and SDK patch from @Flippage's Gears of War 3 recompilation, issue #25) (`gow2_keycaps`; build the pack from your own copy with `Build keycap pack.cmd` in the release zip, no Python needed since 0.2.9, or `scripts/build-keycaps.ps1` from source, see [tools/keycaps](tools/keycaps/README.md))
-- [x] Ultrawide: a really wider picture (Hor+) instead of 16:9 with bars, up to 1680 pixels wide (`gow2_widescreen`, see [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); works with the native renderer (AMD and NVIDIA by default) and with the ROV render target path (Intel by default)
-- [x] Native renderer (0.3.0; draws taken from the game's Direct3D calls since 0.3.4): render targets are host surfaces and resolves write textures directly instead of emulating the Xbox 360 EDRAM. On by default on AMD, NVIDIA (0.3.8) and Android; Graphics > Renderer switches it (`gow2_native_renderer`)
+- [x] Ultrawide: a really wider picture (Hor+) instead of 16:9 with bars, up to 1680 pixels wide (`gow2_widescreen`, see [docs/WIDESCREEN.md](docs/WIDESCREEN.md)); works with the native renderer (on by default only on Android since 0.3.15; on PC a Graphics > Renderer > Native choice) and with the ROV render target path (Intel by default)
+- [x] Native renderer (0.3.0; draws taken from the game's Direct3D calls since 0.3.4): render targets are host surfaces and resolves write textures directly instead of emulating the Xbox 360 EDRAM. On by default only on Android since 0.3.15 (before: AMD, NVIDIA since 0.3.8, and Android); on PC it is a Graphics > Renderer > Native choice, since it smears on some cards (issue #26) (`gow2_native_renderer`)
 - [x] Anti-aliasing: FXAA and FXAA Extreme (Graphics > Anti-aliasing, 0.3.4), on PC and Android
 - [x] Graphics API on PC: Direct3D 12 (default) or Vulkan, experimental (PC Options > Graphics > Graphics API, `gpu_backend`, 0.3.8). On Vulkan the temporal upscalers are not available; FSR 1 and CAS are
 - [x] Install from your own `.iso` on PC (0.3.6) and on Android (0.2.6)
@@ -136,7 +136,7 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `resolution_scale` — internal render resolution as a multiple of 720p: 1 = 720p, 2 = 1440p, 3 = 4K.
 - `present_effect` — final image scaling: `bilinear`, `fsr` (AMD FSR 1 with sharpening, from a lower `resolution_scale`) or `cas` (sharpening only).
 - `vsync` — vertical sync.
-- `gow2_native_renderer` — `auto` (native on AMD, NVIDIA and Android), `on` or `off` (emulated EDRAM).
+- `gow2_native_renderer` — `auto` (native only on Android since 0.3.15; emulated on PC), `on` or `off`.
 - `gpu_backend` — `any` (Direct3D 12), `d3d12` or `vulkan` (experimental); needs a restart.
 - `gow2_native_frontend` — draw source: `auto` (console commands on PC and Mali phones, Direct3D calls on other phones), `on` or `off`.
 - `gow2_skip_intro_movies` — skips the Epic Games and Microsoft Game Studios logo videos at start.
@@ -209,7 +209,7 @@ Versus works over System Link: in Multiplayer set Match Type to System Link, cre
 - **Co-op with three or four players is new.** Stage 2 has been tested with four copies on one PC: players 3 and 4 keep their bodies and weapons through chapter changes and travel, respawn, leave and rejoin, return after checkpoint loads, hide during cinematics, stay unharmed on foot while a hero rides, and are moved next to Marcus or Dom by the host when left far behind. Co-op splits, getting out of a vehicle, the Ride-Reaver section, joining during a cinematic, long real combat, four PCs over a LAN or the internet, and Android with 3+ players have not been tried ([docs/COOP_N_PLAYERS.md](docs/COOP_N_PLAYERS.md)).
 - **Every player needs the same release.** Everyone must run the same version; with three or more players, campaigns with different co-op hashes stay hidden, and two-player co-op has no check, so mixed versions can crash.
 - Only Act 1 has been played through. On 2026-10-22 `scripts/chapter-sweep.ps1` travelled to each of the 29 chapters and played a minute of scripted movement and fire in each with no missing-function crash; one run hit a GPU timeout (TDR) in chapter 23 that three later runs did not repeat. Playing acts 2-5 start to finish is still open (issue #8).
-- **Native renderer on some AMD cards:** on a Radeon RX 7900 XT, blocky dark patches can show on the floor where characters cast shadows (issue #26); Graphics > Renderer > Emulated (EDRAM) avoids them while it is investigated.
+- **Native renderer smears on some GPUs** (RX 7900 XT, RX 9070 XT, RTX 3070 Ti; issue #26); since 0.3.15 Automatic uses Emulated (EDRAM) on PC.
 
 ## Building from source
 

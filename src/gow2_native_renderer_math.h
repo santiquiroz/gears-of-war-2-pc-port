@@ -10,15 +10,14 @@
 
 namespace rex::glue::native_renderer {
 
-// "on" and "off" name it; anything else is "auto", which turns it on for AMD and NVIDIA on Windows and every Android
-// device (Android reports no GPU name), unless the player chose a render target path.
-inline bool UseNativeRenderer(const std::string& mode, bool path_set_by_player, const std::string& gpu_name,
-                              bool android) {
+// "on" and "off" name it; anything else is "auto", which turns it on only on Android, unless the player chose a
+// render target path. On Windows auto stays emulated: native smears on an RX 7900 XT, an RX 9070 XT and an
+// RTX 3070 Ti (issue #26).
+inline bool UseNativeRenderer(const std::string& mode, bool path_set_by_player,
+                              [[maybe_unused]] const std::string& gpu_name, bool android) {
   if (mode == "on") return true;
   if (mode == "off") return false;
-  return !path_set_by_player &&
-         (android || widescreen::GpuNameHas(gpu_name, "AMD") || widescreen::GpuNameHas(gpu_name, "RADEON") ||
-          widescreen::GpuNameHas(gpu_name, "NVIDIA") || widescreen::GpuNameHas(gpu_name, "GEFORCE"));
+  return android && !path_set_by_player;
 }
 
 }  // namespace rex::glue::native_renderer

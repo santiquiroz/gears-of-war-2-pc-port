@@ -61,6 +61,8 @@ On AMD, `gow2_widescreen = "auto"` therefore switches the render target path to 
 holds the game's 30 fps; with the frame rate unlocked at `resolution_scale = 2` it is about 19 % slower than host render targets.
 `render_target_path_d3d12 = "rtv"` keeps host render targets, and auto then stays 16:9.
 
+Since 0.3.15 `auto` picks emulated on PC, so widescreen on AMD goes through ROV by default (the automatic switch above); native stays a Graphics > Renderer > Native choice.
+
 Wider than 1680 is still held at 1680: the width limit is now the game's own layout (2640 at most), not the EDRAM, but nothing wider
 was tested, and the shadow map has to keep shrinking as the scene grows.
 

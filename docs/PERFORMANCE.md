@@ -43,7 +43,7 @@ numbers refer to that tree (`out\sdk-build\rexglue-sdk` after `scripts\build-sdk
 
 | Hardware | Scene | Setting | Result |
 |---|---|---|---|
-| Ryzen 9 7900X3D + RX 7800 XT | Chapter 2 hospital, 1440p internal, unlocked | 0.3.8, native renderer, front end off (PC default) | 262-263 fps, Direct3D 12; Vulkan 248 fps |
+| Ryzen 9 7900X3D + RX 7800 XT | Chapter 2 hospital, 1440p internal, unlocked | 0.3.8, native renderer, front end off (the 0.3.8 PC default; since 0.3.15 the PC default is emulated: host render targets on AMD at 16:9, about 10 % slower than native in the hospital, ROV on NVIDIA and Intel, native opt-in) | 262-263 fps, Direct3D 12; Vulkan 248 fps |
 | Same | Same | 0.3.3-0.3.7 default (native front end on) | 150-165 fps (0.3.8 with the front end on: 151) |
 | Same | Same | 0.3.2 | 250-261 fps |
 | Same | Same, 0.3.0 (October 22) | Native renderer | 224 fps (ROV path: 86; emulated host targets: 202) |

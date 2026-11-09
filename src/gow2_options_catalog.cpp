@@ -208,11 +208,13 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .label_en = "Renderer",
       .label_es = "Renderizador",
       .help_en = "Native draws the game's render targets and resolves directly on your GPU; emulated goes "
-                 "through the console's EDRAM like Xenia. Automatic picks the faster one measured for your "
-                 "GPU (native on AMD, NVIDIA and Android, emulated elsewhere). Any GPU can use either.",
+                 "through the console's EDRAM like Xenia. Automatic picks emulated on PC (native shows smearing "
+                 "on some cards, issue #26) and native on Android. Native is faster: choose it if it looks right "
+                 "on your GPU.",
       .help_es = "Nativo dibuja los render targets y resolves del juego directamente en tu GPU; emulado pasa "
-                 "por la EDRAM de la consola como Xenia. Automático elige el más rápido medido para tu GPU "
-                 "(nativo en AMD, NVIDIA y Android, emulado en el resto). Cualquier GPU puede usar los dos.",
+                 "por la EDRAM de la consola como Xenia. Automático elige emulado en PC (el nativo deja manchas "
+                 "en algunas tarjetas, issue #26) y nativo en Android. Nativo es más rápido: elígelo si en tu GPU "
+                 "se ve bien.",
       .choices = {
           C("auto", "Automatic (best for this GPU)", "Automático (el mejor para esta GPU)"),
           C("on", "Native", "Nativo"),
