@@ -162,7 +162,7 @@ Los parches comunitarios vienen de [xenia-canary/game-patches](https://github.co
 
 En Windows, el juego consulta GitHub para buscar una nueva versión como máximo dos veces al día y no envía ningún otro dato. Puedes desactivarlo en Opciones de PC > Sistema o poner `gow2_update_check = false` en `gow2.toml`.
 
-Para actualizar, usa Opciones de PC > Sistema > Descargar (o la página de Releases) y extrae el zip nuevo encima de la carpeta del juego, reemplazando archivos. Tus ajustes de `gow2.toml`, tus partidas y la caché de shaders se conservan: el zip trae sus valores por defecto como `gow2.default.toml` y el juego crea `gow2.toml` a partir de él solo si falta.
+Para actualizar, usa Opciones de PC > Sistema > Descargar (o la página de Releases), abre el zip nuevo y copia todo lo que hay dentro de su carpeta `gow2-recomp-<versión>-win64` en la carpeta del juego, reemplazando archivos. Tus ajustes de `gow2.toml`, tus partidas y la caché de shaders se conservan: el zip trae sus valores por defecto como `gow2.default.toml` y el juego crea `gow2.toml` a partir de él solo si falta.
 
 ## Rendimiento
 

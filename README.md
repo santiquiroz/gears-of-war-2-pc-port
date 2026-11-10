@@ -162,7 +162,7 @@ The community patches come from [xenia-canary/game-patches](https://github.com/x
 
 On Windows, the game checks GitHub for a new release at most twice a day and sends nothing else. Turn this off in PC Options > System, or set `gow2_update_check = false` in `gow2.toml`.
 
-To update, use PC Options > System > Download (or the Releases page) and extract the new zip over your game folder, replacing files. Your settings in `gow2.toml`, your saves and the shader cache are kept: the zip ships its defaults as `gow2.default.toml`, and the game makes `gow2.toml` from it only when it is missing.
+To update, use PC Options > System > Download (or the Releases page), open the new zip and copy everything inside its `gow2-recomp-<version>-win64` folder into your game folder, replacing files. Your settings in `gow2.toml`, your saves and the shader cache are kept: the zip ships its defaults as `gow2.default.toml`, and the game makes `gow2.toml` from it only when it is missing.
 
 ## Performance
 
