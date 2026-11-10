@@ -424,6 +424,10 @@ void AddNativeKeys(std::vector<Edit>* e, const CoalescedOptions& o) {
   for (const NativeBinding& b : o.native_bindings)
     e->push_back({Edit::kAppend, kFile, "Engine.PlayerInput", "Bindings",
                   BindingIniValue(b, o.swap_mouse_buttons), "", "", false, false});
+  // The engine console takes Tab (TypeKey) and Tilde before the bindings see them: Tab, the Back
+  // key, opened it instead of skipping the cinematic. Same length as before, so the bundle fits.
+  e->push_back({Edit::kSet, kFile, "Engine.Console", "TypeKey", "None"});
+  e->push_back({Edit::kSet, kFile, "Engine.Console", "ConsoleKey", "None"});
 }
 
 void AddNativeMouse(std::vector<Edit>* e) {
