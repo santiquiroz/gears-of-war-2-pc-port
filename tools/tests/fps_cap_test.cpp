@@ -118,6 +118,21 @@ void TestEffectiveCap() {
   Expect(rex::glue::EffectiveFpsCap(false, 144) == 30, "locked frame rate ignores the unlocked limit");
   Expect(rex::glue::EffectiveFpsCap(true, 0) == 0, "unlocked with no limit runs free");
   Expect(rex::glue::EffectiveFpsCap(true, 60) == 60, "unlocked uses the chosen limit");
+  Expect(rex::glue::CapFromRefreshRate(60.0) == 57, "60 Hz refresh cap is 57 fps");
+  Expect(rex::glue::CapFromRefreshRate(144.0) == 141, "144 Hz refresh cap is 141 fps");
+  Expect(rex::glue::CapFromRefreshRate(59.94) == 56, "59.94 Hz refresh cap is 56 fps");
+  Expect(rex::glue::CapFromRefreshRate(0.0) == 0, "unknown refresh has no cap");
+  Expect(rex::glue::EffectiveFpsCap(true, -1, 57) == 57, "unlocked VRR uses the derived refresh cap");
+  Expect(rex::glue::EffectiveFpsCap(true, -1, 141, true) == 70,
+         "unlocked VRR halves the derived refresh cap with frame generation");
+  Expect(rex::glue::EffectiveFpsCap(true, -1, 141, false) == 141,
+         "unlocked VRR keeps the derived refresh cap without frame generation");
+  Expect(rex::glue::EffectiveFpsCap(false, -1, 141, true) == 30,
+         "locked frame rate stays at 30 fps with frame generation");
+  Expect(rex::glue::EffectiveFpsCap(true, 90, 141, true) == 90,
+         "numeric frame rate cap is not halved with frame generation");
+  Expect(rex::glue::EffectiveFpsCap(true, -1, 0) == 0, "unknown VRR refresh leaves FPS uncapped");
+  Expect(rex::glue::EffectiveFpsCap(false, -1, 57) == 30, "locked FPS ignores the VRR cap");
 }
 
 int main() {

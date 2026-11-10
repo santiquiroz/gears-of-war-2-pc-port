@@ -1,0 +1,1052 @@
+diff --git a/include/rex/ui/d3d12/d3d12_hdr.h b/include/rex/ui/d3d12/d3d12_hdr.h
+new file mode 100644
+index 0000000..e0ad255
+--- /dev/null
++++ b/include/rex/ui/d3d12/d3d12_hdr.h
+@@ -0,0 +1,29 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2022 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ *
++ * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
++ */
++
++#pragma once
++
++#include <cstdint>
++
++#include <rex/ui/d3d12/d3d12_provider.h>
++
++namespace rex::ui::d3d12::hdr {
++
++struct ComposePipeline {
++  Microsoft::WRL::ComPtr<ID3D12RootSignature> root_signature;
++  Microsoft::WRL::ComPtr<ID3D12PipelineState> pipeline;
++};
++
++bool CreateComposePipeline(const D3D12Provider& provider, ComposePipeline& pipeline);
++HRESULT SetMetadata(IDXGISwapChain4* swap_chain, uint32_t paper_white_nits,
++                    uint32_t peak_nits);
++
++}  // namespace rex::ui::d3d12::hdr
+diff --git a/include/rex/ui/d3d12/d3d12_presenter.h b/include/rex/ui/d3d12/d3d12_presenter.h
+index 83d09f7..21cae97 100644
+--- a/include/rex/ui/d3d12/d3d12_presenter.h
++++ b/include/rex/ui/d3d12/d3d12_presenter.h
+@@ -12,10 +12,12 @@
+ #pragma once
+ 
+ #include <array>
++#include <atomic>
+ #include <memory>
+ #include <utility>
+ 
+ #include <rex/math.h>
++#include <rex/ui/d3d12/d3d12_hdr.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_submission_tracker.h>
+ #include <rex/ui/presenter.h>
+@@ -86,6 +88,7 @@ class D3D12Presenter final : public Presenter {
+   Surface::TypeFlags GetSupportedSurfaceTypes() const override;
+ 
+   bool CaptureGuestOutput(RawImage& image_out) override;
++  void RequestScreenshot() override;
+ 
+   void AwaitUISubmissionCompletionFromUIThread(UINT64 submission_index) {
+     ui_submission_tracker_.AwaitSubmissionCompletion(submission_index);
+@@ -183,7 +186,10 @@ class D3D12Presenter final : public Presenter {
+       // guest_output_intermediate_texture_paint_last_usage_.
+       kRTVIndexGuestOutputIntermediate0 = kRTVIndexSwapChainBuffer0 + kSwapChainBufferCount,
+ 
+-      kRTVCount = kRTVIndexGuestOutputIntermediate0 + kGuestOutputMailboxSize - 1,
++      kRTVIndexHDRPicture = kRTVIndexGuestOutputIntermediate0 + kMaxGuestOutputPaintEffects - 1,
++      kRTVIndexHDRUI,
++
++      kRTVCount = kRTVIndexHDRUI + 1,
+     };
+ 
+     enum ViewIndex : UINT {
+@@ -195,7 +201,11 @@ class D3D12Presenter final : public Presenter {
+       // guest_output_intermediate_texture_paint_last_usage_.
+       kViewIndexGuestOutputIntermediate0Srv = kViewIndexGuestOutput0Srv + kGuestOutputMailboxSize,
+ 
+-      kViewCount = kViewIndexGuestOutputIntermediate0Srv + kMaxGuestOutputPaintEffects - 1,
++      kViewIndexHDRPictureSrv = kViewIndexGuestOutputIntermediate0Srv +
++                                kMaxGuestOutputPaintEffects - 1,
++      kViewIndexHDRUISrv,
++
++      kViewCount = kViewIndexHDRUISrv + 1,
+     };
+ 
+     void AwaitSwapChainUsageCompletion() {
+@@ -251,8 +261,14 @@ class D3D12Presenter final : public Presenter {
+     uint32_t swap_chain_width = 0;
+     uint32_t swap_chain_height = 0;
+     bool swap_chain_allows_tearing = false;
++    bool hdr_enabled = false;
++    uint32_t hdr_paper_white_nits = 0;
++    uint32_t hdr_peak_nits = 0;
+     Microsoft::WRL::ComPtr<IDXGISwapChain3> swap_chain;
++    Microsoft::WRL::ComPtr<IDXGISwapChain4> hdr_swap_chain;
+     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, kSwapChainBufferCount> swap_chain_buffers;
++    Microsoft::WRL::ComPtr<ID3D12Resource> hdr_picture;
++    Microsoft::WRL::ComPtr<ID3D12Resource> hdr_ui;
+   };
+ 
+   explicit D3D12Presenter(HostGpuLossCallback host_gpu_loss_callback, const D3D12Provider& provider)
+@@ -289,6 +305,7 @@ class D3D12Presenter final : public Presenter {
+       guest_output_paint_intermediate_pipelines_;
+   std::array<Microsoft::WRL::ComPtr<ID3D12PipelineState>, size_t(GuestOutputPaintEffect::kCount)>
+       guest_output_paint_final_pipelines_;
++  hdr::ComposePipeline hdr_compose_pipeline_;
+ 
+   // The first is the refresher submission tracker fence value at which the
+   // guest output texture was last refreshed, the second is the reference to the
+@@ -311,6 +328,7 @@ class D3D12Presenter final : public Presenter {
+   // DisconnectPaintingFromSurfaceFromUIThreadImpl) by the thread doing it, as
+   // well as by presenter initialization and shutdown.
+   PaintContext paint_context_;
++  std::atomic<bool> screenshot_requested_ = false;
+ 
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+   void* temporal_upscaler_context_ = nullptr;
+diff --git a/include/rex/ui/presenter.h b/include/rex/ui/presenter.h
+index 92832f8..c5e4dbb 100644
+--- a/include/rex/ui/presenter.h
++++ b/include/rex/ui/presenter.h
+@@ -368,6 +368,8 @@ class Presenter {
+   // multiple at the same time, and it should acquire the latest guest output
+   // image via ConsumeGuestOutput.
+   virtual bool CaptureGuestOutput(RawImage& image_out) = 0;
++
++  virtual void RequestScreenshot() {}
+   const GuestOutputPaintConfig& GetGuestOutputPaintConfigFromUIThread() const {
+     return guest_output_paint_config_;
+   }
+diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
+index d1046ca..4c2b4e0 100644
+--- a/src/ui/CMakeLists.txt
++++ b/src/ui/CMakeLists.txt
+@@ -54,6 +54,7 @@ if(REXGLUE_USE_D3D12)
+     set(REXUI_D3D12_SOURCES
+         d3d12/d3d12_cpu_descriptor_pool.cpp
+         d3d12/d3d12_descriptor_heap_pool.cpp
++        d3d12/d3d12_hdr.cpp
+         d3d12/d3d12_immediate_drawer.cpp
+         d3d12/d3d12_presenter.cpp
+         d3d12/d3d12_provider.cpp
+@@ -188,7 +189,7 @@ elseif(APPLE)
+ endif()
+ 
+ if(WIN32)
+-    target_link_libraries(rexui PUBLIC dxgi dxguid)
++    target_link_libraries(rexui PUBLIC dxgi dxguid windowscodecs shell32 ole32)
+ endif()
+ 
+ # D3D12 backend dependencies
+diff --git a/src/ui/d3d12/d3d12_hdr.cpp b/src/ui/d3d12/d3d12_hdr.cpp
+new file mode 100644
+index 0000000..dff6723
+--- /dev/null
++++ b/src/ui/d3d12/d3d12_hdr.cpp
+@@ -0,0 +1,190 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2022 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ *
++ * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
++ */
++
++#include <rex/ui/d3d12/d3d12_hdr.h>
++
++#include <cstring>
++
++#include <d3dcompiler.h>
++
++#include <rex/logging.h>
++#include <rex/ui/d3d12/d3d12_util.h>
++
++namespace rex::ui::d3d12::hdr {
++namespace {
++
++constexpr char kComposeShader[] = R"(
++Texture2D<float4> picture : register(t0);
++Texture2D<float4> ui : register(t1);
++cbuffer Constants : register(b0) { float paperWhite; float peakNits; }
++
++struct VertexOutput { float4 position : SV_Position; };
++
++VertexOutput VSMain(uint vertexId : SV_VertexID) {
++  VertexOutput output;
++  output.position = float4(vertexId == 2 ? 3.0 : -1.0,
++                           vertexId == 1 ? 3.0 : -1.0, 0.0, 1.0);
++  return output;
++}
++
++float3 SRGBToLinear(float3 value) {
++  return lerp(value / 12.92, pow((value + 0.055) / 1.055, 2.4),
++              step(0.04045, value));
++}
++
++float3 LinearToPQ(float3 value) {
++  const float m1 = 2610.0 / 16384.0;
++  const float m2 = 2523.0 / 32.0;
++  const float c1 = 3424.0 / 4096.0;
++  const float c2 = 2413.0 / 128.0;
++  const float c3 = 2392.0 / 128.0;
++  float3 p = pow(saturate(value), m1);
++  return pow((c1 + c2 * p) / (1.0 + c3 * p), m2);
++}
++
++float4 PSMain(VertexOutput input) : SV_Target {
++  int3 location = int3(int2(input.position.xy), 0);
++  float3 encoded = picture.Load(location).rgb;
++  float3 rgb = SRGBToLinear(encoded);
++  float luminance = dot(rgb, float3(0.2126, 0.7152, 0.0722));
++  float peak = max(peakNits, paperWhite);
++  float3 nits = rgb * paperWhite;
++  if (luminance > 0.6) {
++    float t = (luminance - 0.6) / 0.4;
++    float outputLuminance = paperWhite * luminance +
++                            (peak - paperWhite) * t * t;
++    nits = rgb * (outputLuminance / luminance);
++  }
++
++  // The UI is premultiplied: blending the encoded values gives what SDR shows.
++  float4 overlay = ui.Load(location);
++  float3 blended = SRGBToLinear(overlay.rgb + encoded * (1.0 - overlay.a)) * paperWhite;
++  nits = blended + (nits - rgb * paperWhite) * (1.0 - overlay.a);
++
++  float3 bt2020 = mul(float3x3(
++      0.627404, 0.329283, 0.043313,
++      0.069097, 0.919540, 0.011362,
++      0.016391, 0.088013, 0.895595), nits);
++  return float4(LinearToPQ(bt2020 / 10000.0), 1.0);
++}
++)";
++
++using D3DCompileFunction = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR,
++                                             const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR,
++                                             LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
++
++D3DCompileFunction GetD3DCompile() {
++  static HMODULE library = LoadLibraryW(L"d3dcompiler_47.dll");
++  return library ? reinterpret_cast<D3DCompileFunction>(GetProcAddress(library, "D3DCompile"))
++                 : nullptr;
++}
++
++bool CompileShader(const char* entry_point, const char* target,
++                   Microsoft::WRL::ComPtr<ID3DBlob>& bytecode) {
++  D3DCompileFunction compile = GetD3DCompile();
++  if (!compile) {
++    REXLOG_ERROR("D3D12Presenter: d3dcompiler_47.dll is unavailable");
++    return false;
++  }
++  Microsoft::WRL::ComPtr<ID3DBlob> errors;
++  HRESULT result = compile(kComposeShader, std::strlen(kComposeShader), "D3D12 HDR compose",
++                           nullptr, nullptr, entry_point, target, D3DCOMPILE_OPTIMIZATION_LEVEL3,
++                           0, &bytecode, &errors);
++  if (FAILED(result)) {
++    REXLOG_ERROR("D3D12Presenter: HDR compose shader {} failed: {}", entry_point,
++                 errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
++    return false;
++  }
++  return true;
++}
++
++}  // namespace
++
++bool CreateComposePipeline(const D3D12Provider& provider, ComposePipeline& pipeline) {
++  D3D12_DESCRIPTOR_RANGE ranges[2] = {};
++  for (UINT i = 0; i < 2; ++i) {
++    ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
++    ranges[i].NumDescriptors = 1;
++    ranges[i].BaseShaderRegister = i;
++    ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
++  }
++  D3D12_ROOT_PARAMETER parameters[3] = {};
++  parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++  parameters[0].DescriptorTable.NumDescriptorRanges = 1;
++  parameters[0].DescriptorTable.pDescriptorRanges = &ranges[0];
++  parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
++  parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++  parameters[1].DescriptorTable.NumDescriptorRanges = 1;
++  parameters[1].DescriptorTable.pDescriptorRanges = &ranges[1];
++  parameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
++  parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
++  parameters[2].Constants.ShaderRegister = 0;
++  parameters[2].Constants.Num32BitValues = 2;
++  parameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
++  D3D12_ROOT_SIGNATURE_DESC root_desc = {};
++  root_desc.NumParameters = 3;
++  root_desc.pParameters = parameters;
++  pipeline.root_signature.Attach(util::CreateRootSignature(provider, root_desc));
++  if (!pipeline.root_signature) {
++    return false;
++  }
++
++  Microsoft::WRL::ComPtr<ID3DBlob> vertex_shader;
++  Microsoft::WRL::ComPtr<ID3DBlob> pixel_shader;
++  if (!CompileShader("VSMain", "vs_5_0", vertex_shader) ||
++      !CompileShader("PSMain", "ps_5_0", pixel_shader)) {
++    pipeline.root_signature.Reset();
++    return false;
++  }
++
++  D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
++  desc.pRootSignature = pipeline.root_signature.Get();
++  desc.VS = {vertex_shader->GetBufferPointer(), vertex_shader->GetBufferSize()};
++  desc.PS = {pixel_shader->GetBufferPointer(), pixel_shader->GetBufferSize()};
++  desc.BlendState.AlphaToCoverageEnable = FALSE;
++  desc.BlendState.IndependentBlendEnable = FALSE;
++  desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++  desc.SampleMask = UINT_MAX;
++  desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
++  desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
++  desc.RasterizerState.DepthClipEnable = TRUE;
++  desc.InputLayout = {};
++  desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++  desc.NumRenderTargets = 1;
++  desc.RTVFormats[0] = DXGI_FORMAT_R10G10B10A2_UNORM;
++  desc.SampleDesc.Count = 1;
++  if (FAILED(provider.GetDevice()->CreateGraphicsPipelineState(
++          &desc, IID_PPV_ARGS(&pipeline.pipeline)))) {
++    REXLOG_ERROR("D3D12Presenter: Failed to create the HDR compose pipeline");
++    pipeline.root_signature.Reset();
++    return false;
++  }
++  return true;
++}
++
++HRESULT SetMetadata(IDXGISwapChain4* swap_chain, uint32_t paper_white_nits,
++                    uint32_t peak_nits) {
++  DXGI_HDR_METADATA_HDR10 metadata = {};
++  metadata.RedPrimary[0] = 35400;
++  metadata.RedPrimary[1] = 14600;
++  metadata.GreenPrimary[0] = 8500;
++  metadata.GreenPrimary[1] = 39850;
++  metadata.BluePrimary[0] = 6550;
++  metadata.BluePrimary[1] = 2300;
++  metadata.WhitePoint[0] = 15635;
++  metadata.WhitePoint[1] = 16450;
++  metadata.MaxMasteringLuminance = peak_nits;
++  metadata.MaxContentLightLevel = uint16_t(peak_nits);
++  metadata.MaxFrameAverageLightLevel = uint16_t(paper_white_nits);
++  return swap_chain->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_HDR10, sizeof(metadata), &metadata);
++}
++
++}  // namespace rex::ui::d3d12::hdr
+diff --git a/src/ui/d3d12/d3d12_immediate_drawer.cpp b/src/ui/d3d12/d3d12_immediate_drawer.cpp
+index ce654c8..0194c87 100644
+--- a/src/ui/d3d12/d3d12_immediate_drawer.cpp
++++ b/src/ui/d3d12/d3d12_immediate_drawer.cpp
+@@ -131,7 +131,7 @@ bool D3D12ImmediateDrawer::Initialize() {
+   pipeline_blend_desc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+   pipeline_blend_desc.BlendOp = D3D12_BLEND_OP_ADD;
+   pipeline_blend_desc.SrcBlendAlpha = D3D12_BLEND_ONE;
+-  pipeline_blend_desc.DestBlendAlpha = D3D12_BLEND_ONE;
++  pipeline_blend_desc.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+   pipeline_blend_desc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+   pipeline_blend_desc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+   pipeline_desc.SampleMask = UINT_MAX;
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index 80048ef..c6e62c0 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -13,16 +13,30 @@
+ #include <climits>
+ #include <cmath>
+ #include <memory>
++#include <filesystem>
++#include <stdexcept>
++#include <string>
++#include <thread>
+ #include <utility>
++#include <atomic>
++#include <chrono>
++#include <cstring>
++#include <iomanip>
++#include <sstream>
++#include <vector>
+ 
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/ui/d3d12/d3d12_presenter.h>
++#include <rex/ui/d3d12/d3d12_hdr.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_util.h>
+ #include <rex/ui/surface_win.h>
++#include <wincodec.h>
++#include <shlobj.h>
++#include <dxgi1_6.h>
+ 
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+ #include <ffx_api/dx12/ffx_api_dx12.h>
+@@ -33,8 +47,111 @@
+ REXCVAR_DEFINE_BOOL(d3d12_allow_variable_refresh_rate_and_tearing, true, "UI/D3D12",
+                     "Allow variable refresh rate and tearing");
+ 
++REXCVAR_DECLARE(bool, present_hdr);
++REXCVAR_DECLARE(int32_t, present_hdr_paper_white_nits);
++REXCVAR_DECLARE(int32_t, present_hdr_peak_nits);
++
+ namespace rex::ui::d3d12 {
+ 
++namespace {
++
++std::filesystem::path ScreenshotPath() {
++  PWSTR pictures = nullptr;
++  HRESULT result = SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT, nullptr, &pictures);
++  if (FAILED(result)) {
++    throw std::runtime_error("Failed to locate the Pictures folder");
++  }
++  std::filesystem::path path = std::filesystem::path(pictures) / L"Gears of War 2 PC";
++  CoTaskMemFree(pictures);
++  std::filesystem::create_directories(path);
++  auto now = std::chrono::system_clock::now();
++  auto stamp = std::chrono::system_clock::to_time_t(now);
++  std::tm local_time{};
++  localtime_s(&local_time, &stamp);
++  auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
++                    .count() % 1000;
++  std::wostringstream name;
++  name << std::put_time(&local_time, L"gow2_%Y-%m-%d_%H-%M-%S-") << std::setw(3)
++       << std::setfill(L'0') << millis << L".png";
++  return path / name.str();
++}
++
++HRESULT WritePng(const std::filesystem::path& path, const std::vector<uint8_t>& pixels,
++                 uint32_t width, uint32_t height, uint32_t stride) {
++  Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
++  Microsoft::WRL::ComPtr<IWICBitmapEncoder> encoder;
++  Microsoft::WRL::ComPtr<IWICBitmapFrameEncode> frame;
++  Microsoft::WRL::ComPtr<IWICStream> stream;
++  HRESULT result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
++                                    IID_PPV_ARGS(&factory));
++  if (SUCCEEDED(result)) {
++    result = factory->CreateStream(&stream);
++  }
++  if (SUCCEEDED(result)) result = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
++  if (SUCCEEDED(result)) {
++    result = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
++  }
++  if (SUCCEEDED(result)) result = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
++  if (SUCCEEDED(result)) result = encoder->CreateNewFrame(&frame, nullptr);
++  if (SUCCEEDED(result)) result = frame->Initialize(nullptr);
++  if (SUCCEEDED(result)) result = frame->SetSize(width, height);
++  WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
++  if (SUCCEEDED(result)) result = frame->SetPixelFormat(&format);
++  if (SUCCEEDED(result)) {
++    result = frame->WritePixels(height, stride, UINT(pixels.size()),
++                                const_cast<BYTE*>(pixels.data()));
++  }
++  if (SUCCEEDED(result)) result = frame->Commit();
++  if (SUCCEEDED(result)) result = encoder->Commit();
++  return result;
++}
++
++void SaveScreenshotPng(std::vector<uint8_t> pixels, uint32_t width, uint32_t height,
++                       uint32_t stride) {
++  HRESULT init_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
++  try {
++    std::filesystem::path path = ScreenshotPath();
++    HRESULT result = WritePng(path, pixels, width, height, stride);
++    if (SUCCEEDED(result)) {
++      REXLOG_INFO("D3D12Presenter: Screenshot saved to {}", path.string());
++    } else {
++      REXLOG_ERROR("D3D12Presenter: Failed to save screenshot (0x{:08X})", uint32_t(result));
++    }
++  } catch (const std::exception& error) {
++    REXLOG_ERROR("D3D12Presenter: Failed to save screenshot: {}", error.what());
++  }
++  if (SUCCEEDED(init_result)) CoUninitialize();
++}
++
++const char* HDRDisplayFailureReason(IDXGIFactory2* factory, HWND hwnd) {
++  HMONITOR target_monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
++  for (UINT adapter_index = 0;; ++adapter_index) {
++    Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
++    if (FAILED(factory->EnumAdapters1(adapter_index, &adapter))) {
++      break;
++    }
++    for (UINT output_index = 0;; ++output_index) {
++      Microsoft::WRL::ComPtr<IDXGIOutput> output;
++      if (FAILED(adapter->EnumOutputs(output_index, &output))) {
++        break;
++      }
++      Microsoft::WRL::ComPtr<IDXGIOutput6> output6;
++      if (FAILED(output.As(&output6))) {
++        continue;
++      }
++      DXGI_OUTPUT_DESC1 desc = {};
++      if (SUCCEEDED(output6->GetDesc1(&desc)) && desc.Monitor == target_monitor) {
++        return desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
++                   ? nullptr
++                   : "display not in HDR";
++      }
++    }
++  }
++  return "display not found";
++}
++
++}  // namespace
++
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "ui/shaders/bytecode/d3d12_5_1/guest_output_bilinear_dither_ps.h"
+@@ -333,6 +450,10 @@ bool D3D12Presenter::CaptureGuestOutput(RawImage& image_out) {
+   return true;
+ }
+ 
++void D3D12Presenter::RequestScreenshot() {
++  screenshot_requested_.store(true, std::memory_order_release);
++}
++
+ Presenter::SurfacePaintConnectResult
+ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_surface,
+                                                                 uint32_t new_surface_width,
+@@ -354,6 +475,8 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+       return SurfacePaintConnectResult::kSuccessUnchanged;
+     }
+     paint_context_.AwaitSwapChainUsageCompletion();
++    paint_context_.hdr_picture.Reset();
++    paint_context_.hdr_ui.Reset();
+     // Using the current swap_chain_allows_tearing_ value that's consistent with
+     // the creation of the swap chain because ResizeBuffers can't toggle the
+     // tearing flag.
+@@ -390,7 +513,9 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+     DXGI_SWAP_CHAIN_DESC1 swap_chain_desc;
+     swap_chain_desc.Width = UINT(new_swap_chain_width);
+     swap_chain_desc.Height = UINT(new_swap_chain_height);
+-    swap_chain_desc.Format = kSwapChainFormat;
++    bool hdr_requested = REXCVAR_GET(present_hdr);
++    bool hdr_enabled = false;
++    std::string hdr_reason = "cvar off";
+     swap_chain_desc.Stereo = FALSE;
+     swap_chain_desc.SampleDesc.Count = 1;
+     swap_chain_desc.SampleDesc.Quality = 0;
+@@ -416,10 +541,24 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+     IDXGIFactory2* dxgi_factory = provider_.GetDXGIFactory();
+     ID3D12CommandQueue* direct_queue = provider_.GetDirectQueue();
+     Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain_1;
++    HWND surface_hwnd = nullptr;
+     switch (surface_type) {
+ #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_GAMES)
+       case Surface::kTypeIndex_Win32Hwnd: {
+-        HWND surface_hwnd = static_cast<const Win32HwndSurface&>(new_surface).hwnd();
++        surface_hwnd = static_cast<const Win32HwndSurface&>(new_surface).hwnd();
++        if (hdr_requested) {
++          if (!hdr_compose_pipeline_.pipeline) {
++            hdr_reason = "shader compile failed";
++          } else {
++            const char* display_failure = HDRDisplayFailureReason(dxgi_factory, surface_hwnd);
++            if (display_failure) {
++              hdr_reason = display_failure;
++            } else {
++              hdr_enabled = true;
++            }
++          }
++        }
++        swap_chain_desc.Format = hdr_enabled ? DXGI_FORMAT_R10G10B10A2_UNORM : kSwapChainFormat;
+         if (FAILED(dxgi_factory->CreateSwapChainForHwnd(
+                 direct_queue, surface_hwnd, &swap_chain_desc, nullptr, nullptr, &swap_chain_1))) {
+           REXLOG_ERROR("D3D12Presenter: Failed to create a swap chain for the HWND");
+@@ -438,12 +577,78 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+             "Xenia surface type");
+         return SurfacePaintConnectResult::kFailureSurfaceUnusable;
+     }
+-    if (FAILED(swap_chain_1->QueryInterface(IID_PPV_ARGS(&paint_context_.swap_chain)))) {
+-      REXLOG_ERROR(
+-          "D3D12Presenter: Failed to get version 3 of the swap chain "
+-          "interface");
++    Microsoft::WRL::ComPtr<IDXGISwapChain3> swap_chain_3;
++    HRESULT swap_chain_result = swap_chain_1.As(&swap_chain_3);
++    if (FAILED(swap_chain_result)) {
++      REXLOG_ERROR("D3D12Presenter: Failed to get version 3 of the swap chain interface");
+       return SurfacePaintConnectResult::kFailure;
+     }
++    Microsoft::WRL::ComPtr<IDXGISwapChain4> swap_chain_4;
++    if (SUCCEEDED(swap_chain_result) && hdr_enabled) {
++      swap_chain_result = swap_chain_1.As(&swap_chain_4);
++      if (FAILED(swap_chain_result)) {
++        hdr_reason = "HDR swap chain interface unsupported";
++      }
++    }
++    if (SUCCEEDED(swap_chain_result) && hdr_enabled) {
++      UINT support = 0;
++      swap_chain_result = swap_chain_4->CheckColorSpaceSupport(
++          DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, &support);
++      if (SUCCEEDED(swap_chain_result) &&
++          (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)) {
++        swap_chain_result = swap_chain_4->SetColorSpace1(
++            DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
++        if (FAILED(swap_chain_result)) {
++          hdr_reason = "SetColorSpace1 failed";
++        }
++      } else {
++        hdr_reason = "colour space unsupported";
++        if (SUCCEEDED(swap_chain_result)) {
++          swap_chain_result = DXGI_ERROR_UNSUPPORTED;
++        }
++      }
++      if (SUCCEEDED(swap_chain_result)) {
++        uint32_t paper_white = uint32_t(REXCVAR_GET(present_hdr_paper_white_nits));
++        uint32_t peak = uint32_t(REXCVAR_GET(present_hdr_peak_nits));
++        swap_chain_result = hdr::SetMetadata(swap_chain_4.Get(), paper_white, peak);
++        if (SUCCEEDED(swap_chain_result)) {
++          paint_context_.hdr_paper_white_nits = paper_white;
++          paint_context_.hdr_peak_nits = peak;
++        } else {
++          hdr_reason = "HDR metadata setup failed";
++        }
++      }
++    }
++    if (hdr_enabled && FAILED(swap_chain_result)) {
++      REXLOG_WARN("D3D12Presenter: HDR10 swap chain setup failed (0x{:08X}); retrying SDR",
++                  uint32_t(swap_chain_result));
++      hdr_enabled = false;
++      swap_chain_4.Reset();
++      swap_chain_3.Reset();
++      swap_chain_1.Reset();
++      swap_chain_desc.Format = kSwapChainFormat;
++      if (FAILED(dxgi_factory->CreateSwapChainForHwnd(
++              direct_queue, surface_hwnd, &swap_chain_desc, nullptr, nullptr, &swap_chain_1)) ||
++          FAILED(swap_chain_1.As(&swap_chain_3))) {
++        REXLOG_ERROR("D3D12Presenter: Failed to recreate the swap chain in SDR");
++        return SurfacePaintConnectResult::kFailure;
++      }
++      swap_chain_result = S_OK;
++    }
++    paint_context_.swap_chain = swap_chain_3;
++    if (hdr_enabled) {
++      paint_context_.hdr_swap_chain = swap_chain_4;
++    } else {
++      paint_context_.hdr_swap_chain.Reset();
++    }
++    paint_context_.hdr_enabled = hdr_enabled;
++    if (hdr_enabled) {
++      REXLOG_INFO("HDR10: on (paper white {} nits, peak {} nits)",
++                  REXCVAR_GET(present_hdr_paper_white_nits),
++                  REXCVAR_GET(present_hdr_peak_nits));
++    } else {
++      REXLOG_INFO("HDR10: off ({})", hdr_requested ? hdr_reason : "cvar off");
++    }
+     // From now on, in case of any failure, DestroySwapChain must be called
+     // before returning.
+     paint_context_.swap_chain_width = new_swap_chain_width;
+@@ -463,6 +668,60 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+ 
+   ID3D12Device* device = provider_.GetDevice();
+ 
++  if (paint_context_.hdr_enabled) {
++    D3D12_CPU_DESCRIPTOR_HANDLE rtv_heap_start =
++        paint_context_.rtv_heap->GetCPUDescriptorHandleForHeapStart();
++    D3D12_CPU_DESCRIPTOR_HANDLE view_heap_start =
++        paint_context_.view_heap->GetCPUDescriptorHandleForHeapStart();
++    auto create_hdr_target = [&](Microsoft::WRL::ComPtr<ID3D12Resource>& target,
++                                 PaintContext::RTVIndex rtv_index,
++                                 PaintContext::ViewIndex srv_index) {
++      D3D12_RESOURCE_DESC desc = {};
++      desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++      desc.Width = new_swap_chain_width;
++      desc.Height = new_swap_chain_height;
++      desc.DepthOrArraySize = 1;
++      desc.MipLevels = 1;
++      desc.Format = kSwapChainFormat;
++      desc.SampleDesc.Count = 1;
++      desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++      desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++      D3D12_CLEAR_VALUE clear_value = {};
++      clear_value.Format = kSwapChainFormat;
++      clear_value.Color[3] = 0.0f;
++      if (FAILED(device->CreateCommittedResource(
++              &util::kHeapPropertiesDefault, provider_.GetHeapFlagCreateNotZeroed(), &desc,
++              D3D12_RESOURCE_STATE_COMMON, &clear_value, IID_PPV_ARGS(&target)))) {
++        return false;
++      }
++      D3D12_RENDER_TARGET_VIEW_DESC target_rtv = {};
++      target_rtv.Format = kSwapChainFormat;
++      target_rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
++      device->CreateRenderTargetView(
++          target.Get(), &target_rtv,
++          provider_.OffsetRTVDescriptor(rtv_heap_start, uint32_t(rtv_index)));
++      D3D12_SHADER_RESOURCE_VIEW_DESC target_srv = {};
++      target_srv.Format = kSwapChainFormat;
++      target_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++      target_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++      target_srv.Texture2D.MipLevels = 1;
++      device->CreateShaderResourceView(
++          target.Get(), &target_srv,
++          provider_.OffsetViewDescriptor(view_heap_start, uint32_t(srv_index)));
++      return true;
++    };
++    paint_context_.hdr_picture.Reset();
++    paint_context_.hdr_ui.Reset();
++    if (!create_hdr_target(paint_context_.hdr_picture, PaintContext::kRTVIndexHDRPicture,
++                           PaintContext::kViewIndexHDRPictureSrv) ||
++        !create_hdr_target(paint_context_.hdr_ui, PaintContext::kRTVIndexHDRUI,
++                           PaintContext::kViewIndexHDRUISrv)) {
++      REXLOG_ERROR("D3D12Presenter: Failed to create HDR composition textures");
++      paint_context_.DestroySwapChain();
++      return SurfacePaintConnectResult::kFailure;
++    }
++  }
++
+   // Create the RTV descriptors.
+   D3D12_CPU_DESCRIPTOR_HANDLE rtv_heap_start =
+       paint_context_.rtv_heap->GetCPUDescriptorHandleForHeapStart();
+@@ -472,7 +731,8 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+   rtv_desc.Texture2D.PlaneSlice = 0;
+   for (uint32_t i = 0; i < PaintContext::kSwapChainBufferCount; ++i) {
+     ID3D12Resource* swap_chain_buffer = paint_context_.swap_chain_buffers[i].Get();
+-    rtv_desc.Format = kSwapChainFormat;
++    rtv_desc.Format = paint_context_.hdr_enabled ? DXGI_FORMAT_R10G10B10A2_UNORM
++                                                 : kSwapChainFormat;
+     device->CreateRenderTargetView(
+         swap_chain_buffer, &rtv_desc,
+         provider_.OffsetRTVDescriptor(rtv_heap_start, PaintContext::kRTVIndexSwapChainBuffer0 + i));
+@@ -545,16 +805,29 @@ void D3D12Presenter::PaintContext::DestroySwapChain() {
+     return;
+   }
+   AwaitSwapChainUsageCompletion();
++  hdr_picture.Reset();
++  hdr_ui.Reset();
+   for (Microsoft::WRL::ComPtr<ID3D12Resource>& swap_chain_buffer_ref : swap_chain_buffers) {
+     swap_chain_buffer_ref.Reset();
+   }
+   swap_chain.Reset();
++  hdr_swap_chain.Reset();
+   swap_chain_allows_tearing = false;
++  hdr_enabled = false;
++  hdr_paper_white_nits = 0;
++  hdr_peak_nits = 0;
+   swap_chain_height = 0;
+   swap_chain_width = 0;
+ }
+ 
+ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawers) {
++  Microsoft::WRL::ComPtr<ID3D12Resource> screenshot_buffer;
++  Microsoft::WRL::ComPtr<ID3D12Fence> screenshot_fence;
++  D3D12_PLACED_SUBRESOURCE_FOOTPRINT screenshot_footprint = {};
++  UINT64 screenshot_buffer_size = 0;
++  uint32_t screenshot_width = 0;
++  uint32_t screenshot_height = 0;
++  UINT64 screenshot_fence_value = 1;
+   // Begin the command list with the command allocator not currently potentially
+   // used on the GPU.
+   UINT64 current_paint_submission = paint_context_.paint_submission_tracker.GetCurrentSubmission();
+@@ -575,9 +848,17 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+   D3D12_CPU_DESCRIPTOR_HANDLE rtv_heap_start =
+       paint_context_.rtv_heap->GetCPUDescriptorHandleForHeapStart();
+   UINT back_buffer_index = paint_context_.swap_chain->GetCurrentBackBufferIndex();
+-  D3D12_CPU_DESCRIPTOR_HANDLE back_buffer_rtv = provider_.OffsetRTVDescriptor(
++  ID3D12Resource* present_buffer = paint_context_.swap_chain_buffers[back_buffer_index].Get();
++  D3D12_CPU_DESCRIPTOR_HANDLE present_buffer_rtv = provider_.OffsetRTVDescriptor(
+       rtv_heap_start, PaintContext::kRTVIndexSwapChainBuffer0 + back_buffer_index);
+-  ID3D12Resource* back_buffer = paint_context_.swap_chain_buffers[back_buffer_index].Get();
++  ID3D12Resource* back_buffer = paint_context_.hdr_enabled
++                                    ? paint_context_.hdr_picture.Get()
++                                    : present_buffer;
++  D3D12_CPU_DESCRIPTOR_HANDLE back_buffer_rtv = paint_context_.hdr_enabled
++                                                    ? provider_.OffsetRTVDescriptor(
++                                                          rtv_heap_start,
++                                                          PaintContext::kRTVIndexHDRPicture)
++                                                    : present_buffer_rtv;
+   bool back_buffer_acquired = false;
+   bool back_buffer_bound = false;
+   bool back_buffer_clear_needed = true;
+@@ -1116,28 +1397,159 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+     back_buffer_clear_needed = false;
+   }
+ 
+-  if (execute_ui_drawers) {
+-    // Draw the UI.
+-    if (!back_buffer_bound) {
+-      command_list->OMSetRenderTargets(1, &back_buffer_rtv, TRUE, nullptr);
+-      back_buffer_bound = true;
++  if (screenshot_requested_.exchange(false, std::memory_order_acq_rel)) {
++    D3D12_RESOURCE_DESC desc = back_buffer->GetDesc();
++    screenshot_width = uint32_t(desc.Width);
++    screenshot_height = desc.Height;
++    device->GetCopyableFootprints(&desc, 0, 1, 0, &screenshot_footprint, nullptr, nullptr,
++                                  &screenshot_buffer_size);
++    D3D12_RESOURCE_DESC readback_desc;
++    util::FillBufferResourceDesc(readback_desc, screenshot_buffer_size,
++                                 D3D12_RESOURCE_FLAG_NONE);
++    if (SUCCEEDED(device->CreateCommittedResource(
++            &util::kHeapPropertiesReadback, D3D12_HEAP_FLAG_NONE, &readback_desc,
++            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&screenshot_buffer))) &&
++        SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
++                                      IID_PPV_ARGS(&screenshot_fence)))) {
++      D3D12_RESOURCE_BARRIER barrier = {};
++      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++      barrier.Transition.pResource = back_buffer;
++      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++      barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++      barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
++      command_list->ResourceBarrier(1, &barrier);
++      D3D12_TEXTURE_COPY_LOCATION source = {};
++      source.pResource = back_buffer;
++      source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++      D3D12_TEXTURE_COPY_LOCATION dest = {};
++      dest.pResource = screenshot_buffer.Get();
++      dest.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++      dest.PlacedFootprint = screenshot_footprint;
++      command_list->CopyTextureRegion(&dest, 0, 0, 0, &source, nullptr);
++      std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
++      command_list->ResourceBarrier(1, &barrier);
++    } else {
++      screenshot_buffer.Reset();
++      screenshot_fence.Reset();
++      REXLOG_ERROR("D3D12Presenter: Failed to allocate screenshot readback resources");
+     }
+-    D3D12UIDrawContext ui_draw_context(*this, paint_context_.swap_chain_width,
+-                                       paint_context_.swap_chain_height, command_list,
+-                                       ui_submission_tracker_.GetCurrentSubmission(),
+-                                       ui_submission_tracker_.GetCompletedSubmission());
+-    ExecuteUIDrawersFromUIThread(ui_draw_context);
+   }
+ 
+-  // End drawing to the back buffer.
+-  D3D12_RESOURCE_BARRIER barrier_rtv_to_present;
+-  barrier_rtv_to_present.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+-  barrier_rtv_to_present.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+-  barrier_rtv_to_present.Transition.pResource = back_buffer;
+-  barrier_rtv_to_present.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+-  barrier_rtv_to_present.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+-  barrier_rtv_to_present.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+-  command_list->ResourceBarrier(1, &barrier_rtv_to_present);
++  if (!paint_context_.hdr_enabled) {
++    if (execute_ui_drawers) {
++      if (!back_buffer_bound) {
++        command_list->OMSetRenderTargets(1, &back_buffer_rtv, TRUE, nullptr);
++        back_buffer_bound = true;
++      }
++      D3D12UIDrawContext ui_draw_context(*this, paint_context_.swap_chain_width,
++                                         paint_context_.swap_chain_height, command_list,
++                                         ui_submission_tracker_.GetCurrentSubmission(),
++                                         ui_submission_tracker_.GetCompletedSubmission());
++      ExecuteUIDrawersFromUIThread(ui_draw_context);
++    }
++    D3D12_RESOURCE_BARRIER barrier_rtv_to_present = {};
++    barrier_rtv_to_present.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    barrier_rtv_to_present.Transition.pResource = back_buffer;
++    barrier_rtv_to_present.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    barrier_rtv_to_present.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    barrier_rtv_to_present.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
++    command_list->ResourceBarrier(1, &barrier_rtv_to_present);
++  } else {
++    D3D12_RESOURCE_BARRIER ui_to_render_target = {};
++    ui_to_render_target.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    ui_to_render_target.Transition.pResource = paint_context_.hdr_ui.Get();
++    ui_to_render_target.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    ui_to_render_target.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
++    ui_to_render_target.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    command_list->ResourceBarrier(1, &ui_to_render_target);
++    D3D12_CPU_DESCRIPTOR_HANDLE ui_rtv =
++        provider_.OffsetRTVDescriptor(rtv_heap_start, PaintContext::kRTVIndexHDRUI);
++    const float clear_ui[] = {0.0f, 0.0f, 0.0f, 0.0f};
++    command_list->ClearRenderTargetView(ui_rtv, clear_ui, 0, nullptr);
++    if (execute_ui_drawers) {
++      command_list->OMSetRenderTargets(1, &ui_rtv, TRUE, nullptr);
++      D3D12UIDrawContext ui_draw_context(*this, paint_context_.swap_chain_width,
++                                         paint_context_.swap_chain_height, command_list,
++                                         ui_submission_tracker_.GetCurrentSubmission(),
++                                         ui_submission_tracker_.GetCompletedSubmission());
++      ExecuteUIDrawersFromUIThread(ui_draw_context);
++    }
++
++    D3D12_RESOURCE_BARRIER compose_barriers[3] = {};
++    compose_barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    compose_barriers[0].Transition.pResource = paint_context_.hdr_picture.Get();
++    compose_barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    compose_barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    compose_barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++    compose_barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    compose_barriers[1].Transition.pResource = paint_context_.hdr_ui.Get();
++    compose_barriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    compose_barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    compose_barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++    compose_barriers[2].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    compose_barriers[2].Transition.pResource = present_buffer;
++    compose_barriers[2].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    compose_barriers[2].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
++    compose_barriers[2].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    command_list->ResourceBarrier(3, compose_barriers);
++
++    ID3D12DescriptorHeap* view_heap = paint_context_.view_heap.Get();
++    command_list->SetDescriptorHeaps(1, &view_heap);
++    command_list->SetGraphicsRootSignature(hdr_compose_pipeline_.root_signature.Get());
++    command_list->SetPipelineState(hdr_compose_pipeline_.pipeline.Get());
++    D3D12_GPU_DESCRIPTOR_HANDLE view_heap_start = view_heap->GetGPUDescriptorHandleForHeapStart();
++    command_list->SetGraphicsRootDescriptorTable(
++        0, provider_.OffsetViewDescriptor(view_heap_start, PaintContext::kViewIndexHDRPictureSrv));
++    command_list->SetGraphicsRootDescriptorTable(
++        1, provider_.OffsetViewDescriptor(view_heap_start, PaintContext::kViewIndexHDRUISrv));
++    float hdr_constants[2] = {float(REXCVAR_GET(present_hdr_paper_white_nits)),
++                              float(REXCVAR_GET(present_hdr_peak_nits))};
++    command_list->SetGraphicsRoot32BitConstants(2, 2, hdr_constants, 0);
++    D3D12_VIEWPORT compose_viewport = {};
++    compose_viewport.Width = float(paint_context_.swap_chain_width);
++    compose_viewport.Height = float(paint_context_.swap_chain_height);
++    compose_viewport.MinDepth = 0.0f;
++    compose_viewport.MaxDepth = 1.0f;
++    command_list->RSSetViewports(1, &compose_viewport);
++    D3D12_RECT compose_scissor = {0, 0, LONG(paint_context_.swap_chain_width),
++                                  LONG(paint_context_.swap_chain_height)};
++    command_list->RSSetScissorRects(1, &compose_scissor);
++    command_list->OMSetRenderTargets(1, &present_buffer_rtv, TRUE, nullptr);
++    command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++    command_list->DrawInstanced(3, 1, 0, 0);
++
++    D3D12_RESOURCE_BARRIER finish_barriers[3] = {};
++    finish_barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    finish_barriers[0].Transition.pResource = paint_context_.hdr_picture.Get();
++    finish_barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    finish_barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++    finish_barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
++    finish_barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    finish_barriers[1].Transition.pResource = paint_context_.hdr_ui.Get();
++    finish_barriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    finish_barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
++    finish_barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
++    finish_barriers[2].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++    finish_barriers[2].Transition.pResource = present_buffer;
++    finish_barriers[2].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++    finish_barriers[2].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    finish_barriers[2].Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
++    command_list->ResourceBarrier(3, finish_barriers);
++
++    uint32_t paper_white = uint32_t(REXCVAR_GET(present_hdr_paper_white_nits));
++    uint32_t peak = uint32_t(REXCVAR_GET(present_hdr_peak_nits));
++    if (paper_white != paint_context_.hdr_paper_white_nits ||
++        peak != paint_context_.hdr_peak_nits) {
++      HRESULT metadata_result =
++          hdr::SetMetadata(paint_context_.hdr_swap_chain.Get(), paper_white, peak);
++      if (FAILED(metadata_result)) {
++        REXLOG_WARN("D3D12Presenter: Failed to update HDR10 metadata (0x{:08X})",
++                    uint32_t(metadata_result));
++      }
++      paint_context_.hdr_paper_white_nits = paper_white;
++      paint_context_.hdr_peak_nits = peak;
++    }
++  }
+ 
+   // Execute and present.
+   command_list->Close();
+@@ -1147,6 +1559,48 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+     ui_submission_tracker_.NextSubmission();
+   }
+   paint_context_.paint_submission_tracker.NextSubmission();
++  if (screenshot_buffer && screenshot_fence) {
++    ID3D12CommandQueue* queue = provider_.GetDirectQueue();
++    if (SUCCEEDED(queue->Signal(screenshot_fence.Get(), screenshot_fence_value))) {
++      auto buffer = screenshot_buffer;
++      auto fence = screenshot_fence;
++      D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = screenshot_footprint;
++      uint64_t buffer_size = screenshot_buffer_size;
++      uint32_t width = screenshot_width;
++      uint32_t height = screenshot_height;
++      std::thread([buffer, fence, footprint, buffer_size, width, height]() {
++        HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
++        if (!event || FAILED(fence->SetEventOnCompletion(1, event)) ||
++            WaitForSingleObject(event, INFINITE) != WAIT_OBJECT_0) {
++          if (event) CloseHandle(event);
++          REXLOG_ERROR("D3D12Presenter: Failed while waiting for screenshot readback");
++          return;
++        }
++        CloseHandle(event);
++        D3D12_RANGE range{0, SIZE_T(buffer_size)};
++        void* mapped = nullptr;
++        if (FAILED(buffer->Map(0, &range, &mapped))) {
++          REXLOG_ERROR("D3D12Presenter: Failed to map screenshot readback");
++          return;
++        }
++        uint32_t stride = width * 4;
++        std::vector<uint8_t> pixels(size_t(stride) * height);
++        for (uint32_t y = 0; y < height; ++y) {
++          std::memcpy(pixels.data() + size_t(stride) * y,
++                      static_cast<const uint8_t*>(mapped) + footprint.Offset +
++                          size_t(footprint.Footprint.RowPitch) * y,
++                      stride);
++        }
++        // The back buffer's alpha is not coverage; a PNG would show it as transparency.
++        for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 0xFF;
++        D3D12_RANGE no_write{0, 0};
++        buffer->Unmap(0, &no_write);
++        SaveScreenshotPng(std::move(pixels), width, height, stride);
++      }).detach();
++    } else {
++      REXLOG_ERROR("D3D12Presenter: Failed to signal screenshot readback fence");
++    }
++  }
+   // Present as soon as possible, without waiting for vsync (the host refresh
+   // rate may be something like 144 Hz, which is not a multiple of the common
+   // 30 Hz or 60 Hz guest refresh rate), and allowing dropping outdated queued
+@@ -1190,6 +1644,10 @@ bool D3D12Presenter::InitializeSurfaceIndependent() {
+     }
+   }
+ 
++  if (REXCVAR_GET(present_hdr)) {
++    hdr::CreateComposePipeline(provider_, hdr_compose_pipeline_);
++  }
++
+   ID3D12Device* device = provider_.GetDevice();
+ 
+   // Initialize static guest output painting objects.
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+index b980d21..901aea7 100644
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -32,6 +32,20 @@ REXCVAR_DEFINE_BOOL(host_present_from_non_ui_thread, true, "UI/Presenter",
+ REXCVAR_DEFINE_BOOL(present_letterbox, true, "UI/Presenter",
+                     "Enable letterboxing for non-native aspect ratios");
+ 
++REXCVAR_DEFINE_BOOL(present_screenshot_key_enabled, true, "Display",
++                    "Capture a screenshot when F12 is pressed");
++
++REXCVAR_DEFINE_BOOL(present_hdr, false, "Display", "Enable HDR10 output (requires restart)")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++REXCVAR_DEFINE_INT32(present_hdr_paper_white_nits, 200, "Display",
++                     "HDR paper white luminance in nits")
++    .range(80, 500);
++
++REXCVAR_DEFINE_INT32(present_hdr_peak_nits, 1000, "Display",
++                     "HDR peak luminance in nits")
++    .range(400, 10000);
++
+ REXCVAR_DEFINE_INT32(present_safe_area_x, 90, "UI/Presenter",
+                      "Horizontal safe area percentage (0-100)")
+     .range(0, 100);
+diff --git a/src/ui/window.cpp b/src/ui/window.cpp
+index 7795c1e..0d80825 100644
+--- a/src/ui/window.cpp
++++ b/src/ui/window.cpp
+@@ -691,6 +691,16 @@ void Window::OnFileDrop(FileDropEvent& e, WindowDestructionReceiver& destruction
+ }
+ 
+ void Window::OnKeyDown(KeyEvent& e, WindowDestructionReceiver& destruction_receiver) {
++  if (e.virtual_key() == VirtualKey::kF12 &&
++      rex::cvar::Query<bool>("present_screenshot_key_enabled")) {
++    if (presenter_) {
++      presenter_->RequestScreenshot();
++    }
++    e.set_handled(true);
++  }
++  if (e.is_handled()) {
++    return;
++  }
+   PropagateEventThroughInputListeners(
+       [&e](auto listener) {
+         listener->OnKeyDown(e);

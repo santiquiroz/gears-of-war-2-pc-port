@@ -17,6 +17,7 @@ namespace rex::glue {
 struct HashSecEntry {
   std::string name;                 // file name as the table spells it, lower case
   std::array<uint8_t, 20> sha1{};  // SHA-1 of the file the game will actually read
+  bool optional = false;           // mod files: most are not in the table, so no warning for those
 };
 
 // SHA-1 of a host file. Slow enough (seconds for a few MB) that it must not run once the XEX is

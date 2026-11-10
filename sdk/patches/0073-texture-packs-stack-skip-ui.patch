@@ -1,0 +1,189 @@
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index 877cd9e..4c1c28f 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -825,11 +825,13 @@ void D3D12TextureCache::BeginSubmission(uint64_t new_submission_index) {
+ 
+   // A change of texture_replace_variant swaps art at run time: the textures that wear a
+   // replacement, and those the variant has a file for, load again and pick the new one.
+-  if (texture_replacement_ && texture_replacement_->PollVariant()) {
++  bool skip_ui_changed = false;
++  if (texture_replacement_ && texture_replacement_->PollVariant(&skip_ui_changed)) {
+     TextureReplacementManager& manager = *texture_replacement_;
+-    MarkTexturesOutdated([&manager](Texture& texture) {
++    MarkTexturesOutdated([&manager, skip_ui_changed](Texture& texture) {
+       const D3D12Texture& d3d12_texture = static_cast<const D3D12Texture&>(texture);
+-      return d3d12_texture.has_replacement() ||
++      return (skip_ui_changed && texture.key().mip_max_level == 0) ||
++             d3d12_texture.has_replacement() ||
+              manager.HasVariantFile(d3d12_texture.last_content_hash());
+     });
+   }
+diff --git a/src/graphics/d3d12/texture_replacement.cpp b/src/graphics/d3d12/texture_replacement.cpp
+index 72f534e..1bdfe42 100644
+--- a/src/graphics/d3d12/texture_replacement.cpp
++++ b/src/graphics/d3d12/texture_replacement.cpp
+@@ -29,6 +29,9 @@ REXCVAR_DEFINE_STRING(texture_pack_dir, "", "GPU/Textures",
+ REXCVAR_DEFINE_BOOL(texture_replace, false, "GPU/Textures",
+                     "Substitute pack DDS files for matching guest textures. Applies to "
+                     "newly created textures; clear caches or restart to apply everywhere");
++REXCVAR_DEFINE_BOOL(texture_replace_skip_ui, false, "GPU/Textures",
++                    "Do not replace textures without mip maps, which in this game are mostly "
++                    "menus, HUD and text (experimental)");
+ REXCVAR_DEFINE_STRING(texture_replace_variant, "", "GPU/Textures",
+                       "Name of a replacement variant: files of <TITLEID>/replace_<variant> replace "
+                       "those of <TITLEID>/replace while it is set. Changing it reloads the textures "
+@@ -360,10 +363,10 @@ void TextureReplacementManager::Initialize(const std::filesystem::path& cache_ro
+   refused_.clear();
+   dumped_count_ = 0;
+   refusal_logs_ = 0;
++  variant_was_active_ = false;
+   ResolveDirs();
+   ScanReplaceDir();
+-  REXLOG_INFO("[texpack] pack dir: {} ({} replace files)", rex::path_to_utf8(pack_dir_),
+-              replace_paths_.size());
++  REXLOG_INFO("[texpack] total: {} replacements", replace_paths_.size());
+ }
+ 
+ void TextureReplacementManager::Reclaim(uint64_t completed_submission) {
+@@ -379,12 +382,24 @@ void TextureReplacementManager::ClearCache() {
+ }
+ 
+ void TextureReplacementManager::ResolveDirs() {
++  pack_dirs_.clear();
+   std::string override = REXCVAR_GET(texture_pack_dir);
+   // Next to the executable by default: that is where players look for mods.
+   if (!override.empty()) {
+-    pack_dir_ = std::filesystem::path(override);
+-  } else {
+-    pack_dir_ = rex::filesystem::GetExecutableFolder() / "textures";
++    size_t start = 0;
++    while (start < override.size()) {
++      size_t end = override.find(';', start);
++      if (end == std::string::npos) {
++        end = override.size();
++      }
++      if (end != start) {
++        pack_dirs_.emplace_back(override.substr(start, end - start));
++      }
++      start = end + 1;
++    }
++  }
++  if (pack_dirs_.empty()) {
++    pack_dirs_.push_back(rex::filesystem::GetExecutableFolder() / "textures");
+   }
+   char title[9];
+   if (title_id_ != 0) {
+@@ -392,29 +407,48 @@ void TextureReplacementManager::ResolveDirs() {
+   } else {
+     std::snprintf(title, sizeof(title), "dump");
+   }
++  pack_dir_ = pack_dirs_.back();
+   dump_dir_ = pack_dir_ / title / "dump";
+-  title_dir_ = pack_dir_ / title;
+-  replace_dir_ = title_dir_ / "replace";
++  title_dirs_.clear();
++  title_dirs_.reserve(pack_dirs_.size());
++  for (const std::filesystem::path& pack_dir : pack_dirs_) {
++    title_dirs_.push_back(pack_dir / title);
++  }
+ }
+ 
+ void TextureReplacementManager::ScanReplaceDir() {
+-  ScanDir(replace_dir_, &replace_paths_);
++  for (size_t i = 0; i < title_dirs_.size(); ++i) {
++    size_t previous_size = replace_paths_.size();
++    ScanDir(title_dirs_[i] / "replace", &replace_paths_);
++    REXLOG_INFO("[texpack] {}: {} replacements", rex::path_to_utf8(pack_dirs_[i]),
++                replace_paths_.size() - previous_size);
++  }
+ }
+ 
+-bool TextureReplacementManager::PollVariant() {
++bool TextureReplacementManager::PollVariant(bool* out_skip_ui_changed) {
++  *out_skip_ui_changed = false;
+   const std::string wanted = REXCVAR_GET(texture_replace_variant);
+-  if (wanted == active_variant_) {
++  const bool skip_ui = REXCVAR_GET(texture_replace_skip_ui);
++  const bool skip_ui_changed = skip_ui != active_skip_ui_;
++  if (wanted == active_variant_ && !skip_ui_changed) {
+     return false;
+   }
++  *out_skip_ui_changed = skip_ui_changed;
++  active_skip_ui_ = skip_ui;
+   active_variant_ = wanted;
+   variant_paths_.clear();
+   variant_images_.clear();
+   if (!wanted.empty()) {
+-    ScanDir(title_dir_ / ("replace_" + wanted), &variant_paths_);
++    for (size_t i = 0; i < title_dirs_.size(); ++i) {
++      size_t previous_size = variant_paths_.size();
++      ScanDir(title_dirs_[i] / ("replace_" + wanted), &variant_paths_);
++      REXLOG_INFO("[texpack] {}: {} replacements", rex::path_to_utf8(pack_dirs_[i]),
++                  variant_paths_.size() - previous_size);
++    }
+     variant_was_active_ = true;
+   }
+   ++variant_epoch_;
+-  REXLOG_INFO("[texpack] variant '{}' ({} files)", wanted, variant_paths_.size());
++  REXLOG_INFO("[texpack] variant '{}' ({} replacements)", wanted, variant_paths_.size());
+   return true;
+ }
+ 
+@@ -824,9 +858,11 @@ bool ValidateReplacement(const GuestTextureDesc& desc, const ReplacementImage& i
+                           std::string* out_reason) {
+   uint32_t guest_levels = desc.mip_max_level + 1;
+   if (image.mip_levels < guest_levels) {
+-    char reason[96];
+-    std::snprintf(reason, sizeof(reason), "only %u mips for %u guest levels", image.mip_levels,
+-                  guest_levels);
++    char reason[160];
++    std::snprintf(reason, sizeof(reason),
++                  "only %u mips for %u guest levels (save the DDS with a full mip chain, e.g. "
++                  "texconv -m 0)",
++                  image.mip_levels, guest_levels);
+     *out_reason = reason;
+     return false;
+   }
+@@ -883,6 +919,9 @@ bool TextureReplacementManager::FindReplacement(uint64_t hash, const GuestTextur
+   if (!REXCVAR_GET(texture_replace)) {
+     return false;
+   }
++  if (REXCVAR_GET(texture_replace_skip_ui) && desc.mip_max_level == 0) {
++    return false;
++  }
+   // A file of the active variant wins; its refusals and log lines are kept apart from the main
+   // file's by this salt.
+   const bool variant = variant_paths_.find(hash) != variant_paths_.end();
+diff --git a/src/graphics/d3d12/texture_replacement.h b/src/graphics/d3d12/texture_replacement.h
+index 00d14ac..9500d9f 100644
+--- a/src/graphics/d3d12/texture_replacement.h
++++ b/src/graphics/d3d12/texture_replacement.h
+@@ -84,7 +84,7 @@ class TextureReplacementManager {
+   // Replacement variants: the files of <TITLEID>/replace_<variant> (named like the main ones)
+   // win over <TITLEID>/replace while the texture_replace_variant setting names that variant. A
+   // change is noticed here, once per submission; true means textures must be reloaded.
+-  bool PollVariant();
++  bool PollVariant(bool* out_skip_ui_changed);
+   // Differs after every variant change, so a texture can tell that its replacement is stale.
+   uint32_t variant_epoch() const { return variant_epoch_; }
+   // Whether the active variant has a file for this content hash.
+@@ -108,8 +108,8 @@ class TextureReplacementManager {
+   uint32_t title_id_ = 0;
+   std::filesystem::path pack_dir_;
+   std::filesystem::path dump_dir_;
+-  std::filesystem::path replace_dir_;
+-  std::filesystem::path title_dir_;
++  std::vector<std::filesystem::path> pack_dirs_;
++  std::vector<std::filesystem::path> title_dirs_;
+ 
+   std::unique_ptr<ui::d3d12::D3D12UploadBufferPool> upload_pool_;
+ 
+@@ -119,6 +119,7 @@ class TextureReplacementManager {
+   std::unordered_map<uint64_t, ReplacementImage> variant_images_;
+   std::string active_variant_;
+   uint32_t variant_epoch_ = 0;
++  bool active_skip_ui_ = false;
+   bool variant_was_active_ = false;
+   std::unordered_set<uint64_t> dumped_;
+   std::unordered_set<uint64_t> replaced_;

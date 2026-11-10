@@ -1,0 +1,1023 @@
+diff --git a/include/rex/graphics/d3d12/gow2_framegen.h b/include/rex/graphics/d3d12/gow2_framegen.h
+new file mode 100644
+index 0000000..197da64
+--- /dev/null
++++ b/include/rex/graphics/d3d12/gow2_framegen.h
+@@ -0,0 +1,64 @@
++#pragma once
++
++#include <cstdint>
++#include <atomic>
++#include <mutex>
++#include <string>
++
++#include <rex/ui/d3d12/d3d12_swap_chain_source.h>
++
++namespace rex::graphics::d3d12::gow2 {
++
++class FrameGeneration final : public ui::d3d12::SwapChainSource {
++ public:
++  Microsoft::WRL::ComPtr<IDXGISwapChain1> Create(
++      IDXGIFactory2* factory, ID3D12CommandQueue* queue, HWND hwnd,
++      const DXGI_SWAP_CHAIN_DESC1& desc) override;
++  void Released() override;
++  void SetPictureRect(int32_t x, int32_t y, uint32_t width, uint32_t height) override;
++
++  bool Prepare(ID3D12GraphicsCommandList* list, uint64_t frame_id, ID3D12Resource* depth,
++               ID3D12Resource* motion, uint32_t render_width, uint32_t render_height,
++               float jitter_x, float jitter_y, float frame_ms, float camera_near,
++               float camera_far, float fov_y, bool reset);
++  void ConfigureFrame(uint64_t frame_id);
++  bool Dispatch(void* desc);
++  void Shutdown();
++  bool enabled() const { return enabled_.load(std::memory_order_relaxed); }
++
++ private:
++  bool LoadProvider(ID3D12Device* device);
++  bool EnsureContext(uint32_t render_width, uint32_t render_height);
++  void DestroyContext();
++
++  std::mutex mutex_;
++  void* swap_chain_context_ = nullptr;
++  void* frame_generation_context_ = nullptr;
++  IDXGISwapChain4* swap_chain_ = nullptr;
++  uint32_t display_width_ = 0;
++  uint32_t display_height_ = 0;
++  uint32_t render_width_ = 0;
++  uint32_t render_height_ = 0;
++  uint32_t context_display_width_ = 0;
++  uint32_t context_display_height_ = 0;
++  DXGI_FORMAT back_buffer_format_ = DXGI_FORMAT_UNKNOWN;
++  bool hdr_ = false;
++  std::atomic<bool> enabled_ = false;
++  bool logged_ = false;
++  bool provider_logged_ = false;
++  bool configure_error_logged_ = false;
++  bool prepared_ = false;
++  uint64_t prepared_frame_id_ = 0;
++  uint64_t provider_version_id_ = 0;
++  std::string provider_name_;
++  bool provider_major3_ = false;
++  bool picture_rect_set_ = false;
++  int32_t picture_rect_x_ = 0;
++  int32_t picture_rect_y_ = 0;
++  uint32_t picture_rect_width_ = 0;
++  uint32_t picture_rect_height_ = 0;
++};
++
++FrameGeneration& GetFrameGeneration();
++
++}  // namespace rex::graphics::d3d12::gow2
+diff --git a/include/rex/graphics/d3d12/gow2_fsr.h b/include/rex/graphics/d3d12/gow2_fsr.h
+index 6b0f165..a03e746 100644
+--- a/include/rex/graphics/d3d12/gow2_fsr.h
++++ b/include/rex/graphics/d3d12/gow2_fsr.h
+@@ -1,6 +1,7 @@
+ // Adapted from gears-judgement-recomp (BSD-3-Clause).
+ #pragma once
+ #include <cstdint>
++#include <string>
+ 
+ #include <rex/ui/d3d12/d3d12_api.h>
+ 
+@@ -21,12 +22,22 @@ struct FsrEval {
+   int wanted_major = 3;
+ };
+ 
++struct FsrProvider {
++  uint64_t id = 0;
++  std::string name;
++  bool major3 = false;
++};
++
+ // Loads amd_fidelityfx_loader_dx12.dll from the game folder and enumerates the providers.
+ bool FsrInit(ID3D12Device* device);
++bool FsrLoaderInit(ID3D12Device* device);
+ // Name of the provider actually used by the current context ("" if none yet).
+ const char* FsrProviderName();
+ // True when the loader offers an FSR 4 provider on this system.
+ bool FsrHasFsr4();
++bool FsrFrameGenerationProvider(FsrProvider* provider);
++void* FsrFunctionTable();
++ID3D12Device* FsrDevice();
+ bool FsrEvaluate(ID3D12GraphicsCommandList* list, const FsrEval& eval);
+ void FsrShutdown();
+ 
+diff --git a/include/rex/graphics/d3d12/graphics_system.h b/include/rex/graphics/d3d12/graphics_system.h
+index 3efe580..0c75f78 100644
+--- a/include/rex/graphics/d3d12/graphics_system.h
++++ b/include/rex/graphics/d3d12/graphics_system.h
+@@ -27,10 +27,13 @@ class D3D12GraphicsSystem : public GraphicsSystem {
+   static bool IsAvailable();
+ 
+   std::string name() const override;
++  X_STATUS SetupPresentation(::rex::ui::WindowedAppContext* app_context) override;
++  void Shutdown() override;
+ 
+  protected:
+   void CreateProvider(bool with_presentation) override;
+   std::unique_ptr<CommandProcessor> CreateCommandProcessor() override;
++
+ };
+ 
+ }  // namespace rex::graphics::d3d12
+diff --git a/include/rex/ui/d3d12/d3d12_presenter.h b/include/rex/ui/d3d12/d3d12_presenter.h
+index 21cae97..0e1e08d 100644
+--- a/include/rex/ui/d3d12/d3d12_presenter.h
++++ b/include/rex/ui/d3d12/d3d12_presenter.h
+@@ -20,6 +20,7 @@
+ #include <rex/ui/d3d12/d3d12_hdr.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_submission_tracker.h>
++#include <rex/ui/d3d12/d3d12_swap_chain_source.h>
+ #include <rex/ui/presenter.h>
+ #include <rex/ui/surface.h>
+ 
+@@ -85,6 +86,8 @@ class D3D12Presenter final : public Presenter {
+ 
+   const D3D12Provider& provider() const { return provider_; }
+ 
++  virtual void SetSwapChainSource(SwapChainSource* source);
++
+   Surface::TypeFlags GetSupportedSurfaceTypes() const override;
+ 
+   bool CaptureGuestOutput(RawImage& image_out) override;
+@@ -269,6 +272,13 @@ class D3D12Presenter final : public Presenter {
+     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, kSwapChainBufferCount> swap_chain_buffers;
+     Microsoft::WRL::ComPtr<ID3D12Resource> hdr_picture;
+     Microsoft::WRL::ComPtr<ID3D12Resource> hdr_ui;
++    SwapChainSource* swap_chain_source = nullptr;
++    bool swap_chain_from_source = false;
++    bool picture_rect_valid = false;
++    int32_t picture_rect_x = 0;
++    int32_t picture_rect_y = 0;
++    uint32_t picture_rect_width = 0;
++    uint32_t picture_rect_height = 0;
+   };
+ 
+   explicit D3D12Presenter(HostGpuLossCallback host_gpu_loss_callback, const D3D12Provider& provider)
+@@ -277,6 +287,9 @@ class D3D12Presenter final : public Presenter {
+   bool dxgi_supports_tearing() const { return dxgi_supports_tearing_; }
+ 
+   bool InitializeSurfaceIndependent();
++  Microsoft::WRL::ComPtr<IDXGISwapChain1> CreateSwapChainForHwnd(
++      IDXGIFactory2* factory, ID3D12CommandQueue* queue, HWND hwnd,
++      const DXGI_SWAP_CHAIN_DESC1& desc);
+ 
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+   bool EnsureTemporalUpscalerContext(uint32_t render_width, uint32_t render_height,
+@@ -290,6 +303,7 @@ class D3D12Presenter final : public Presenter {
+ #endif
+ 
+   const D3D12Provider& provider_;
++  SwapChainSource* swap_chain_source_ = nullptr;
+ 
+   // Whether DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING is supported by DXGI (depends in
+   // particular on the Windows 10 version and hardware support), primarily for
+diff --git a/include/rex/ui/d3d12/d3d12_swap_chain_source.h b/include/rex/ui/d3d12/d3d12_swap_chain_source.h
+new file mode 100644
+index 0000000..ea48986
+--- /dev/null
++++ b/include/rex/ui/d3d12/d3d12_swap_chain_source.h
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include <cstdint>
++
++#include <rex/ui/d3d12/d3d12_api.h>
++
++namespace rex::ui::d3d12 {
++
++class SwapChainSource {
++ public:
++  virtual ~SwapChainSource() = default;
++  virtual Microsoft::WRL::ComPtr<IDXGISwapChain1> Create(
++      IDXGIFactory2* factory, ID3D12CommandQueue* queue, HWND hwnd,
++      const DXGI_SWAP_CHAIN_DESC1& desc) = 0;
++  virtual void Released() = 0;
++  virtual void SetPictureRect(int32_t x, int32_t y, uint32_t width, uint32_t height) = 0;
++};
++
++}  // namespace rex::ui::d3d12
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index 2b052c5..3466a36 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -87,6 +87,7 @@ if(REXGLUE_USE_D3D12)
+         d3d12/gow2_dlss.cpp
+         d3d12/gow2_upscale.cpp
+         d3d12/gow2_fsr.cpp
++        d3d12/gow2_framegen.cpp
+     )
+ endif()
+ 
+@@ -126,7 +127,8 @@ endif()
+ set(GOW2_FFX_SDK "${REXGLUE_ROOT}/../ffx-sdk/Kits/FidelityFX" CACHE PATH "AMD FidelityFX SDK Kits/FidelityFX folder")
+ if(WIN32 AND EXISTS "${GOW2_FFX_SDK}/api/include/ffx_api.h")
+     target_include_directories(rexgpu-xenos PRIVATE "${GOW2_FFX_SDK}/api/include"
+-                               "${GOW2_FFX_SDK}/upscalers/include")
++                               "${GOW2_FFX_SDK}/upscalers/include"
++                               "${GOW2_FFX_SDK}/framegeneration/include")
+     target_compile_definitions(rexgpu-xenos PRIVATE GOW2_HAS_FFX=1)
+     message(STATUS "FSR (FidelityFX API) support: ON (${GOW2_FFX_SDK})")
+ else()
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 199dc75..49cde23 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -23,6 +23,7 @@
+ #include <rex/perf/counter.h>
+ #include <rex/graphics/d3d12/command_processor.h>
+ #include <rex/graphics/d3d12/gow2_temporal.h>
++#include <rex/graphics/d3d12/gow2_framegen.h>
+ #include <rex/graphics/d3d12/gow2_trace.h>
+ #include <cstdlib>
+ #include <rex/graphics/d3d12/graphics_system.h>
+@@ -60,6 +61,15 @@ REXCVAR_DECLARE(bool, gpu_vertex_buffer_state_skip);
+ 
+ namespace rex::graphics::d3d12 {
+ 
++namespace {
++
++void ConfigureFrameGeneration(ID3D12GraphicsCommandList*, void* user) {
++  uint64_t frame_id = uint64_t(reinterpret_cast<uintptr_t>(user));
++  gow2::GetFrameGeneration().ConfigureFrame(frame_id);
++}
++
++}  // namespace
++
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "../shaders/bytecode/d3d12_5_1/apply_gamma_pwl_cs.h"
+@@ -3550,6 +3560,14 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
+     // destroyed between frames.
+     SubmitBarriers();
+ 
++    if (is_closing_frame) {
++      if (gow2::GetFrameGeneration().enabled()) {
++        uint64_t frame_id = GetCurrentFrame();
++        deferred_command_list_.Callback(&ConfigureFrameGeneration,
++                                        reinterpret_cast<void*>(uintptr_t(frame_id)));
++      }
++    }
++
+     ID3D12CommandQueue* direct_queue = provider.GetDirectQueue();
+ 
+     // Submit the deferred command list.
+@@ -3585,6 +3603,10 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
+     // Queue operations done directly (like UpdateTileMappings) will be awaited
+     // alongside the last submission if needed.
+     queue_operations_done_since_submission_signal_ = false;
++  } else if (is_closing_frame) {
++    if (gow2::GetFrameGeneration().enabled()) {
++      gow2::GetFrameGeneration().ConfigureFrame(GetCurrentFrame());
++    }
+   }
+ 
+   if (is_closing_frame) {
+diff --git a/src/graphics/d3d12/gow2_framegen.cpp b/src/graphics/d3d12/gow2_framegen.cpp
+new file mode 100644
+index 0000000..49104b8
+--- /dev/null
++++ b/src/graphics/d3d12/gow2_framegen.cpp
+@@ -0,0 +1,385 @@
++#include <rex/graphics/d3d12/gow2_framegen.h>
++
++#include <string>
++#include <algorithm>
++#include <cstdint>
++#include <utility>
++
++#include <rex/cvar.h>
++#include <rex/graphics/d3d12/gow2_fsr.h>
++#include <rex/logging.h>
++
++REXCVAR_DEFINE_STRING(
++    gow2_frame_generation, "off", "Display",
++    "Frame generation: off or fsr3. Requires temporal upscaling (FSR 3.1, FSR 4 or DLSS), adds "
++    "about one frame of latency, and runs exclusive fullscreen as borderless.")
++    .allowed({"off", "fsr3"})
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++#ifdef GOW2_HAS_FFX
++#define _WINDOWS 1
++#include <ffx_api.h>
++#include <ffx_api_loader.h>
++#include <ffx_api_types.h>
++#include <dx12/ffx_api_dx12.h>
++#include <dx12/ffx_api_framegeneration_dx12.h>
++#include <ffx_framegeneration.h>
++#endif
++
++namespace rex::graphics::d3d12::gow2 {
++
++namespace {
++
++FrameGeneration g_frame_generation;
++
++void LogOffOnce(bool& logged, const std::string& reason) {
++  if (!logged) {
++    REXGPU_INFO("frame generation: off ({})", reason);
++    logged = true;
++  }
++}
++
++#ifdef GOW2_HAS_FFX
++ffxFunctions* Functions() { return static_cast<ffxFunctions*>(FsrFunctionTable()); }
++
++ffxReturnCode_t DispatchFrameGeneration(ffxDispatchDescFrameGeneration* desc, void* user) {
++  return static_cast<FrameGeneration*>(user)->Dispatch(desc)
++             ? FFX_API_RETURN_OK
++             : FFX_API_RETURN_ERROR;
++}
++#endif
++
++}  // namespace
++
++FrameGeneration& GetFrameGeneration() { return g_frame_generation; }
++
++Microsoft::WRL::ComPtr<IDXGISwapChain1> FrameGeneration::Create(
++    IDXGIFactory2* factory, ID3D12CommandQueue* queue, HWND hwnd,
++    const DXGI_SWAP_CHAIN_DESC1& desc) {
++  std::lock_guard lock(mutex_);
++  if (REXCVAR_GET(gow2_frame_generation) != "fsr3") {
++    LogOffOnce(logged_, "cvar off");
++    return nullptr;
++  }
++  if (rex::cvar::Query<std::string>("gow2_upscaler") == "off") {
++    LogOffOnce(logged_, "no temporal upscaler");
++    return nullptr;
++  }
++#ifndef GOW2_HAS_FFX
++  LogOffOnce(logged_, "FidelityFX API not built");
++  return nullptr;
++#else
++  Microsoft::WRL::ComPtr<ID3D12Device> device;
++  if (!queue || FAILED(queue->GetDevice(IID_PPV_ARGS(&device))) ||
++      !FsrLoaderInit(device.Get())) {
++    LogOffOnce(logged_, "loader missing");
++    return nullptr;
++  }
++  FsrProvider provider;
++  if (!FsrFrameGenerationProvider(&provider)) {
++    LogOffOnce(logged_, "frame generation provider missing");
++    return nullptr;
++  }
++  ffxFunctions* fn = Functions();
++  if (!fn || !fn->CreateContext || !fn->DestroyContext || !fn->Configure) {
++    LogOffOnce(logged_, "loader missing");
++    return nullptr;
++  }
++
++  if (swap_chain_context_) {
++    DestroyContext();
++    fn->DestroyContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), nullptr);
++    swap_chain_context_ = nullptr;
++    if (swap_chain_) swap_chain_->Release();
++    swap_chain_ = nullptr;
++    enabled_.store(false, std::memory_order_release);
++  }
++  ffxCreateBackendDX12Desc backend = {};
++  backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
++  backend.device = device.Get();
++  ffxCreateContextDescFrameGenerationSwapChainForHwndDX12 create = {};
++  create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_FOR_HWND_DX12;
++  create.header.pNext = &backend.header;
++  create.hwnd = hwnd;
++  create.desc = const_cast<DXGI_SWAP_CHAIN_DESC1*>(&desc);
++  create.fullscreenDesc = nullptr;
++  create.dxgiFactory = factory;
++  create.gameQueue = queue;
++  IDXGISwapChain4* created_swap_chain = nullptr;
++  create.swapchain = &created_swap_chain;
++  ffxReturnCode_t create_result =
++      fn->CreateContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), &create.header,
++                        nullptr);
++  if (create_result != FFX_API_RETURN_OK || !swap_chain_context_) {
++    if (swap_chain_context_) {
++      fn->DestroyContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), nullptr);
++    }
++    swap_chain_context_ = nullptr;
++    if (created_swap_chain) created_swap_chain->Release();
++    LogOffOnce(logged_, "swap chain creation failed");
++    return nullptr;
++  }
++  swap_chain_ = created_swap_chain;
++  if (!swap_chain_) {
++    fn->DestroyContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), nullptr);
++    swap_chain_context_ = nullptr;
++    LogOffOnce(logged_, "swap chain creation failed");
++    return nullptr;
++  }
++  display_width_ = desc.Width;
++  display_height_ = desc.Height;
++  back_buffer_format_ = desc.Format;
++  hdr_ = desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM;
++  provider_version_id_ = provider.id;
++  provider_name_ = std::move(provider.name);
++  provider_major3_ = provider.major3;
++  provider_logged_ = false;
++  picture_rect_set_ = false;
++  enabled_.store(true, std::memory_order_release);
++  Microsoft::WRL::ComPtr<IDXGISwapChain1> result;
++  if (FAILED(swap_chain_->QueryInterface(IID_PPV_ARGS(&result)))) {
++    fn->DestroyContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), nullptr);
++    swap_chain_context_ = nullptr;
++    swap_chain_->Release();
++    swap_chain_ = nullptr;
++    enabled_.store(false, std::memory_order_release);
++    LogOffOnce(logged_, "swap chain creation failed");
++    return nullptr;
++  }
++  logged_ = true;
++  REXGPU_INFO("frame generation: on (FSR 3)");
++  REXGPU_INFO("frame generation: exclusive fullscreen uses borderless mode");
++  return result;
++#endif
++}
++
++void FrameGeneration::Released() {
++  std::lock_guard lock(mutex_);
++#ifdef GOW2_HAS_FFX
++  DestroyContext();
++  ffxFunctions* fn = Functions();
++  if (swap_chain_context_ && fn && fn->DestroyContext) {
++    fn->DestroyContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), nullptr);
++  }
++#endif
++  swap_chain_context_ = nullptr;
++  if (swap_chain_) swap_chain_->Release();
++  swap_chain_ = nullptr;
++  display_width_ = 0;
++  display_height_ = 0;
++  render_width_ = 0;
++  render_height_ = 0;
++  context_display_width_ = 0;
++  context_display_height_ = 0;
++  enabled_.store(false, std::memory_order_release);
++  prepared_ = false;
++  picture_rect_set_ = false;
++  picture_rect_x_ = 0;
++  picture_rect_y_ = 0;
++  picture_rect_width_ = 0;
++  picture_rect_height_ = 0;
++}
++
++void FrameGeneration::SetPictureRect(int32_t x, int32_t y, uint32_t width, uint32_t height) {
++  std::lock_guard lock(mutex_);
++  if (swap_chain_) {
++    DXGI_SWAP_CHAIN_DESC1 desc = {};
++    if (SUCCEEDED(swap_chain_->GetDesc1(&desc))) {
++      display_width_ = desc.Width;
++      display_height_ = desc.Height;
++    }
++  }
++  int64_t left = std::clamp<int64_t>(x, 0, display_width_);
++  int64_t top = std::clamp<int64_t>(y, 0, display_height_);
++  int64_t right = std::clamp<int64_t>(int64_t(x) + width, 0, display_width_);
++  int64_t bottom = std::clamp<int64_t>(int64_t(y) + height, 0, display_height_);
++  picture_rect_x_ = int32_t(left);
++  picture_rect_y_ = int32_t(top);
++  picture_rect_width_ = uint32_t(std::max<int64_t>(0, right - left));
++  picture_rect_height_ = uint32_t(std::max<int64_t>(0, bottom - top));
++  picture_rect_set_ = true;
++}
++
++void FrameGeneration::DestroyContext() {
++#ifdef GOW2_HAS_FFX
++  ffxFunctions* fn = Functions();
++  if (frame_generation_context_ && fn && fn->DestroyContext) {
++    fn->DestroyContext(reinterpret_cast<ffxContext*>(&frame_generation_context_), nullptr);
++  }
++#endif
++  frame_generation_context_ = nullptr;
++  render_width_ = 0;
++  render_height_ = 0;
++  context_display_width_ = 0;
++  context_display_height_ = 0;
++}
++
++bool FrameGeneration::LoadProvider(ID3D12Device* device) {
++  return device && FsrLoaderInit(device) && !provider_name_.empty();
++}
++
++bool FrameGeneration::EnsureContext(uint32_t render_width, uint32_t render_height) {
++#ifdef GOW2_HAS_FFX
++  if (!enabled() || !swap_chain_ || !LoadProvider(FsrDevice())) return false;
++  DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
++  if (FAILED(swap_chain_->GetDesc1(&swap_chain_desc))) return false;
++  display_width_ = swap_chain_desc.Width;
++  display_height_ = swap_chain_desc.Height;
++  back_buffer_format_ = swap_chain_desc.Format;
++  hdr_ = back_buffer_format_ == DXGI_FORMAT_R10G10B10A2_UNORM;
++  if (frame_generation_context_ && render_width_ == render_width &&
++      render_height_ == render_height && context_display_width_ == display_width_ &&
++      context_display_height_ == display_height_) {
++    return true;
++  }
++  DestroyContext();
++  ffxCreateBackendDX12Desc backend = {};
++  ffxOverrideVersion version = {};
++  backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
++  backend.device = FsrDevice();
++  ffxCreateContextDescFrameGeneration create = {};
++  create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
++  create.header.pNext = &backend.header;
++  if (provider_major3_) {
++    version.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
++    version.versionId = provider_version_id_;
++    backend.header.pNext = &version.header;
++  }
++  create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
++  if (hdr_) create.flags |= FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE;
++  create.displaySize = {display_width_, display_height_};
++  create.maxRenderSize = {render_width, render_height};
++  create.backBufferFormat = ffxApiGetSurfaceFormatDX12(back_buffer_format_);
++  ffxFunctions* fn = Functions();
++  if (!fn || !fn->CreateContext ||
++      fn->CreateContext(reinterpret_cast<ffxContext*>(&frame_generation_context_), &create.header,
++                        nullptr) != FFX_API_RETURN_OK) {
++    frame_generation_context_ = nullptr;
++    return false;
++  }
++  render_width_ = render_width;
++  render_height_ = render_height;
++  context_display_width_ = display_width_;
++  context_display_height_ = display_height_;
++  if (!provider_logged_) {
++    REXGPU_INFO("frame generation: provider '{}', render {}x{}, display {}x{}", provider_name_,
++                render_width_, render_height_, display_width_, display_height_);
++    provider_logged_ = true;
++  }
++  return true;
++#else
++  return false;
++#endif
++}
++
++bool FrameGeneration::Prepare(ID3D12GraphicsCommandList* list, uint64_t frame_id,
++                              ID3D12Resource* depth, ID3D12Resource* motion,
++                              uint32_t render_width, uint32_t render_height, float jitter_x,
++                              float jitter_y, float frame_ms, float camera_near, float camera_far,
++                              float fov_y, bool reset) {
++  if (!enabled()) return false;
++  std::lock_guard lock(mutex_);
++#ifdef GOW2_HAS_FFX
++  if (!enabled()) return false;
++  if (!list || !depth || !motion || !EnsureContext(render_width, render_height)) return false;
++  ffxDispatchDescFrameGenerationPrepareV2 prepare = {};
++  prepare.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2;
++  prepare.frameID = frame_id;
++  prepare.commandList = list;
++  prepare.renderSize = {render_width, render_height};
++  prepare.jitterOffset = {jitter_x, jitter_y};
++  prepare.motionVectorScale = {1.0f, 1.0f};
++  prepare.frameTimeDelta = frame_ms;
++  prepare.reset = reset;
++  prepare.cameraNear = camera_near;
++  prepare.cameraFar = camera_far;
++  prepare.cameraFovAngleVertical = fov_y;
++  prepare.viewSpaceToMetersFactor = 0.01f;
++  prepare.depth = ffxApiGetResourceDX12(depth,
++                                       FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
++  prepare.motionVectors = ffxApiGetResourceDX12(
++      motion, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
++  ffxFunctions* fn = Functions();
++  bool result = fn && fn->Dispatch &&
++                fn->Dispatch(reinterpret_cast<ffxContext*>(&frame_generation_context_),
++                             &prepare.header) == FFX_API_RETURN_OK;
++  prepared_ = result;
++  prepared_frame_id_ = frame_id;
++  return result;
++#else
++  return false;
++#endif
++}
++
++void FrameGeneration::ConfigureFrame(uint64_t frame_id) {
++  if (!enabled()) return;
++  std::lock_guard lock(mutex_);
++#ifdef GOW2_HAS_FFX
++  if (!enabled() || !frame_generation_context_ || !swap_chain_context_) return;
++  ffxConfigureDescFrameGeneration configure = {};
++  configure.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
++  configure.swapChain = swap_chain_;
++  configure.frameGenerationCallback = &DispatchFrameGeneration;
++  configure.frameGenerationCallbackUserContext = this;
++  configure.frameGenerationEnabled = prepared_ && prepared_frame_id_ == frame_id;
++  configure.allowAsyncWorkloads = false;
++  if (swap_chain_) {
++    DXGI_SWAP_CHAIN_DESC1 desc = {};
++    if (SUCCEEDED(swap_chain_->GetDesc1(&desc))) {
++      display_width_ = desc.Width;
++      display_height_ = desc.Height;
++    }
++  }
++  int32_t rect_x = 0;
++  int32_t rect_y = 0;
++  uint32_t rect_width = display_width_;
++  uint32_t rect_height = display_height_;
++  if (swap_chain_ && picture_rect_set_) {
++    int64_t left = std::clamp<int64_t>(picture_rect_x_, 0, display_width_);
++    int64_t top = std::clamp<int64_t>(picture_rect_y_, 0, display_height_);
++    int64_t right = std::clamp<int64_t>(int64_t(picture_rect_x_) + picture_rect_width_,
++                                        0, display_width_);
++    int64_t bottom = std::clamp<int64_t>(int64_t(picture_rect_y_) + picture_rect_height_,
++                                         0, display_height_);
++    if (right > left && bottom > top) {
++      rect_x = int32_t(left);
++      rect_y = int32_t(top);
++      rect_width = uint32_t(right - left);
++      rect_height = uint32_t(bottom - top);
++    }
++  }
++  configure.generationRect = {rect_x, rect_y, int32_t(rect_width), int32_t(rect_height)};
++  configure.frameID = frame_id;
++  ffxFunctions* fn = Functions();
++  if (fn && fn->Configure) {
++    ffxReturnCode_t result = fn->Configure(
++        reinterpret_cast<ffxContext*>(&frame_generation_context_), &configure.header);
++    if (result != FFX_API_RETURN_OK && !configure_error_logged_) {
++      REXGPU_WARN("frame generation: configure failed ({})", uint32_t(result));
++      configure_error_logged_ = true;
++    }
++  }
++#else
++  (void)frame_id;
++#endif
++  prepared_ = false;
++}
++
++bool FrameGeneration::Dispatch(void* desc) {
++  std::lock_guard lock(mutex_);
++#ifdef GOW2_HAS_FFX
++  if (!desc || !frame_generation_context_) return false;
++  ffxFunctions* fn = Functions();
++  auto* dispatch = static_cast<ffxDispatchDescFrameGeneration*>(desc);
++  return fn && fn->Dispatch &&
++         fn->Dispatch(reinterpret_cast<ffxContext*>(&frame_generation_context_),
++                      &dispatch->header) == FFX_API_RETURN_OK;
++#else
++  (void)desc;
++  return false;
++#endif
++}
++
++void FrameGeneration::Shutdown() { Released(); }
++
++}  // namespace rex::graphics::d3d12::gow2
+diff --git a/src/graphics/d3d12/gow2_fsr.cpp b/src/graphics/d3d12/gow2_fsr.cpp
+index 5bbb6b3..bb3a95f 100644
+--- a/src/graphics/d3d12/gow2_fsr.cpp
++++ b/src/graphics/d3d12/gow2_fsr.cpp
+@@ -7,6 +7,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <string>
++#include <mutex>
+ #include <vector>
+ 
+ #include <rex/logging.h>
+@@ -18,26 +19,30 @@
+ #include <ffx_api_types.h>
+ #include <dx12/ffx_api_dx12.h>
+ #include <ffx_upscale.h>
++#include <ffx_framegeneration.h>
+ #endif
+ 
+ namespace rex::graphics::d3d12::gow2 {
+ 
+ #ifdef GOW2_HAS_FFX
+ namespace {
++std::mutex g_mutex;
+ ID3D12Device* g_device = nullptr;
+ HMODULE g_module = nullptr;
+ ffxFunctions g_fn = {};
+-bool g_tried = false, g_ok = false;
++bool g_tried = false, g_ok = false, g_loader_ok = false;
+ ffxContext g_ctx = nullptr;
+ uint32_t g_rw, g_rh, g_ow, g_oh;
+ int g_major = -1;
+ std::string g_provider;
+ bool g_fsr4 = false;
++bool g_frame_generation_versions_queried = false;
+ struct Version {
+   uint64_t id;
+   std::string name;
+ };
+ std::vector<Version> g_versions;
++std::vector<Version> g_frame_generation_versions;
+ 
+ void FsrMessage(uint32_t type, const wchar_t* msg) {
+   char buf[512];
+@@ -68,6 +73,7 @@ int VersionMajor(const std::string& name) {
+ }  // namespace
+ 
+ bool FsrInit(ID3D12Device* device) {
++  std::lock_guard lock(g_mutex);
+   if (g_tried) return g_ok;
+   g_tried = true;
+   g_device = device;
+@@ -92,6 +98,7 @@ bool FsrInit(ID3D12Device* device) {
+     REXGPU_WARN("FSR: loader exports are missing");
+     return false;
+   }
++  g_loader_ok = true;
+   // Enumerate the upscaler providers this machine can use.
+   uint64_t count = 0;
+   ffxQueryDescGetVersions q{};
+@@ -123,6 +130,51 @@ bool FsrInit(ID3D12Device* device) {
+ }
+ 
+ bool FsrHasFsr4() { return g_fsr4; }
++bool FsrLoaderInit(ID3D12Device* device) {
++  FsrInit(device);
++  return g_loader_ok;
++}
++bool FsrFrameGenerationProvider(FsrProvider* provider) {
++  std::lock_guard lock(g_mutex);
++  if (!provider || !g_loader_ok) return false;
++  if (!g_frame_generation_versions_queried) {
++    g_frame_generation_versions_queried = true;
++    uint64_t count = 0;
++    ffxQueryDescGetVersions q{};
++    q.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
++    q.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
++    q.device = g_device;
++    q.outputCount = &count;
++    if (g_fn.Query(nullptr, &q.header) == FFX_API_RETURN_OK && count) {
++      std::vector<uint64_t> ids(count);
++      std::vector<const char*> names(count);
++      q.versionIds = ids.data();
++      q.versionNames = names.data();
++      uint64_t capacity = count;
++      q.outputCount = &capacity;
++      if (g_fn.Query(nullptr, &q.header) == FFX_API_RETURN_OK) {
++        for (uint64_t i = 0; i < capacity; ++i) {
++          g_frame_generation_versions.push_back(
++              {ids[i], names[i] ? names[i] : ""});
++        }
++      }
++    }
++  }
++  if (g_frame_generation_versions.empty()) return false;
++  const Version* selected = &g_frame_generation_versions.front();
++  for (const Version& version : g_frame_generation_versions) {
++    if (VersionMajor(version.name) == 3) {
++      selected = &version;
++      break;
++    }
++  }
++  provider->id = selected->id;
++  provider->name = selected->name;
++  provider->major3 = VersionMajor(selected->name) == 3;
++  return true;
++}
++void* FsrFunctionTable() { return g_loader_ok ? &g_fn : nullptr; }
++ID3D12Device* FsrDevice() { return g_device; }
+ const char* FsrProviderName() { return g_provider.c_str(); }
+ 
+ static bool CreateCtx(const FsrEval& e) {
+@@ -220,6 +272,7 @@ bool FsrEvaluate(ID3D12GraphicsCommandList* list, const FsrEval& e) {
+ }
+ 
+ void FsrShutdown() {
++  std::lock_guard lock(g_mutex);
+   if (g_ctx && g_fn.DestroyContext) g_fn.DestroyContext(&g_ctx, nullptr);
+   g_ctx = nullptr;
+ }
+@@ -228,6 +281,10 @@ void FsrShutdown() {
+ 
+ bool FsrInit(ID3D12Device*) { return false; }
+ bool FsrHasFsr4() { return false; }
++bool FsrLoaderInit(ID3D12Device*) { return false; }
++bool FsrFrameGenerationProvider(FsrProvider*) { return false; }
++void* FsrFunctionTable() { return nullptr; }
++ID3D12Device* FsrDevice() { return nullptr; }
+ const char* FsrProviderName() { return ""; }
+ bool FsrEvaluate(ID3D12GraphicsCommandList*, const FsrEval&) { return false; }
+ void FsrShutdown() {}
+diff --git a/src/graphics/d3d12/gow2_upscale.cpp b/src/graphics/d3d12/gow2_upscale.cpp
+index f5743ac..faabe6e 100644
+--- a/src/graphics/d3d12/gow2_upscale.cpp
++++ b/src/graphics/d3d12/gow2_upscale.cpp
+@@ -16,6 +16,7 @@
+ #include <rex/graphics/d3d12/deferred_command_list.h>
+ #include <rex/graphics/d3d12/gow2_dlss.h>
+ #include <rex/graphics/d3d12/gow2_fsr.h>
++#include <rex/graphics/d3d12/gow2_framegen.h>
+ #include <rex/graphics/d3d12/gow2_temporal.h>
+ #include <rex/graphics/d3d12/texture_cache.h>
+ #include <rex/logging.h>
+@@ -113,6 +114,7 @@ struct Job {
+   ID3D12Resource* final_ = nullptr;  // owned by g.final_: what the presenter shows
+   ID3D12Resource* color_typed = nullptr;  // owned by g.color_typed: typed copy of color, or null
+   uint64_t submission = 0;
++  uint64_t frame_id = 0;
+ };
+ 
+ struct Gpu {
+@@ -460,6 +462,10 @@ void RunJob(ID3D12GraphicsCommandList* list, void* user) {
+             D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+     Barrier(list, j.out, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++    if (GetFrameGeneration().enabled()) {
++      GetFrameGeneration().Prepare(list, j.frame_id, j.depth.Get(), j.mv, j.rw, j.rh, j.jx,
++                                   j.jy, 16.7f, j.cam_near, j.cam_far, j.fov_y, j.reset);
++    }
+   }
+ }
+ 
+@@ -822,6 +828,7 @@ bool UpscaleFinal(D3D12CommandProcessor& cp, ID3D12Resource* color, uint32_t in_
+     SetUpscaleStatus(buf);
+   }
+   job->submission = cp.GetCurrentSubmission();
++  job->frame_id = cp.GetCurrentFrame();
+   st.last_upscaled_frame = st.ended_frame;
+   st.jitter_next = true;
+   cp.SubmitBarriers();
+diff --git a/src/graphics/d3d12/graphics_system.cpp b/src/graphics/d3d12/graphics_system.cpp
+index caa77cf..a1a9e28 100644
+--- a/src/graphics/d3d12/graphics_system.cpp
++++ b/src/graphics/d3d12/graphics_system.cpp
+@@ -13,6 +13,9 @@
+ 
+ #include <rex/graphics/d3d12/command_processor.h>
+ #include <rex/graphics/d3d12/graphics_system.h>
++#include <rex/graphics/d3d12/gow2_framegen.h>
++#include <rex/graphics/d3d12/gow2_fsr.h>
++#include <rex/ui/d3d12/d3d12_presenter.h>
+ #include <rex/graphics/util/draw.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+@@ -37,6 +40,24 @@ std::string D3D12GraphicsSystem::name() const {
+   return "Direct3D 12";
+ }
+ 
++X_STATUS D3D12GraphicsSystem::SetupPresentation(ui::WindowedAppContext* app_context) {
++  X_STATUS status = GraphicsSystem::SetupPresentation(app_context);
++  if (status != X_STATUS_SUCCESS) return status;
++  auto* presenter = dynamic_cast<ui::d3d12::D3D12Presenter*>(GraphicsSystem::presenter());
++  if (!presenter) return status;
++  presenter->SetSwapChainSource(&gow2::GetFrameGeneration());
++  return status;
++}
++
++void D3D12GraphicsSystem::Shutdown() {
++  if (auto* presenter = dynamic_cast<ui::d3d12::D3D12Presenter*>(GraphicsSystem::presenter())) {
++    presenter->SetSwapChainSource(nullptr);
++  }
++  GraphicsSystem::Shutdown();
++  gow2::GetFrameGeneration().Shutdown();
++  gow2::FsrShutdown();
++}
++
+ void D3D12GraphicsSystem::CreateProvider(bool /*with_presentation*/) {
+   // D3D12 doesn't differentiate headless vs. swapchain-capable providers;
+   // swapchains are created lazily per-window by the presenter.
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index c6e62c0..4031978 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -173,6 +173,7 @@ D3D12Presenter::~D3D12Presenter() {
+   // From most likely the latest to most likely the earliest to be signaled, so
+   // just one sleep will likely be needed.
+   paint_context_.AwaitSwapChainUsageCompletion();
++  paint_context_.DestroySwapChain();
+   guest_output_resource_refresher_submission_tracker_.Shutdown();
+   ui_submission_tracker_.Shutdown();
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+@@ -180,6 +181,30 @@ D3D12Presenter::~D3D12Presenter() {
+ #endif
+ }
+ 
++void D3D12Presenter::SetSwapChainSource(SwapChainSource* source) {
++  swap_chain_source_ = source;
++}
++
++Microsoft::WRL::ComPtr<IDXGISwapChain1> D3D12Presenter::CreateSwapChainForHwnd(
++    IDXGIFactory2* factory, ID3D12CommandQueue* queue, HWND hwnd,
++    const DXGI_SWAP_CHAIN_DESC1& desc) {
++  if (swap_chain_source_) {
++    Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain =
++        swap_chain_source_->Create(factory, queue, hwnd, desc);
++    if (swap_chain) {
++      paint_context_.swap_chain_source = swap_chain_source_;
++      paint_context_.swap_chain_from_source = true;
++      return swap_chain;
++    }
++  }
++  Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain;
++  if (SUCCEEDED(factory->CreateSwapChainForHwnd(queue, hwnd, &desc, nullptr, nullptr,
++                                                 &swap_chain))) {
++    return swap_chain;
++  }
++  return nullptr;
++}
++
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+ void D3D12Presenter::DestroyTemporalUpscalerContext() {
+   if (!temporal_upscaler_context_) {
+@@ -559,8 +584,9 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+           }
+         }
+         swap_chain_desc.Format = hdr_enabled ? DXGI_FORMAT_R10G10B10A2_UNORM : kSwapChainFormat;
+-        if (FAILED(dxgi_factory->CreateSwapChainForHwnd(
+-                direct_queue, surface_hwnd, &swap_chain_desc, nullptr, nullptr, &swap_chain_1))) {
++        swap_chain_1 = CreateSwapChainForHwnd(dxgi_factory, direct_queue, surface_hwnd,
++                                              swap_chain_desc);
++        if (!swap_chain_1) {
+           REXLOG_ERROR("D3D12Presenter: Failed to create a swap chain for the HWND");
+           return SurfacePaintConnectResult::kFailure;
+         }
+@@ -581,6 +607,8 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+     HRESULT swap_chain_result = swap_chain_1.As(&swap_chain_3);
+     if (FAILED(swap_chain_result)) {
+       REXLOG_ERROR("D3D12Presenter: Failed to get version 3 of the swap chain interface");
++      swap_chain_1.Reset();
++      paint_context_.DestroySwapChain();
+       return SurfacePaintConnectResult::kFailure;
+     }
+     Microsoft::WRL::ComPtr<IDXGISwapChain4> swap_chain_4;
+@@ -627,15 +655,25 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+       swap_chain_3.Reset();
+       swap_chain_1.Reset();
+       swap_chain_desc.Format = kSwapChainFormat;
+-      if (FAILED(dxgi_factory->CreateSwapChainForHwnd(
+-              direct_queue, surface_hwnd, &swap_chain_desc, nullptr, nullptr, &swap_chain_1)) ||
+-          FAILED(swap_chain_1.As(&swap_chain_3))) {
++      if (paint_context_.swap_chain_from_source && paint_context_.swap_chain_source) {
++        paint_context_.swap_chain_source->Released();
++        paint_context_.swap_chain_from_source = false;
++        paint_context_.swap_chain_source = nullptr;
++      }
++      swap_chain_1 = CreateSwapChainForHwnd(dxgi_factory, direct_queue, surface_hwnd,
++                                            swap_chain_desc);
++      if (!swap_chain_1 || FAILED(swap_chain_1.As(&swap_chain_3))) {
+         REXLOG_ERROR("D3D12Presenter: Failed to recreate the swap chain in SDR");
++        swap_chain_1.Reset();
++        paint_context_.DestroySwapChain();
+         return SurfacePaintConnectResult::kFailure;
+       }
+       swap_chain_result = S_OK;
+     }
+     paint_context_.swap_chain = swap_chain_3;
++    if (paint_context_.swap_chain_from_source) {
++      paint_context_.swap_chain_source = swap_chain_source_;
++    }
+     if (hdr_enabled) {
+       paint_context_.hdr_swap_chain = swap_chain_4;
+     } else {
+@@ -801,7 +839,7 @@ bool D3D12Presenter::RefreshGuestOutputImpl(
+ }
+ 
+ void D3D12Presenter::PaintContext::DestroySwapChain() {
+-  if (!swap_chain) {
++  if (!swap_chain && !swap_chain_from_source) {
+     return;
+   }
+   AwaitSwapChainUsageCompletion();
+@@ -812,6 +850,16 @@ void D3D12Presenter::PaintContext::DestroySwapChain() {
+   }
+   swap_chain.Reset();
+   hdr_swap_chain.Reset();
++  if (swap_chain_from_source && swap_chain_source) {
++    swap_chain_source->Released();
++  }
++  swap_chain_source = nullptr;
++  swap_chain_from_source = false;
++  picture_rect_valid = false;
++  picture_rect_x = 0;
++  picture_rect_y = 0;
++  picture_rect_width = 0;
++  picture_rect_height = 0;
+   swap_chain_allows_tearing = false;
+   hdr_enabled = false;
+   hdr_paper_white_nits = 0;
+@@ -1356,6 +1404,26 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+             command_list->ResourceBarrier(barrier_count, barriers);
+           }
+         }
++        if (is_final_effect && paint_context_.swap_chain_from_source &&
++            paint_context_.swap_chain_source) {
++          int32_t picture_x = effect_rect_x;
++          int32_t picture_y = effect_rect_y;
++          uint32_t picture_width = guest_output_flow.effect_output_sizes[i].first;
++          uint32_t picture_height = guest_output_flow.effect_output_sizes[i].second;
++          if (!paint_context_.picture_rect_valid ||
++              paint_context_.picture_rect_x != picture_x ||
++              paint_context_.picture_rect_y != picture_y ||
++              paint_context_.picture_rect_width != picture_width ||
++              paint_context_.picture_rect_height != picture_height) {
++            paint_context_.swap_chain_source->SetPictureRect(
++                picture_x, picture_y, picture_width, picture_height);
++            paint_context_.picture_rect_valid = true;
++            paint_context_.picture_rect_x = picture_x;
++            paint_context_.picture_rect_y = picture_y;
++            paint_context_.picture_rect_width = picture_width;
++            paint_context_.picture_rect_height = picture_height;
++          }
++        }
+       }
+     }
+   }

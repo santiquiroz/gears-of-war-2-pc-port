@@ -13,7 +13,7 @@ that font, next to the glyphs the game still needs, and writes
                               (playstation.py)
 
 Glyphs the game's own strings use, and the spinner on page 1, keep their cells and art (copied
-from your texture dump of the game, so the pack holds game art: do not share it). All other
+from your texture dump of the game, so the pack holds game art; this project does not publish it). All other
 glyph cells, mostly unused placeholders, are reused.
 
     py tools/keycaps/pack.py --dump out/build/release/textures/4D53082D/dump \\

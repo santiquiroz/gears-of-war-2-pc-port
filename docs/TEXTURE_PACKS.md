@@ -51,8 +51,8 @@ the same place (README, "Texture packs").
 
 ## Keep them on your PC
 
-A pack built from the game's textures is derived from the game's copyrighted art. It is for your own
-copy: do not share it. This project does not host or link packs made from the game's art.
+A pack built from the game's textures is derived from the game's copyrighted art. Sharing it is up
+to its author. This project does not publish or link packs made from the game's art.
 
 ## Credits
 

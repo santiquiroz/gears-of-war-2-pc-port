@@ -74,11 +74,13 @@ port reached more platforms and added features.
 - [x] Native resolution above 720p (`resolution_scale`, automatic by GPU type) and real widescreen (Hor+, 0.2.5, JollyRoger606; on AMD auto switches to the ROV path since 0.2.7, issue #11) (the guest render size becomes a setting; Judgment
       patches its hardcoded 720p the same way).
 - [x] Unlocked frame rate (`gow2_unlock_fps`, community patch) with a frame limiter; the game's logic still steps at its own rate.
-- [x] Upscalers: FSR 1/CAS and FSR 4/3.1 (the release has no DLSS; NVIDIA's license does not allow it in an open-source distribution) through the GPU plugin, as gears-judgement-recomp
+- [x] Upscalers: FSR 1/CAS and FSR 4/3.1 (the release has no DLSS, as NVIDIA's license does not allow it in an open-source distribution; players add it themselves with OptiScaler or SDK DLLs built with their own DLSS SDK) through the GPU plugin, as gears-judgement-recomp
       does.
 - [x] Higher quality textures (4K packs) through a texture replacement path that loads
       user-supplied files; no original assets are redistributed.
 - [x] Graphics options: Graphics > Game quality with the game's own engine settings and presets (0.2.3, [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)).
+- [x] HDR10 output and FSR 3 frame generation (0.4.0, Direct3D 12; testing wanted: [#47](https://github.com/santiquiroz/gears-of-war-2-pc-port/issues/47), [#48](https://github.com/santiquiroz/gears-of-war-2-pc-port/issues/48)).
+- [x] Mod support (0.4.0): a `mods` folder with stacked texture packs, loose game files in the COGBox layout and a switch that keeps the original menus and text ([docs/MODDING.md](docs/MODDING.md); testing wanted: [#49](https://github.com/santiquiroz/gears-of-war-2-pc-port/issues/49)). Next: Coalesced (ini) edits from mods, a mods list in PC Options.
 - [ ] A native renderer: draw from the game's Direct3D calls instead of emulating the Xenos GPU command processor, with shaders translated ahead of time (MIT-licensed plume and XenosRecomp are candidates). The biggest performance win, above all on phones. Feasibility study planned for the week of 2026-10-26.
 - [x] The new options inside the game: graphics (render resolution, upscaler, texture packs)
       and controls (mapping, sensitivity), from the game's Options screen or the runtime's

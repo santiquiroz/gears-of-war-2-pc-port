@@ -16,15 +16,21 @@
 
 #include <chrono>
 #include <cstdint>
+#include <string>
+
+#include <SDL3/SDL.h>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ppc.h>
+#include <rex/runtime.h>
+#include <rex/ui/window.h>
 
 REXCVAR_DEFINE_INT32(gow2_fps_cap, 0, "Display",
-                     "Frame rate limit while the frame rate is unlocked (gow2_unlock_fps); 0 = no "
+                     "Frame rate limit while the frame rate is unlocked (gow2_unlock_fps); -1 = monitor "
+                     "refresh rate minus 3 for VRR (half of it with frame generation), 0 = no "
                      "limit. Takes effect at once.")
-    .range(0, 1000);
+    .range(-1, 1000);
 
 namespace rex::glue {
 
@@ -56,6 +62,38 @@ void BulkSleepNanos(int64_t nanos) {
 
 namespace {
 
+int DisplayRefreshCap() {
+  SDL_DisplayID display = 0;
+#ifdef _WIN32
+  auto* runtime = rex::Runtime::instance();
+  auto* game_window = runtime ? runtime->display_window() : nullptr;
+  const void* native_handle = game_window ? game_window->GetNativeWindowHandle() : nullptr;
+  if (native_handle) {
+    int count = 0;
+    SDL_Window** windows = SDL_GetWindows(&count);
+    for (int i = 0; windows && i < count; ++i) {
+      const auto properties = SDL_GetWindowProperties(windows[i]);
+      if (SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr) != native_handle)
+        continue;
+      display = SDL_GetDisplayForWindow(windows[i]);
+      break;
+    }
+    SDL_free(windows);
+  }
+#endif
+  if (display == 0) {
+    if (SDL_Window* window = SDL_GetKeyboardFocus()) display = SDL_GetDisplayForWindow(window);
+  }
+  if (display == 0) display = SDL_GetPrimaryDisplay();
+  const SDL_DisplayMode* mode = display == 0 ? nullptr : SDL_GetCurrentDisplayMode(display);
+  return mode ? CapFromRefreshRate(mode->refresh_rate) : 0;
+}
+
+bool FrameGenerationEnabled() {
+  return rex::cvar::Query<std::string>("gow2_frame_generation") == "fsr3" &&
+         rex::cvar::Query<std::string>("gow2_upscaler") != "off";
+}
+
 int64_t SteadyNowNanos() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
@@ -76,7 +114,26 @@ void FpsCapTick(const PPCContext& ctx, uint8_t* base) {
   (void)base;
   static FramePacer pacer;
   static int logged_cap = 0;
-  const int cap = EffectiveFpsCap(rex::cvar::Query<bool>("gow2_unlock_fps"), REXCVAR_GET(gow2_fps_cap));
+  static int selected_cap = 0;
+  static int refresh_cap = 0;
+  static bool frame_generation = false;
+  static bool refresh_initialized = false;
+  static bool unknown_refresh_logged = false;
+  const int selected = REXCVAR_GET(gow2_fps_cap);
+  if (!refresh_initialized || selected != selected_cap) {
+    selected_cap = selected;
+    refresh_initialized = true;
+    frame_generation = selected == -1 && FrameGenerationEnabled();
+    if (selected == -1) {
+      refresh_cap = DisplayRefreshCap();
+      if (refresh_cap == 0 && !unknown_refresh_logged) {
+        REXLOG_WARN("FPSCAP monitor refresh rate is unknown; VRR cap is off");
+        unknown_refresh_logged = true;
+      }
+    }
+  }
+  const bool unlocked = rex::cvar::Query<bool>("gow2_unlock_fps");
+  const int cap = EffectiveFpsCap(unlocked, selected_cap, refresh_cap, frame_generation);
   if (cap <= 0) {
     if (logged_cap != 0) {
       pacer.SleepNanos(0, 0);
@@ -87,7 +144,10 @@ void FpsCapTick(const PPCContext& ctx, uint8_t* base) {
   }
   if (cap != logged_cap) {
     logged_cap = cap;
-    REXLOG_INFO("FPSCAP limit {} fps", cap);
+    if (unlocked && selected_cap == -1 && frame_generation)
+      REXLOG_INFO("FPSCAP limit {} fps (frame generation)", cap);
+    else
+      REXLOG_INFO("FPSCAP limit {} fps", cap);
   }
   PreciseSleepNanos(pacer.SleepNanos(SteadyNowNanos(), cap));
   pacer.RecordFrameStart(SteadyNowNanos());

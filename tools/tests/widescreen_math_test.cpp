@@ -31,6 +31,22 @@ int main() {
   Expect(!AutoWidescreenSwitchesToRov(false, "", ""), "unknown GPU is not switched");
   Expect(!AutoWidescreenSwitchesToRov(true, "", "AMD Radeon RX 7800 XT"), "native renderer keeps host render targets");
   Expect(rex::glue::widescreen::ParseAspect("auto", 16.0 / 9.0) == 0.0, "a 16:9 display stays 16:9");
+  using namespace rex::glue::widescreen;
+  Expect(ParseAspect("auto", 1280.0 / 800.0) == 1280.0 / 800.0, "auto selects a 16:10 display");
+  Expect(ParseAspect("16:10", 16.0 / 10.0) == 1.6, "16:10 parses as a narrow aspect");
+  Expect(ParseAspect("4:3", 16.0 / 9.0) == 4.0 / 3.0, "4:3 parses as a narrow aspect");
+  Expect(ParseAspect("1.6", 16.0 / 9.0) == 1.6, "decimal narrow aspect parses");
+  Expect(BackBufferWidth(1.6, 720) == 1280, "16:10 keeps the original width");
+  Expect(BackBufferHeight(1.6, 720, kVirtualEdramTiles) == 800, "16:10 renders taller");
+  Expect(BackBufferHeight(4.0 / 3.0, 720, kVirtualEdramTiles) == 960, "4:3 renders taller");
+  Expect(BackBufferHeight(4.0 / 3.0, 720, kConsoleEdramTiles) == 736, "4:3 clamps to standard EDRAM capacity");
+  Expect(BackBufferWidth(16.0 / 9.0, 720) == 0, "16:9 keeps the game's original width result");
+  Expect(BackBufferWidth(21.0 / 9.0, 704) == 1680, "21:9 keeps its existing width result");
+  Expect(BackBufferHeight(21.0 / 9.0, 704, kVirtualEdramTiles) == 704, "21:9 keeps its existing height");
+  const double half_fov = 0.75;
+  Expect(WidenHalfFov(half_fov, 1280) == half_fov, "Vert+ keeps the 16:9 horizontal FOV");
+  Expect(WidenHalfFov(half_fov, 1680) == std::atan(std::tan(half_fov) * (1680.0 / 1280.0)),
+         "21:9 keeps its existing horizontal FOV widening");
   std::printf("widescreen_math_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }

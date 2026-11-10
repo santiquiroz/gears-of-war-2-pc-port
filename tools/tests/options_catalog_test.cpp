@@ -5,6 +5,7 @@
 #include "gow2_graphics_quality.h"
 
 #include <cstdio>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -96,6 +97,35 @@ void TestFpsCapHelp() {
          "English limit help names the required unlock setting");
   Expect(cap->help_es.find(unlock->label_es) != std::string_view::npos,
          "Spanish limit help names the required unlock setting");
+  bool has_vrr = false;
+  for (const auto& choice : cap->choices)
+    has_vrr = has_vrr || (choice.value == "-1" && choice.label_en == "Monitor refresh - 3 (VRR)" &&
+                          choice.label_es == "Frecuencia del monitor - 3 (VRR)");
+  Expect(has_vrr, "frame rate limit offers the VRR refresh choice");
+}
+
+void TestMenuScaleChoices() {
+  const auto* scale = options::FindSetting("gow2_menu_scale");
+  Expect(scale != nullptr, "menu size setting exists");
+  if (!scale) return;
+  constexpr std::string_view expected[]{"75", "100", "125"};
+  Expect(scale->choices.size() == std::size(expected), "menu size has three choices");
+  for (size_t i = 0; i < scale->choices.size() && i < std::size(expected); ++i)
+    Expect(scale->choices[i].value == expected[i], "menu size choice is in percent range");
+}
+
+void TestWidescreenChoices() {
+  const auto* aspect = options::FindSetting("gow2_widescreen");
+  Expect(aspect != nullptr, "aspect ratio setting exists");
+  if (!aspect) return;
+  bool has_16_10 = false;
+  bool has_4_3 = false;
+  for (const auto& choice : aspect->choices) {
+    has_16_10 = has_16_10 || choice.value == "16:10";
+    has_4_3 = has_4_3 || choice.value == "4:3";
+  }
+  Expect(has_16_10, "aspect ratio offers 16:10");
+  Expect(has_4_3, "aspect ratio offers 4:3");
 }
 
 void TestPageTabs() {
@@ -204,18 +234,52 @@ int CountPage(options::Page page) {
 }
 
 void TestCounts() {
-  Expect(CountTab(options::Tab::kDisplay) == 10, "display has 10 rows including keep 16:9 shape and the frame counter");
-  Expect(CountTab(options::Tab::kGraphics) == 52, "graphics has 52 rows including the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
+  Expect(CountTab(options::Tab::kDisplay) == 15, "display has 15 rows including the aspect ratio, HDR and its brightness settings, the menu size, keep 16:9 shape and the frame counter");
+  Expect(CountTab(options::Tab::kGraphics) == 54, "graphics has 54 rows including frame generation, keep original menus, the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
-  Expect(CountTab(options::Tab::kSystem) == 18, "system has 18 rows including skip intro videos, the skip hint and show options at start");
+  Expect(CountTab(options::Tab::kSystem) == 19, "system has 19 rows including skip intro videos, the skip hint, show options at start and F12 screenshots");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
   Expect(CountPage(options::Page::kTexturePackBuilder) == 6, "texture pack builder page has 6 rows");
+}
+
+void TestHdrRows() {
+  const auto* hdr = options::FindSetting("present_hdr");
+  const auto* paper_white = options::FindSetting("present_hdr_paper_white_nits");
+  const auto* peak = options::FindSetting("present_hdr_peak_nits");
+  Expect(hdr != nullptr, "HDR setting exists");
+  Expect(paper_white != nullptr, "HDR brightness setting exists");
+  Expect(peak != nullptr, "HDR peak brightness setting exists");
+  if (!hdr || !paper_white || !peak) return;
+  Expect(hdr->tab == options::Tab::kDisplay && hdr->kind == options::Kind::kToggle &&
+             hdr->apply == options::Apply::kRestart && hdr->platforms == options::kWindows,
+         "HDR is a Windows-only Display restart toggle");
+  for (const auto* row : {paper_white, peak}) {
+    Expect(row->tab == options::Tab::kDisplay && row->kind == options::Kind::kNumber &&
+               row->apply == options::Apply::kNow && row->platforms == options::kWindows,
+           "HDR brightness is a Windows-only apply-now Display number");
+    Expect(row->visible_if_id == "present_hdr" && row->visible_if_value == "true",
+           "HDR brightness is visible only when HDR is on");
+    Expect(row->decimals == 0 && row->unit == " nits", "HDR brightness uses whole nits");
+  }
+  Expect(paper_white->min == 80 && paper_white->max == 500 && paper_white->step == 10,
+         "HDR paper white ranges from 80 to 500 nits in steps of 10");
+  Expect(peak->min == 400 && peak->max == 4000 && peak->step == 100,
+         "HDR peak brightness ranges from 400 to 4000 nits in steps of 100");
+}
+
+void TestScreenshotRow() {
+  const auto* screenshot = options::FindSetting("present_screenshot_key_enabled");
+  Expect(screenshot != nullptr, "F12 screenshots setting exists");
+  if (!screenshot) return;
+  Expect(screenshot->tab == options::Tab::kSystem && screenshot->kind == options::Kind::kToggle &&
+             screenshot->apply == options::Apply::kNow && screenshot->platforms == options::kWindows,
+         "F12 screenshots is a Windows-only apply-now System toggle");
 }
 
 void TestGraphicsQualityRows() {
@@ -306,6 +370,20 @@ void TestGpuBackendRow() {
                backend->choices[1].value == "d3d12" && backend->choices[2].value == "vulkan",
            "graphics API offers any, d3d12 and vulkan");
   }
+}
+
+void TestFrameGenerationRow() {
+  const auto* frame_generation = options::FindSetting("gow2_frame_generation");
+  Expect(frame_generation != nullptr, "frame generation row exists");
+  if (!frame_generation) return;
+  Expect(frame_generation->tab == options::Tab::kGraphics &&
+             frame_generation->kind == options::Kind::kChoice &&
+             frame_generation->apply == options::Apply::kRestart &&
+             frame_generation->platforms == options::kWindows,
+         "frame generation is a Windows-only Graphics restart choice");
+  Expect(frame_generation->choices.size() == 2 && frame_generation->choices[0].value == "off" &&
+             frame_generation->choices[1].value == "fsr3",
+         "frame generation offers off and fsr3");
 }
 
 void TestSkipIntroRow() {
@@ -459,15 +537,20 @@ int main() {
     TestTexts();
     TestVisibleIf();
     TestFpsCapHelp();
+    TestMenuScaleChoices();
+    TestWidescreenChoices();
     TestPageTabs();
     TestUiTexts();
     TestPlatformMenuNames();
     TestCounts();
+    TestHdrRows();
+    TestScreenshotRow();
     TestWindowsUpdateRows();
     TestCoopPlayersRow();
     TestSplitScreenRows();
     TestGraphicsQualityRows();
     TestGpuBackendRow();
+    TestFrameGenerationRow();
     TestSkipIntroRow();
     TestLetterboxRow();
     TestFrameCounterRow();

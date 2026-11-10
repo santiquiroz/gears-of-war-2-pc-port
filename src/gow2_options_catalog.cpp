@@ -117,10 +117,11 @@ void AddDisplay(std::vector<Setting>& out) {
       .platforms = kAllPlatforms,
       .label_en = "Frame rate limit",
       .label_es = "Límite de FPS",
-      .help_en = "Requires Unlock frame rate. Limits game frames; VSync and performance can lower FPS.",
-      .help_es = "Requiere Desbloquear FPS. Limita los cuadros del juego; VSync y el rendimiento pueden bajar los FPS.",
+      .help_en = "Requires Unlock frame rate. Limits game frames; VSync and performance can lower FPS. The VRR option stays below the monitor refresh to keep G-Sync/FreeSync active.",
+      .help_es = "Requiere Desbloquear FPS. Limita los cuadros del juego; VSync y el rendimiento pueden bajar los FPS. La opción VRR queda por debajo de la frecuencia para mantener G-Sync/FreeSync activos.",
       .choices = {
           C("0", "Off", "Sin límite"),
+          C("-1", "Monitor refresh - 3 (VRR)", "Frecuencia del monitor - 3 (VRR)"),
           V("30"),
           V("60"),
           V("75"),
@@ -129,6 +130,86 @@ void AddDisplay(std::vector<Setting>& out) {
           V("144"),
           V("165"),
           V("240"),
+      }});
+  out.push_back(Setting{
+      .id = "gow2_widescreen",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Aspect ratio",
+      .label_es = "Formato de pantalla",
+      .help_en = "Auto follows displays outside the 16:9 tolerance. Wider ratios widen the view; 16:10 and narrower ratios extend the view vertically. Videos and some menus remain 16:9.",
+      .help_es = "Automático se ajusta a pantallas fuera del margen de 16:9. Los formatos anchos amplían la vista; 16:10 y los más estrechos la amplían hacia arriba y abajo. Los videos y algunos menús siguen en 16:9.",
+      .choices = {
+          C("auto", "Automatic", "Automático"),
+          C("off", "Off", "Desactivado"),
+          C("16:10", "16:10", "16:10"),
+          C("4:3", "4:3", "4:3"),
+          C("21:9", "21:9", "21:9"),
+          C("32:9", "32:9", "32:9"),
+      }});
+  out.push_back(Setting{
+      .id = "present_hdr",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kToggle,
+      .apply = Apply::kRestart,
+      .platforms = kWindows,
+      .label_en = "HDR",
+      .label_es = "HDR",
+      .help_en =
+          "HDR10 output. Needs an HDR display with HDR turned on in Windows; otherwise the game "
+          "stays in SDR. Direct3D 12 only.",
+      .help_es =
+          "Salida HDR10. Necesita una pantalla HDR con HDR activado en Windows; si no, el juego "
+          "sigue en SDR. Solo Direct3D 12."});
+  out.push_back(Setting{
+      .id = "present_hdr_paper_white_nits",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kNumber,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "HDR brightness",
+      .label_es = "Brillo HDR",
+      .help_en = "Brightness of white and of the menus, in nits. Raise it in a bright room.",
+      .help_es = "Brillo del blanco y de los menús, en nits. Súbelo en una habitación iluminada.",
+      .min = 80,
+      .max = 500,
+      .step = 10,
+      .decimals = 0,
+      .unit = " nits",
+      .visible_if_id = "present_hdr",
+      .visible_if_value = "true"});
+  out.push_back(Setting{
+      .id = "present_hdr_peak_nits",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kNumber,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "HDR peak brightness",
+      .label_es = "Brillo máximo HDR",
+      .help_en = "The brightest highlight, in nits. Use what your display reaches (often 600 to 1000).",
+      .help_es = "El punto más brillante, en nits. Usa lo que alcanza tu pantalla (suele ser de 600 a "
+                 "1000).",
+      .min = 400,
+      .max = 4000,
+      .step = 100,
+      .decimals = 0,
+      .unit = " nits",
+      .visible_if_id = "present_hdr",
+      .visible_if_value = "true"});
+  out.push_back(Setting{
+      .id = "gow2_menu_scale",
+      .tab = Tab::kDisplay,
+      .kind = Kind::kChoice,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Menu size",
+      .label_es = "Tamaño del menú",
+      .help_en = "Changes the size of PC Options text and controls.",
+      .help_es = "Cambia el tamaño del texto y los controles de Opciones de PC.",
+      .choices = {
+          C("75", "75%", "75%"), C("100", "100%", "100%"), C("125", "125%", "125%"),
       }});
   out.push_back(Setting{
       .id = "gow2_show_fps",
@@ -294,6 +375,20 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
           C("off", "Off", "Apagado"),
           C("fsr3", "AMD FSR 3.1"),
           C("fsr4", "AMD FSR 4 (Radeon RX 7000/9000)"),
+      }});
+  out.push_back(Setting{
+      .id = "gow2_frame_generation",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kChoice,
+      .apply = Apply::kRestart,
+      .platforms = kWindows,
+      .label_en = "Frame generation",
+      .label_es = "Generación de cuadros",
+      .help_en = "Doubles the displayed frame rate and needs the FSR 3.1 or FSR 4 upscaler.",
+      .help_es = "Duplica los FPS mostrados y necesita el reescalador FSR 3.1 o FSR 4.",
+      .choices = {
+          C("off", "Off", "Apagado"),
+          C("fsr3", "FSR 3"),
       }});
   out.push_back(Setting{
       .id = "upscaler_dlss",
@@ -576,6 +671,18 @@ void AddGraphicsPatches(std::vector<Setting>& out) {
                  "Off uses the game's own textures.",
       .help_es = "Elige una carpeta de texture_packs junto al juego (cada pack trae 4D53082D\\replace). "
                  "Desactivado usa las texturas del juego."});
+  out.push_back(Setting{
+      .id = "texture_replace_skip_ui",
+      .tab = Tab::kGraphics,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "Keep original menus and text",
+      .label_es = "Menús y textos originales",
+      .help_en = "Texture packs and mods leave menus, HUD and text as they are (experimental: textures "
+                 "without mip maps count as UI). Direct3D 12 only.",
+      .help_es = "Los packs de texturas y los mods dejan menús, HUD y textos como están (experimental: las "
+                 "texturas sin mip maps cuentan como interfaz). Solo Direct3D 12."});
   out.push_back(Setting{
       .id = "gow2_open_texture_packs",
       .tab = Tab::kGraphics,
@@ -1573,6 +1680,20 @@ void AddSystem(std::vector<Setting>& out) {
       .label_es = "Mostrar opciones avanzadas",
       .help_en = "Shows diagnostic and expert rows.",
       .help_es = "Muestra filas de diagnóstico y para expertos."});
+  out.push_back(Setting{
+      .id = "present_screenshot_key_enabled",
+      .tab = Tab::kSystem,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kWindows,
+      .label_en = "F12 screenshots",
+      .label_es = "Capturas con F12",
+      .help_en =
+          "F12 saves the game picture, without menus, as a PNG in Pictures\\Gears of War 2 PC. "
+          "Direct3D 12 only.",
+      .help_es =
+          "F12 guarda la imagen del juego, sin menús, como PNG en Imágenes\\Gears of War 2 PC. "
+          "Solo Direct3D 12."});
   out.push_back(Setting{
       .id = "runtime_settings",
       .tab = Tab::kSystem,

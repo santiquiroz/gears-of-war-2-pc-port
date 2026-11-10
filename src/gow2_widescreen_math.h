@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
-// The arithmetic of the widescreen support (src/gow2_widescreen.cpp), header only so a host test can
-// check it: which aspect a setting names, how wide the game's back buffer becomes, how much shadow
-// map still fits the EDRAM, and how the field of view widens.
+// Aspect parsing, render dimensions, EDRAM limits, and field-of-view math shared with host tests.
 #pragma once
 
 #include <cmath>
@@ -14,8 +12,12 @@ namespace rex::glue::widescreen {
 constexpr int kOriginalWidth = 1280;  // what the game builds at 16:9
 constexpr int kTileWidth = 80;        // an EDRAM tile at 32 bits per pixel is 80 pixels wide
 constexpr double kAutoMinAspect = 1.85;  // above 16:9 (1.78) with room for 16:9.5 panels
+constexpr double kAutoMaxNarrowAspect = 1.74;
 constexpr int kMinWidth = 960;
 constexpr int kMaxWidth = 1680;       // 21:9; scene colour and depth then use 9.5 of the 10 MB of EDRAM
+constexpr int kMinHeight = 720;
+constexpr int kMaxHeight = 1088;
+constexpr double kOriginalAspect = 16.0 / 9.0;
 constexpr long long kEdramBytes = 10LL * 1024 * 1024;
 
 inline bool GpuNameHas(const std::string& gpu_name, const char* vendor) {
@@ -46,14 +48,13 @@ inline bool AutoWidescreenSwitchesToRov(bool native_renderer, const std::string&
   return render_target_path.empty() && (GpuNameHas(gpu_name, "AMD") || GpuNameHas(gpu_name, "RADEON"));
 }
 
-// "off", "", "0", "false" -> 0; "auto" -> display_aspect when it is wider than 16:9, else 0; "21:9" or "2.39" -> that
-// aspect. Anything outside 1.2 .. 4 names no widescreen (0).
+// "off", "", "0", "false" -> 0; "auto" -> display_aspect outside the 16:9 tolerance; "21:9", "16:10" or "2.39" -> that
+// aspect. Anything outside 1.2 .. 4 names no aspect override (0).
 inline double ParseAspect(const std::string& text, double display_aspect) {
   if (text.empty() || text == "off" || text == "0" || text == "false") return 0.0;
   double a = 0.0;
   if (text == "auto") {
-    // A 16:9 (or narrower) display is what the game already fills; only a wider one switches it on.
-    a = display_aspect >= kAutoMinAspect ? display_aspect : 0.0;
+    a = display_aspect >= kAutoMinAspect || display_aspect <= kAutoMaxNarrowAspect ? display_aspect : 0.0;
   } else if (const size_t colon = text.find(':'); colon != std::string::npos) {
     const double w = std::atof(text.substr(0, colon).c_str());
     const double h = std::atof(text.substr(colon + 1).c_str());
@@ -64,10 +65,12 @@ inline double ParseAspect(const std::string& text, double display_aspect) {
   return (a >= 1.2 && a <= 4.0) ? a : 0.0;
 }
 
-// The back buffer width for an aspect at the given height: a multiple of 80 between 960 and 1680, or 0
-// when it is what the game builds anyway (1280 at 720 lines) or the aspect is 0.
+inline bool IsNarrowerAspect(double aspect) { return aspect > 0.0 && aspect < kOriginalAspect; }
+
+// Hor+ widths use EDRAM tile increments; Vert+ keeps the original width.
 inline int BackBufferWidth(double aspect, int height) {
   if (aspect <= 0.0) return 0;
+  if (IsNarrowerAspect(aspect)) return kOriginalWidth;
   int w = int(std::lround(aspect * height / double(kTileWidth))) * kTileWidth;
   if (w < kMinWidth) w = kMinWidth;
   if (w > kMaxWidth) w = kMaxWidth;
@@ -94,6 +97,16 @@ constexpr int kVirtualEdramTiles = 4096;
 inline int EdramTilesNeeded(int width, int height) {
   const auto tiles = [](int w, int h) { return ((w + kTileWidth - 1) / kTileWidth) * ((h + 15) / 16); };
   return 2 * tiles(width, height) + 3 * tiles(width / 2, height / 2);
+}
+
+inline int BackBufferHeight(double aspect, int base_height, int edram_tiles) {
+  if (!IsNarrowerAspect(aspect)) return base_height;
+  int height = int(std::lround(double(kOriginalWidth) / aspect / 16.0)) * 16;
+  if (height < kMinHeight) height = kMinHeight;
+  int safe_height = kMaxHeight;
+  while (safe_height > kMinHeight && EdramTilesNeeded(kOriginalWidth, safe_height) > edram_tiles)
+    safe_height -= 16;
+  return height > safe_height ? safe_height : height;
 }
 
 // The widest multiple of 80 whose layout fits the given number of EDRAM tiles.

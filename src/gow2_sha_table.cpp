@@ -81,7 +81,7 @@ int PatchHashSec(const std::vector<HashSecEntry>& entries) {
   for (const HashSecEntry& entry : entries) {
     const size_t at = FindEntry(table, size, entry.name);
     if (at == SIZE_MAX) {
-      REXLOG_WARN("HASHSEC: no table entry for {}", entry.name);
+      if (!entry.optional) REXLOG_WARN("HASHSEC: no table entry for {}", entry.name);
       continue;
     }
     std::memcpy(table + at, entry.sha1.data(), entry.sha1.size());

@@ -3,6 +3,7 @@
 // Frame-rate limiter pacing state (pure, no SDK).
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 namespace rex::glue {
@@ -11,8 +12,16 @@ namespace rex::glue {
 // removes, so with the frame rate locked the limiter keeps 30 fps itself.
 inline constexpr int kLockedFps = 30;
 
-inline constexpr int EffectiveFpsCap(bool unlocked, int unlocked_cap) {
-  return unlocked ? unlocked_cap : kLockedFps;
+inline int CapFromRefreshRate(double refresh_hz) {
+  if (!std::isfinite(refresh_hz) || refresh_hz <= 3.0) return 0;
+  return static_cast<int>(std::floor(refresh_hz)) - 3;
+}
+
+inline constexpr int EffectiveFpsCap(bool unlocked, int unlocked_cap, int refresh_cap = 0,
+                                     bool frame_generation = false) {
+  if (!unlocked) return kLockedFps;
+  if (unlocked_cap != -1) return unlocked_cap;
+  return frame_generation ? refresh_cap / 2 : refresh_cap;
 }
 
 class FramePacer {

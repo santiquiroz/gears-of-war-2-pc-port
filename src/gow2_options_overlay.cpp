@@ -60,6 +60,23 @@ TextId PageTitle(Page page) {
 }
 ImFont* g_regular = nullptr;
 ImFont* g_bold = nullptr;
+float MenuScale() {
+  return static_cast<float>(rex::cvar::Query<int32_t>("gow2_menu_scale")) / 100.f;
+}
+
+void ApplyMenuStyleScale() {
+  static ImGuiStyle base_style;
+  static bool captured = false;
+  if (!captured) {
+    base_style = ImGui::GetStyle();
+    captured = true;
+  }
+  ImGui::GetStyle() = base_style;
+  const float scale = MenuScale();
+  ImGui::GetStyle().ScaleAllSizes(scale);
+  ImGui::GetStyle().FontScaleMain = base_style.FontScaleMain * scale;
+}
+
 std::mutex g_modal_mutex;
 std::condition_variable g_modal_cv;
 bool g_exists = false;
@@ -134,7 +151,7 @@ const char* SourceName(OpenSource source) {
 
 void PushFont(float size, bool bold = false) {
   auto* font = bold ? g_bold : g_regular;
-  ImGui::PushFont(font ? font : ImGui::GetFont(), size);
+  ImGui::PushFont(font ? font : ImGui::GetFont(), size / MenuScale());
 }
 
 void DrawText(ImVec2 pos, std::string_view text, float size, ImU32 color, bool bold = false) {
@@ -366,6 +383,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   }
 #endif
   void OnDraw(ImGuiIO& io) override {
+    ApplyMenuStyleScale();
     pad_ = CurrentPad();
     const auto now = NowMs();
     if (reader_.ToggleChord(pad_, now)) Toggle(OpenSource::kChord);
@@ -670,7 +688,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   }
 
   void DrawMenu(ImGuiIO& io) {
-    h_ = io.DisplaySize.y;
+    h_ = io.DisplaySize.y * MenuScale();
     width_ = std::min(.90f * io.DisplaySize.x, 1.75f * h_);
     left_ = (io.DisplaySize.x - width_) * .5f;
     ImGui::SetNextWindowPos({0, 0});
@@ -683,7 +701,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     auto* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled({0, 0}, io.DisplaySize, IM_COL32(0, 0, 0, 230));
     const ImVec2 panel_min{left_-.02f*h_,.03f*h_};
-    const ImVec2 panel_max{left_+width_+.02f*h_,.97f*h_};
+    const ImVec2 panel_max{left_+width_+.02f*h_,BottomY(.97f)};
     draw->AddRectFilled(panel_min,panel_max,IM_COL32(12,12,12,240));
     draw->AddRect(panel_min,panel_max,IM_COL32(255,255,255,15),0.f,0,1.f);
     DrawHeader();
@@ -802,7 +820,9 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,IM_COL32(190,190,190,153));
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,kRed);
     ImGui::SetCursorScreenPos({left_, top});
-    ImGui::BeginChild("##option-rows", {width_, .67f*h_-top}, ImGuiChildFlags_None,
+    const float bottom = BottomY(.67f);
+    const float row_height = std::max(44.f,.066f*h_);
+    ImGui::BeginChild("##option-rows", {width_, std::max(row_height,bottom-top)}, ImGuiChildFlags_None,
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNavInputs);
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) touch_scrolling_ = false;
     const auto rows = Rows(state_,Catalog(),values_,context_.ctx);
@@ -938,8 +958,8 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   }
 
   void DrawHelp() {
-    const ImVec2 pos{left_,.69f*h_};
-    ImGui::GetWindowDrawList()->AddRectFilled(pos,{left_+width_,.79f*h_},IM_COL32(255,255,255,13));
+    const ImVec2 pos{left_,BottomY(.69f)};
+    ImGui::GetWindowDrawList()->AddRectFilled(pos,{left_+width_,BottomY(.79f)},IM_COL32(255,255,255,13));
     PushFont(.024f*h_);
     ImGui::SetCursorScreenPos({left_+.018f*h_,pos.y+.013f*h_});
     ImGui::PushStyleColor(ImGuiCol_Text,IM_COL32(189,189,189,255));
@@ -960,13 +980,13 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       text += pending[i];
     }
     PushFont(.019f*h_);
-    ImGui::SetCursorScreenPos({left_,.806f*h_});
+    ImGui::SetCursorScreenPos({left_,BottomY(.806f)});
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+width_*.78f);
     ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber),"%s",text.c_str());
     ImGui::PopTextWrapPos();
 #ifdef _WIN32
     const auto label = context_.ctx.lang == Lang::kEs ? "Reiniciar ahora" : "Restart now";
-    ImGui::SetCursorScreenPos({left_+width_*.80f,.80f*h_});
+    ImGui::SetCursorScreenPos({left_+width_*.80f,BottomY(.80f)});
     const bool clicked = DrawButton(label,{width_*.20f,std::max(44.f,.066f*h_)},true);
     if (clicked && !ModalActive()) RunAction("restart_game");
 #endif
@@ -987,7 +1007,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       constexpr std::array<ImU32,4> colors{kGreen,IM_COL32(224,80,80,255),IM_COL32(74,144,226,255),IM_COL32(232,196,64,255)};
       const float item_width = width_/4;
       for (size_t i=0;i<commands.size();++i) {
-        const ImVec2 pos{left_+item_width*static_cast<float>(i),.875f*h_};
+        const ImVec2 pos{left_+item_width*static_cast<float>(i),BottomY(.875f)};
         ImGui::PushID(static_cast<int>(i));
         DrawPadHint(pos,pad_keys[i],T(text[i]),colors[i]);
         if (Hit("##footer",pos,{item_width,std::max(44.f,.055f*h_)}) && !ModalActive()) Dispatch(commands[i]);
@@ -999,13 +1019,13 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     const std::array<TextId,4> text{TextId::kHintChange,BackHint(),TextId::kHintDefault,TextId::kHintSave};
     constexpr std::array<const char*,4> keys{"Enter","Esc","Del","Ctrl+S"};
     const float item_width = width_/5;
-    const ImVec2 move_pos{left_,.875f*h_};
+    const ImVec2 move_pos{left_,BottomY(.875f)};
     DrawCap(move_pos,"WASD",.020f*h_);
     DrawText({move_pos.x+TextWidth("WASD",.020f*h_)+.024f*h_,move_pos.y+.004f*h_},
              T(TextId::kHintMove),.022f*h_,kGray);
     Hit("##footer-move",move_pos,{item_width,std::max(44.f,.055f*h_)});
     for (size_t i=0;i<commands.size();++i) {
-      const ImVec2 item_pos{left_+item_width*static_cast<float>(i+1),.875f*h_};
+      const ImVec2 item_pos{left_+item_width*static_cast<float>(i+1),BottomY(.875f)};
       ImGui::PushID(static_cast<int>(i));
       DrawCap(item_pos,keys[i],.020f*h_);
       DrawText({item_pos.x+TextWidth(keys[i],.020f*h_)+.024f*h_,item_pos.y+.004f*h_},T(text[i]),.022f*h_,kGray);
@@ -1019,6 +1039,10 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     return state_.page == Page::kMain && state_.touched.empty() ? TextId::kHintClose : TextId::kHintBack;
   }
 
+  float BottomY(float fraction) const {
+    return ImGui::GetIO().DisplaySize.y - (1.f-fraction)*h_;
+  }
+
   void DrawPointerFooter() {
     constexpr std::array<Command,3> commands{Command::kSave,Command::kResetRow,Command::kBack};
     const std::array<TextId,3> labels{TextId::kHintSave,TextId::kHintDefault,BackHint()};
@@ -1027,7 +1051,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     const ImVec2 size{item_width-.008f*h_,std::max(44.f,.055f*h_)};
     PushFont(.024f*h_,true);
     for (size_t i=0;i<commands.size();++i) {
-      ImGui::SetCursorScreenPos({left_+item_width*static_cast<float>(i),.875f*h_});
+      ImGui::SetCursorScreenPos({left_+item_width*static_cast<float>(i),BottomY(.875f)});
       ImGui::PushID(static_cast<int>(i));
       const bool clicked = DrawButton(std::string(T(labels[i])).c_str(),size,commands[i] == primary);
       ImGui::PopID();
@@ -1411,7 +1435,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha,alpha);
     ImGui::Begin("##update-notice",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_AlwaysAutoResize|
         ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoFocusOnAppearing);
-    PushFont(.024f*io.DisplaySize.y);
+    PushFont(.024f*io.DisplaySize.y*MenuScale());
     ImGui::TextUnformatted(update_notice_.c_str());
     ImGui::PopFont();
     ImGui::End();
@@ -1428,7 +1452,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha,alpha);
     ImGui::Begin("##options-toast",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_AlwaysAutoResize|
         ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoFocusOnAppearing);
-    PushFont(.024f*io.DisplaySize.y);
+    PushFont(.024f*io.DisplaySize.y*MenuScale());
     ImGui::TextUnformatted(toast_.c_str());
     ImGui::PopFont();
     ImGui::End();
@@ -1470,7 +1494,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
                  ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDecoration |
                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoFocusOnAppearing);
-    PushFont(.024f * io.DisplaySize.y);
+    PushFont(.024f * io.DisplaySize.y * MenuScale());
     ImGui::TextUnformatted(text.c_str());
     ImGui::PopFont();
     ImGui::End();

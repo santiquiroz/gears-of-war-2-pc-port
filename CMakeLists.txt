@@ -78,6 +78,7 @@ set(GOW2_SOURCES
     src/gow2_input_activity.cpp
     src/gow2_widescreen.cpp
     src/gow2_toast.cpp
+    src/gow2_mods.cpp
 )
 
 # The exe icon. CMake already turns on RC for clang on Windows; enable_language makes it explicit.
@@ -107,7 +108,7 @@ if(GOW2_NATIVE_PROBE)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.3.18" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.4.0" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the
@@ -195,6 +196,7 @@ add_executable(gow2_xex_identity_test EXCLUDE_FROM_ALL tools/tests/xex_identity_
 add_executable(gow2_launcher_test EXCLUDE_FROM_ALL tools/tests/launcher_test.cpp)
 add_executable(gow2_texture_packs_test EXCLUDE_FROM_ALL tools/tests/texture_packs_test.cpp)
 add_executable(gow2_texture_pack_plan_test EXCLUDE_FROM_ALL tools/tests/texture_pack_plan_test.cpp)
+add_executable(gow2_mods_test EXCLUDE_FROM_ALL tools/tests/mods_test.cpp src/gow2_mods.cpp src/gow2_voice_language.cpp)
 add_executable(gow2_native_renderer_math_test EXCLUDE_FROM_ALL tools/tests/native_renderer_math_test.cpp)
 add_executable(gow2_prompt_device_test EXCLUDE_FROM_ALL tools/tests/prompt_device_test.cpp)
 add_executable(gow2_disc_install_test EXCLUDE_FROM_ALL tools/tests/disc_install_test.cpp)
@@ -210,7 +212,7 @@ foreach(_options_test gow2_toml_edit_test gow2_options_catalog_test gow2_options
         gow2_update_check_test gow2_native_renderer_math_test gow2_native_frontend_test gow2_prompt_device_test
         gow2_disc_install_test gow2_key_names_test gow2_voice_language_test gow2_launcher_test gow2_cine_hint_test
         gow2_config_seed_test
-        gow2_texture_packs_test gow2_texture_pack_plan_test)
+        gow2_texture_packs_test gow2_texture_pack_plan_test gow2_mods_test)
     target_include_directories(${_options_test} PRIVATE src)
 endforeach()
 
@@ -273,7 +275,7 @@ macro(gow2_patch name script description)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/${script}
                 ${GOW2_GEN_DIR}/*.cpp
         COMMAND ${CMAKE_COMMAND} -E touch ${_stamp}
-        DEPENDS ${_prev_stamp}
+        DEPENDS ${_prev_stamp} ${CMAKE_CURRENT_SOURCE_DIR}/tools/${script}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "${description}"
         VERBATIM)

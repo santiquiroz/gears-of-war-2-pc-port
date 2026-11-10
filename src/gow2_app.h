@@ -43,6 +43,7 @@
 #include "gow2_texture_packs.h"
 #include "gow2_utf8_guard.h"
 #include "gow2_voice_language_setup.h"
+#include "gow2_mods.h"
 #include "gow2_xam_input_guard.h"
 #include "gow2_xex_identity.h"
 
@@ -373,6 +374,26 @@ class Gow2App : public rex::ReXApp {
     } else {
       REXLOG_INFO("{}", setup.summary);
     }
+    voice_overrides_file_ = setup.overrides_file;
+  }
+
+  void PrepareMods() {
+    const std::filesystem::path mods_root = rex::filesystem::GetExecutablePath().parent_path() / "mods";
+    mods_setup_ = rex::glue::mods::Prepare(game_data_root_, cache_root_, mods_root, voice_overrides_file_);
+    for (const std::string& line : mods_setup_.log_lines) REXLOG_INFO("{}", line);
+    for (const std::string& line : mods_setup_.warnings) REXLOG_WARN("{}", line);
+    if (!mods_setup_.active) return;
+#ifdef _WIN32
+    _wputenv_s(L"GOW2_VFS_OVERRIDES_FILE", mods_setup_.overrides_file.wstring().c_str());
+#else
+    if (mods_setup_.overrides_file.empty()) {
+      unsetenv("GOW2_VFS_OVERRIDES_FILE");
+    } else {
+      setenv("GOW2_VFS_OVERRIDES_FILE", mods_setup_.overrides_file.c_str(), 1);
+    }
+#endif
+    coalesced_hashes_.insert(coalesced_hashes_.end(), mods_setup_.hashes.begin(), mods_setup_.hashes.end());
+    mod_texture_folders_ = mods_setup_.texture_folders;
   }
 
   // The temporal upscalers scale the finished frame to the screen size and skip every frame while
@@ -450,6 +471,7 @@ class Gow2App : public rex::ReXApp {
     rex::glue::PrepareWidescreen();
     PrepareCoalesced();
     PrepareLanguage();
+    PrepareMods();
     LogGameExecutableIdentity();
 #ifdef _WIN32
     rex::glue::PrepareKeycapPack();
@@ -482,17 +504,27 @@ class Gow2App : public rex::ReXApp {
   }
 
   // gow2_texture_pack outranks texture_replace / texture_pack_dir; empty leaves them as gow2.toml says.
-  static void ApplyTexturePack() {
+  // Mod texture folders (later mods first) are prepended so they win over the chosen pack.
+  void ApplyTexturePack() {
     const std::string choice = rex::cvar::Query<std::string>("gow2_texture_pack");
     const std::filesystem::path exe_dir = rex::filesystem::GetExecutablePath().parent_path();
     auto pack = rex::glue::texture_packs::ResolvePack(choice, exe_dir);
     // An empty REX_ variable is no variable: the old folder goes in by its full path.
     if (pack.pack_dir && pack.pack_dir->empty()) pack.pack_dir = PathUtf8(exe_dir / "textures");
+    // Mod textures load even with the pack set to Off; the last folder takes the dumps.
+    // ponytail: a texture_pack_dir set by hand in gow2.toml is replaced while a mod has textures.
+    if (!mod_texture_folders_.empty()) {
+      pack.replace = true;
+      if (!pack.pack_dir) pack.pack_dir = PathUtf8(exe_dir / "textures");
+    }
     if (pack.replace) SetTextureCvar("texture_replace", "REX_TEXTURE_REPLACE", *pack.replace ? "true" : "false");
-    if (pack.pack_dir) SetTextureCvar("texture_pack_dir", "REX_TEXTURE_PACK_DIR", *pack.pack_dir);
+    std::string pack_dir_value;
+    for (const std::string& dir : mod_texture_folders_) pack_dir_value += dir + ';';
+    if (pack.pack_dir) pack_dir_value += *pack.pack_dir;
+    if (!pack_dir_value.empty()) SetTextureCvar("texture_pack_dir", "REX_TEXTURE_PACK_DIR", pack_dir_value);
     REXLOG_INFO("TEXPACK pack '{}' -> replace {} dir '{}'", choice,
                 pack.replace ? (*pack.replace ? "on" : "off") : "from gow2.toml",
-                pack.pack_dir ? *pack.pack_dir : std::string("from gow2.toml"));
+                pack_dir_value.empty() ? std::string("from gow2.toml") : pack_dir_value);
     WarnDumpIntoPack(choice);
   }
 
@@ -729,6 +761,9 @@ class Gow2App : public rex::ReXApp {
   std::unique_ptr<rex::ui::ImGuiDialog> fps_counter_;
   std::filesystem::path game_data_root_;
   std::filesystem::path cache_root_;
+  std::filesystem::path voice_overrides_file_;
+  rex::glue::mods::Setup mods_setup_;
+  std::vector<std::string> mod_texture_folders_;
   std::vector<rex::glue::HashSecEntry> coalesced_hashes_;
 #if defined(__ANDROID__)
   std::shared_ptr<rex::glue::TouchControls> touch_;

@@ -111,7 +111,7 @@ function Test-HostTargets([string]$build) {
         'gow2_native_renderer_math_test', 'gow2_native_frontend_test', 'gow2_prompt_device_test',
         'gow2_disc_install_test', 'gow2_key_names_test', 'gow2_voice_language_test',
         'gow2_xex_identity_test', 'gow2_launcher_test', 'gow2_texture_packs_test',
-        'gow2_texture_pack_plan_test'
+        'gow2_texture_pack_plan_test', 'gow2_mods_test'
     if ((Invoke-Native { cmake --build $build --target $targets }) -ne 0) { return $false }
     $ok = $true
     foreach ($t in $targets) {

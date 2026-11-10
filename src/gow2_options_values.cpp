@@ -39,6 +39,7 @@ namespace rex::glue::options {
 REXCVAR_DEFINE_STRING(gow2_menu_language, "auto", "UI", "PC Options menu language: auto, en or es")
     .allowed({"auto", "en", "es"});
 REXCVAR_DEFINE_BOOL(gow2_menu_advanced, false, "UI", "PC Options menu shows the advanced rows");
+REXCVAR_DEFINE_INT32(gow2_menu_scale, 100, "UI", "PC Options UI scale in percent").range(75, 125);
 REXCVAR_DEFINE_INT32(gow2_host_lease_hours, 6, "Network", "Hours the in-game host keeps the router ports open")
     .range(1, 24);
 REXCVAR_DEFINE_BOOL(gow2_host_close_on_exit, true, "Network", "The in-game host closes the router ports when the game exits");

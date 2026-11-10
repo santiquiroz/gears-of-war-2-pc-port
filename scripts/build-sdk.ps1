@@ -14,7 +14,7 @@
      (sdk\patches\0002-temporal-upscalers.patch),
   5. builds the rexruntime and rexgpu-xenos targets with the release build preset,
   6. copies rexruntime.dll, rexgpu-xenos.dll, nvngx_dlss.dll and the
-     amd_fidelityfx_loader/upscaler_dx12.dll files into out\sdk\.
+     amd_fidelityfx_loader/upscaler/framegeneration_dx12.dll files into out\sdk\.
 
   scripts\build.ps1 then picks the DLLs up automatically (see CMakeLists.txt).
   Without them the game still builds and runs with the stock SDK DLLs.
@@ -136,6 +136,9 @@ Step "The ReXGlue SDK ($SdkCommit) with sdk\patches"
 try {
     if (-not (Initialize-SdkSource $sdk $marker (Join-Path $root 'sdk\patches'))) {
         Write-Host "Already prepared: $sdk"
+    } else {
+        # The undo file of verify-sdk-patch.ps1 would take a patch that is now in sdk\patches back out.
+        Remove-Item (Join-Path $work 'verify-applied.patch') -ErrorAction SilentlyContinue
     }
 } catch { Fail $_.Exception.Message }
 
@@ -150,14 +153,14 @@ if (-not $withoutDlss -and -not (Test-Path (Join-Path $dlss 'include\nvsdk_ngx.h
     Run 'git clone DLSS' { git clone --depth 1 https://github.com/NVIDIA/DLSS.git $dlss }
 }
 $ffx = Join-Path $work 'ffx-sdk'
-if (-not (Test-Path (Join-Path $ffx 'Kits\FidelityFX\signedbin\amd_fidelityfx_upscaler_dx12.dll'))) {
+if (-not (Test-Path (Join-Path $ffx 'Kits\FidelityFX\framegeneration\include\ffx_framegeneration.h'))) {
     Step 'Fetching the AMD FidelityFX-SDK (v2.3.0: API headers and signed binaries)'
     if (-not (Test-Path (Join-Path $ffx '.git'))) {
         Run 'git clone FidelityFX' { git clone --depth 1 --branch v2.3.0 --filter=blob:none --sparse https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git $ffx }
     }
     Push-Location $ffx
     try {
-        Run 'sparse checkout' { git sparse-checkout set Kits/FidelityFX/api/include Kits/FidelityFX/upscalers/include Kits/FidelityFX/signedbin }
+        Run 'sparse checkout' { git sparse-checkout set Kits/FidelityFX/api/include Kits/FidelityFX/upscalers/include Kits/FidelityFX/framegeneration/include Kits/FidelityFX/signedbin }
     } finally { Pop-Location }
 }
 
@@ -204,14 +207,14 @@ if (-not $withoutDlss) {
     Copy-Item $ngx $outDir -Force
     Write-Host "  nvngx_dlss.dll <- $ngx"
 }
-foreach ($n in 'loader', 'upscaler') {
+foreach ($n in 'loader', 'upscaler', 'framegeneration') {
     $f = Join-Path $ffx "Kits\FidelityFX\signedbin\amd_fidelityfx_${n}_dx12.dll"
     if (-not (Test-Path $f)) { Fail "$(Split-Path $f -Leaf) was not found in the FidelityFX-SDK ($f)." }
     Copy-Item $f $outDir -Force
     Write-Host "  $(Split-Path $f -Leaf) <- $f"
 }
-# rexruntime.dll imports amd_fidelityfx_dx12.dll (FSR 1 / CAS present effects); the other signed
-# FidelityFX libraries (frame generation, denoiser, radiance cache, Vulkan) are not used.
+# rexruntime.dll imports amd_fidelityfx_dx12.dll (FSR 1 / CAS present effects); of the other signed
+# FidelityFX libraries only the loader, upscaler and frame generation ones above are used.
 # The one the SDK builds next to its import library (bin\), not AMD's prebuilt copy under _deps\.
 $ffxRuntime = Get-Item (Join-Path $sdk 'bin\amd_fidelityfx_dx12.dll') -ErrorAction SilentlyContinue
 if (-not $ffxRuntime) { Fail "amd_fidelityfx_dx12.dll was not built in $sdk\bin (REXGLUE_ENABLE_FIDELITYFX build)." }

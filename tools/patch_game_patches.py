@@ -24,7 +24,7 @@ patch is a cvar and can be A/B'd without a rebuild:
   id 4 Unlock FPS           824A2E94 lfs f1,1284(r3)  -> nop (skipped when on)
                             8298CFB0 li r11,2         -> li r11,1
                              (GameFixes/gow2_unlock_fps=false)
-  id 5 AO Upscaling Fix     82806B10 li r11,720       -> li r11,704 (height 704)
+  id 5 AO Upscaling Fix     82806B10 li r11,720       -> selected back buffer height
                             8272E00C lwz r10,15568(r17) -> li r10,1
                             8272FF54 lwz r11,15568(r11) -> li r11,1
                             8272B1F8 mflr r12 (function entry) -> blr (early return)
@@ -33,9 +33,8 @@ patch is a cvar and can be A/B'd without a rebuild:
   id 6 DoF Upscaling Fix    827296BC fsel f2,f4,f31,f28 -> fsubs f1,f1,f1 (f1=0)
                             82729700 bl 0x827291f8    -> fsubs f1,f1,f1 (skip call, f1=0)
                              (GameFixes/gow2_dof_upscaling_fix=true)
-  id 7 Widescreen           82806B04 lfs f13,2856(r11) -> f13 = (Gow2GamePatch(7) + 0.25) / 720 when set
-                             (sub_82806A80 builds the back buffer: width = aspect * 720, height 720 or
-                             704 with id 5; the aspect is the 16:9 constant for any widescreen video
+  id 7 Widescreen           82806B04 lfs f13,2856(r11) -> f13 = (width + 0.25) / selected height when set
+                             (sub_82806A80 builds the back buffer using the selected dimensions; the aspect
                              mode. Display/gow2_widescreen_aspect, 0 = off)
                             82806E64 blt cr6,0x82806b40 -> always taken when set, so the width is not
                              clamped to 1280 (the game clamps it to 900..1280)
@@ -61,8 +60,9 @@ meant to leave.
 
     python tools/patch_game_patches.py generated/default/*.cpp
 
-Idempotent (marker GOW2 GAMEPATCH). Fails closed if any site's instruction text or
-C++ body differs from what is asserted below.
+Idempotent (marker GOW2 GAMEPATCH); a marked site is rewritten when its replacement
+changes. Fails closed if any site's instruction text or C++ body differs from what
+is asserted below.
 """
 from __future__ import annotations
 
@@ -103,13 +103,13 @@ SITES = [
      "ctx.r11.s64 = Gow2GamePatch(4) ? 1 : 2;", 4),
     (0x82806B10, 0x82806A80, "li r11,720",
      ["ctx.r11.s64 = 720;"],
-     "ctx.r11.s64 = Gow2GamePatch(5) ? 704 : 720;", 5),
+     "ctx.r11.s64 = Gow2GamePatch(8);", 5),
     (0x82806B04, 0x82806A80, "lfs f13,2856(r11)",
      ["ctx.fpscr.disableFlushMode();",
       "temp.u32 = REX_LOAD_U32(ctx.r11.u32 + 2856);",
       "ctx.f13.f64 = double(temp.f32);"],
      "ctx.fpscr.disableFlushMode(); temp.u32 = REX_LOAD_U32(ctx.r11.u32 + 2856); "
-     "ctx.f13.f64 = Gow2GamePatch(7) ? (double(Gow2GamePatch(7)) + 0.25) / 720.0 : double(temp.f32);", 7),
+     "ctx.f13.f64 = Gow2GamePatch(7) ? (double(Gow2GamePatch(7)) + 0.25) / double(Gow2GamePatch(9)) : double(temp.f32);", 7),
     # The FOV (degrees) becomes a half angle in radians here; the widescreen patch widens it so the
     # vertical view stays what it was at 16:9 (both functions build a perspective matrix).
     (0x82634F44, 0x82634F00, "fmuls f1,f1,f0",
@@ -169,6 +169,18 @@ SITES = [
 INSN = re.compile(r"^\s*// [a-z]")
 
 
+def marked_line(existing: str, new: str, pid: int) -> str:
+    indent = re.match(r"\s*", existing).group(0)
+    nl = "\r\n" if existing.endswith("\r\n") else "\n" if existing.endswith("\n") else ""
+    return f"{indent}{new}  // {MARK} {pid}{nl}"
+
+
+def rewrite_marked_line(existing: str, new: str, pid: int) -> str | None:
+    if existing.strip() == f"{new}  // {MARK} {pid}":
+        return None
+    return marked_line(existing, new, pid)
+
+
 def main(argv: list[str]) -> int:
     files: list[str] = []
     for a in argv:
@@ -208,15 +220,19 @@ def main(argv: list[str]) -> int:
                         break
             comment = lines[j].strip()
             if MARK in lines[j + 1]:
-                continue  # already patched
+                replacement = rewrite_marked_line(lines[j + 1], new, pid)
+                if replacement is None:
+                    continue
+                lines[j + 1] = replacement
+                changed = True
+                total += 1
+                continue
             if comment != f"// {want}":
                 raise SystemExit(f"{addr:08X}: expected '// {want}', found '{comment}'")
             got = [lines[j + 1 + n].strip() for n in range(len(body))]
             if got != body:
                 raise SystemExit(f"{addr:08X}: body mismatch {got}")
-            indent = re.match(r"\s*", lines[j + 1]).group(0)
-            nl = "\r\n" if lines[j + 1].endswith("\r\n") else "\n"
-            lines[j + 1:j + 1 + len(body)] = [f"{indent}{new}  // {MARK} {pid}{nl}"]
+            lines[j + 1:j + 1 + len(body)] = [marked_line(lines[j + 1], new, pid)]
             changed = True
             total += 1
         if changed:

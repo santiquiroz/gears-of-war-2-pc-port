@@ -106,9 +106,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## AMD FSR SDK 2.3.0 signed binaries (`amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`)
+## AMD FSR SDK 2.3.0 signed binaries (`amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`, `amd_fidelityfx_framegeneration_dx12.dll`)
 
-- Project: [GPUOpen-LibrariesAndSDKs/FidelityFX-SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) v2.3.0, the signed DLLs from `Kits/FidelityFX/signedbin`, redistributed unmodified for the temporal FSR path.
+- Project: [GPUOpen-LibrariesAndSDKs/FidelityFX-SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) v2.3.0, the signed DLLs from `Kits/FidelityFX/signedbin`, redistributed unmodified for the temporal FSR path and FSR 3 frame generation.
 - License (from `docs/license.md` of that release; it applies to these binaries):
 
 ```

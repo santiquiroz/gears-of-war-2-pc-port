@@ -14,6 +14,8 @@
 #include <optional>
 #include <vector>
 
+#include <SDL3/SDL.h>
+
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -27,10 +29,10 @@
 #include "gow2_widescreen_math.h"
 
 REXCVAR_DEFINE_STRING(gow2_widescreen, "auto", "Display",
-                      "Ultrawide support: auto (on when this PC's main display is wider than 16:9), off, or an "
-                      "aspect such as 21:9 or 2.39. The game then renders wider instead of showing black bars; the "
-                      "field of view is widened to keep the vertical view. Takes effect on the next "
-                      "start. Videos and some menus are still 16:9 stretched.")
+                      "Aspect support: auto (uses the active display outside the 16:9 tolerance), off, or an aspect "
+                      "such as 21:9, 16:10, 4:3 or 2.39. Wider screens render wider and widen the field of view; "
+                      "narrower screens render taller and extend the vertical view. Takes effect on next start. "
+                      "Videos and some menus are still 16:9 stretched.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DEFINE_STRING(gow2_native_renderer, "auto", "Display",
@@ -56,6 +58,11 @@ std::atomic<int> g_site_calls[8];     // how often each FOV site ran
 std::atomic<float> g_site_last[8];    // the last FOV (degrees) each saw
 
 double DisplayAspect() {
+  SDL_DisplayID display = 0;
+  if (SDL_Window* window = SDL_GetKeyboardFocus()) display = SDL_GetDisplayForWindow(window);
+  if (display == 0) display = SDL_GetPrimaryDisplay();
+  const SDL_DisplayMode* mode = display == 0 ? nullptr : SDL_GetCurrentDisplayMode(display);
+  if (mode && mode->w > 0 && mode->h > 0) return double(mode->w) / double(mode->h);
 #if defined(_WIN32)
   const int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
   if (w > 0 && h > 0) return double(w) / double(h);
@@ -229,8 +236,33 @@ double WidescreenAspect() {
   return aspect;
 }
 
+namespace {
+
+int ComputeBackBufferHeight() {
+  const int base_height = rex::cvar::Query<bool>("gow2_ao_upscaling_fix") ? 704 : 720;
+  const double aspect = WidescreenAspect();
+  const bool native = NativeRendererActive();
+  // WidescreenAspect may switch the render path to ROV; use that final path for this height.
+  const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
+  const bool virtual_edram = widescreen::AutoWidescreenSafe(native, path, ChooseRenderGpu().name);
+  const int edram_tiles = virtual_edram ? widescreen::kVirtualEdramTiles : widescreen::kConsoleEdramTiles;
+  const int height = widescreen::BackBufferHeight(aspect, base_height, edram_tiles);
+  const int requested = widescreen::BackBufferHeight(aspect, base_height, widescreen::kVirtualEdramTiles);
+  if (height < requested)
+    REXLOG_WARN("WIDESCREEN Vert+ aspect {:.4f} needs height {}, clamped to {} (aspect {:.4f}) by the {}-tile EDRAM limit",
+                aspect, requested, height, double(widescreen::kOriginalWidth) / height, edram_tiles);
+  return height;
+}
+
+}  // namespace
+
 int WidescreenBackBufferHeight() {
-  return rex::cvar::Query<bool>("gow2_ao_upscaling_fix") ? 704 : 720;
+  static const int height = ComputeBackBufferHeight();
+  return height;
+}
+
+int WidescreenAspectHeight() {
+  return widescreen::IsNarrowerAspect(WidescreenAspect()) ? WidescreenBackBufferHeight() : 720;
 }
 
 int WidescreenBackBufferWidth() {

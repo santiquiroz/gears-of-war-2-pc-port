@@ -5,6 +5,7 @@
 #include "gow2_frame_stats.h"
 
 #include <cfloat>
+#include <cstdint>
 #include <cstdio>
 
 #include <imgui.h>
@@ -39,10 +40,11 @@ float TextLeft(const ImGuiIO& io, float text_width) {
 void DrawReading(const ImGuiIO& io, const FrameReading& reading) {
   char text[48];
   std::snprintf(text, sizeof(text), "%.0f fps  %.1f ms", reading.fps, reading.frame_ms);
+  const float scale = static_cast<float>(rex::cvar::Query<int32_t>("gow2_menu_scale")) / 100.f;
   ImFont* font = ImGui::GetFont();
-  const float size = io.DisplaySize.y * kTextHeight;
+  const float size = io.DisplaySize.y * kTextHeight * scale;
   const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
-  const ImVec2 pos(TextLeft(io, extent.x), io.DisplaySize.y * kInset);
+  const ImVec2 pos(TextLeft(io, extent.x), io.DisplaySize.y * kInset * scale);
   ImDrawList* list = ImGui::GetForegroundDrawList();
   list->AddText(font, size, ImVec2(pos.x + 1.0f, pos.y + 1.0f), kShadowColour, text);
   list->AddText(font, size, pos, kTextColour, text);

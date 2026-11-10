@@ -45,6 +45,8 @@ extern "C" int Gow2GamePatch(int id) {
     case 5: return REXCVAR_GET(gow2_ao_upscaling_fix);
     case 6: return REXCVAR_GET(gow2_dof_upscaling_fix);
     case 7: return rex::glue::WidescreenBackBufferWidth();  // 0 = the game's own 16:9
+    case 8: return rex::glue::WidescreenBackBufferHeight();
+    case 9: return rex::glue::WidescreenAspectHeight();
     default: return 0;
   }
 }
