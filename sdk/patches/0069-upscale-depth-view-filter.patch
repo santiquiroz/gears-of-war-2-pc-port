@@ -1,0 +1,94 @@
+diff --git a/src/graphics/d3d12/gow2_upscale.cpp b/src/graphics/d3d12/gow2_upscale.cpp
+index 8a86043..f5743ac 100644
+--- a/src/graphics/d3d12/gow2_upscale.cpp
++++ b/src/graphics/d3d12/gow2_upscale.cpp
+@@ -508,11 +508,77 @@ DXGI_FORMAT UpscalerColorFormat(DXGI_FORMAT frame_format) {
+   }
+ }
+ 
++static bool IsPlainTexture2D(const D3D12_RESOURCE_DESC& desc) {
++  return desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && desc.DepthOrArraySize == 1;
++}
++
++static bool IsSceneDepthView(const D3D12_RESOURCE_DESC& desc) {
++  return IsPlainTexture2D(desc) && desc.Format == DXGI_FORMAT_R32_FLOAT;
++}
++
++static void LogResourceDescOnce(const D3D12_RESOURCE_DESC& desc, int kind) {
++  struct LoggedDesc {
++    DXGI_FORMAT format;
++    D3D12_RESOURCE_DIMENSION dimension;
++    UINT16 array_size;
++    UINT64 width;
++    UINT height;
++    int kind;
++  };
++  static std::vector<LoggedDesc> logged;
++  static uint32_t depth_count = 0;
++  static uint32_t color_count = 0;
++  for (const LoggedDesc& entry : logged) {
++    if (entry.format == desc.Format && entry.dimension == desc.Dimension &&
++        entry.array_size == desc.DepthOrArraySize && entry.width == desc.Width &&
++        entry.height == desc.Height && entry.kind == kind)
++      return;
++  }
++  uint32_t& count = kind == 0 ? depth_count : color_count;
++  logged.push_back({desc.Format, desc.Dimension, desc.DepthOrArraySize, desc.Width, desc.Height, kind});
++  if (count++ >= 8) return;
++  if (kind == 0) {
++    REXGPU_WARN("GOW2 upscale: ignoring a depth view the upscaler cannot read: "
++                "{}x{} dxgi={} dimension={} array={}",
++                desc.Width, desc.Height, uint32_t(desc.Format), uint32_t(desc.Dimension),
++                desc.DepthOrArraySize);
++  } else {
++    REXGPU_WARN("GOW2 upscale: skipping, the frame is not a plain 2D texture: "
++                "{}x{} dxgi={} dimension={} array={}",
++                desc.Width, desc.Height, uint32_t(desc.Format), uint32_t(desc.Dimension),
++                desc.DepthOrArraySize);
++  }
++}
++
++static void LogChangedFrameColor(const D3D12_RESOURCE_DESC& desc, uint32_t in_w, uint32_t in_h) {
++  static bool has_previous = false;
++  static UINT64 previous_width = 0;
++  static UINT previous_height = 0;
++  static DXGI_FORMAT previous_format = DXGI_FORMAT_UNKNOWN;
++  static uint32_t logged = 0;
++  if (has_previous && previous_width == desc.Width && previous_height == desc.Height &&
++      previous_format == desc.Format)
++    return;
++  has_previous = true;
++  previous_width = desc.Width;
++  previous_height = desc.Height;
++  previous_format = desc.Format;
++  if (logged++ >= 8) return;
++  REXGPU_WARN("GOW2 upscale: frame colour changed to {}x{} dxgi={} (active {}x{})", desc.Width,
++              desc.Height, uint32_t(desc.Format), in_w, in_h);
++}
++
+ // The game resolves depth more than once per frame (the full-size scene depth, then smaller copies
+ // for effects). The largest one is the scene depth the upscaler needs.
+ void NoteDepthTexture(ID3D12Resource* depth) {
+   if (!depth) return;
+   const D3D12_RESOURCE_DESC d = depth->GetDesc();
++  // Tac/Com samples the depth resolve another way; an R32_FLOAT view removed the device with
++  // INVALID_CALL.
++  if (!IsSceneDepthView(d)) {
++    LogResourceDescOnce(d, 0);
++    return;
++  }
+   const uint64_t area = d.Width * uint64_t(d.Height);
+   if (!g.depth_tex || area >= g.depth_area) {
+     g.depth_tex = depth;
+@@ -586,6 +652,11 @@ bool UpscaleFinal(D3D12CommandProcessor& cp, ID3D12Resource* color, uint32_t in_
+                   uint32_t(cd.Format));
+     return false;
+   }
++  LogChangedFrameColor(cd, in_w, in_h);
++  if (!IsPlainTexture2D(cd)) {
++    LogResourceDescOnce(cd, 1);
++    return false;
++  }
+   D3D12_RESOURCE_DESC dd = frame_depth->GetDesc();
+   {
+     static int logged = 0;
