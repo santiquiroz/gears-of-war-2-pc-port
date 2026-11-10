@@ -384,11 +384,13 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .platforms = kWindows,
       .label_en = "Frame generation",
       .label_es = "Generación de cuadros",
-      .help_en = "Doubles the displayed frame rate and needs the FSR 3.1 or FSR 4 upscaler.",
-      .help_es = "Duplica los FPS mostrados y necesita el reescalador FSR 3.1 o FSR 4.",
+      .help_en = "Doubles the displayed frame rate and needs the FSR 3.1 or FSR 4 upscaler. Uses FSR 4 "
+                 "frame generation when the driver offers it for this GPU, FSR 3 otherwise.",
+      .help_es = "Duplica los FPS mostrados y necesita el reescalador FSR 3.1 o FSR 4. Usa la generación "
+                 "de FSR 4 cuando el driver la ofrece para esta GPU y FSR 3 si no.",
       .choices = {
           C("off", "Off", "Apagado"),
-          C("fsr3", "FSR 3"),
+          C("fsr3", "FSR (4 or 3)", "FSR (4 o 3)"),
       }});
   out.push_back(Setting{
       .id = "upscaler_dlss",

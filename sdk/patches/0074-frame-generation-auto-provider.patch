@@ -1,0 +1,195 @@
+diff --git a/include/rex/graphics/d3d12/gow2_framegen.h b/include/rex/graphics/d3d12/gow2_framegen.h
+index 197da64..15df10d 100644
+--- a/include/rex/graphics/d3d12/gow2_framegen.h
++++ b/include/rex/graphics/d3d12/gow2_framegen.h
+@@ -29,6 +29,8 @@ class FrameGeneration final : public ui::d3d12::SwapChainSource {
+  private:
+   bool LoadProvider(ID3D12Device* device);
+   bool EnsureContext(uint32_t render_width, uint32_t render_height);
++  bool CreateContext(uint32_t render_width, uint32_t render_height);
++  bool FallBackToFsr3(uint32_t render_width, uint32_t render_height);
+   void DestroyContext();
+ 
+   std::mutex mutex_;
+@@ -51,7 +53,7 @@ class FrameGeneration final : public ui::d3d12::SwapChainSource {
+   uint64_t prepared_frame_id_ = 0;
+   uint64_t provider_version_id_ = 0;
+   std::string provider_name_;
+-  bool provider_major3_ = false;
++  int provider_major_ = -1;
+   bool picture_rect_set_ = false;
+   int32_t picture_rect_x_ = 0;
+   int32_t picture_rect_y_ = 0;
+diff --git a/include/rex/graphics/d3d12/gow2_fsr.h b/include/rex/graphics/d3d12/gow2_fsr.h
+index a03e746..80c1e0c 100644
+--- a/include/rex/graphics/d3d12/gow2_fsr.h
++++ b/include/rex/graphics/d3d12/gow2_fsr.h
+@@ -25,7 +25,7 @@ struct FsrEval {
+ struct FsrProvider {
+   uint64_t id = 0;
+   std::string name;
+-  bool major3 = false;
++  int major = -1;
+ };
+ 
+ // Loads amd_fidelityfx_loader_dx12.dll from the game folder and enumerates the providers.
+@@ -35,7 +35,9 @@ bool FsrLoaderInit(ID3D12Device* device);
+ const char* FsrProviderName();
+ // True when the loader offers an FSR 4 provider on this system.
+ bool FsrHasFsr4();
+-bool FsrFrameGenerationProvider(FsrProvider* provider);
++// Frame generation provider with the highest major version this GPU supports (FSR 4 where the
++// driver offers it, FSR 3 elsewhere), or only that major when wanted_major is set.
++bool FsrFrameGenerationProvider(FsrProvider* provider, int wanted_major = 0);
+ void* FsrFunctionTable();
+ ID3D12Device* FsrDevice();
+ bool FsrEvaluate(ID3D12GraphicsCommandList* list, const FsrEval& eval);
+diff --git a/src/graphics/d3d12/gow2_framegen.cpp b/src/graphics/d3d12/gow2_framegen.cpp
+index 49104b8..236eb8c 100644
+--- a/src/graphics/d3d12/gow2_framegen.cpp
++++ b/src/graphics/d3d12/gow2_framegen.cpp
+@@ -11,8 +11,9 @@
+ 
+ REXCVAR_DEFINE_STRING(
+     gow2_frame_generation, "off", "Display",
+-    "Frame generation: off or fsr3. Requires temporal upscaling (FSR 3.1, FSR 4 or DLSS), adds "
+-    "about one frame of latency, and runs exclusive fullscreen as borderless.")
++    "Frame generation: off or fsr3 (on: FSR 4 frame generation where the driver offers it, FSR 3 "
++    "otherwise). Requires temporal upscaling (FSR 3.1, FSR 4 or DLSS), adds about one frame of "
++    "latency, and runs exclusive fullscreen as borderless.")
+     .allowed({"off", "fsr3"})
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
+@@ -132,7 +133,7 @@ Microsoft::WRL::ComPtr<IDXGISwapChain1> FrameGeneration::Create(
+   hdr_ = desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM;
+   provider_version_id_ = provider.id;
+   provider_name_ = std::move(provider.name);
+-  provider_major3_ = provider.major3;
++  provider_major_ = provider.major;
+   provider_logged_ = false;
+   picture_rect_set_ = false;
+   enabled_.store(true, std::memory_order_release);
+@@ -147,7 +148,7 @@ Microsoft::WRL::ComPtr<IDXGISwapChain1> FrameGeneration::Create(
+     return nullptr;
+   }
+   logged_ = true;
+-  REXGPU_INFO("frame generation: on (FSR 3)");
++  REXGPU_INFO("frame generation: on (FSR {}, provider '{}')", provider_major_, provider_name_);
+   REXGPU_INFO("frame generation: exclusive fullscreen uses borderless mode");
+   return result;
+ #endif
+@@ -218,6 +219,44 @@ bool FrameGeneration::LoadProvider(ID3D12Device* device) {
+   return device && FsrLoaderInit(device) && !provider_name_.empty();
+ }
+ 
++bool FrameGeneration::CreateContext(uint32_t render_width, uint32_t render_height) {
++#ifdef GOW2_HAS_FFX
++  ffxCreateBackendDX12Desc backend = {};
++  backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
++  backend.device = FsrDevice();
++  ffxOverrideVersion version = {};
++  version.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
++  version.versionId = provider_version_id_;
++  backend.header.pNext = &version.header;
++  ffxCreateContextDescFrameGeneration create = {};
++  create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
++  create.header.pNext = &backend.header;
++  create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
++  if (hdr_) create.flags |= FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE;
++  create.displaySize = {display_width_, display_height_};
++  create.maxRenderSize = {render_width, render_height};
++  create.backBufferFormat = ffxApiGetSurfaceFormatDX12(back_buffer_format_);
++  ffxFunctions* fn = Functions();
++  if (fn && fn->CreateContext &&
++      fn->CreateContext(reinterpret_cast<ffxContext*>(&frame_generation_context_), &create.header,
++                        nullptr) == FFX_API_RETURN_OK) {
++    return true;
++  }
++  frame_generation_context_ = nullptr;
++#endif
++  return false;
++}
++
++bool FrameGeneration::FallBackToFsr3(uint32_t render_width, uint32_t render_height) {
++  FsrProvider fsr3;
++  if (provider_major_ == 3 || !FsrFrameGenerationProvider(&fsr3, 3)) return false;
++  REXGPU_WARN("frame generation: provider '{}' failed, using '{}'", provider_name_, fsr3.name);
++  provider_version_id_ = fsr3.id;
++  provider_name_ = std::move(fsr3.name);
++  provider_major_ = fsr3.major;
++  return CreateContext(render_width, render_height);
++}
++
+ bool FrameGeneration::EnsureContext(uint32_t render_width, uint32_t render_height) {
+ #ifdef GOW2_HAS_FFX
+   if (!enabled() || !swap_chain_ || !LoadProvider(FsrDevice())) return false;
+@@ -233,28 +272,7 @@ bool FrameGeneration::EnsureContext(uint32_t render_width, uint32_t render_heigh
+     return true;
+   }
+   DestroyContext();
+-  ffxCreateBackendDX12Desc backend = {};
+-  ffxOverrideVersion version = {};
+-  backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;
+-  backend.device = FsrDevice();
+-  ffxCreateContextDescFrameGeneration create = {};
+-  create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
+-  create.header.pNext = &backend.header;
+-  if (provider_major3_) {
+-    version.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
+-    version.versionId = provider_version_id_;
+-    backend.header.pNext = &version.header;
+-  }
+-  create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
+-  if (hdr_) create.flags |= FFX_FRAMEGENERATION_ENABLE_HIGH_DYNAMIC_RANGE;
+-  create.displaySize = {display_width_, display_height_};
+-  create.maxRenderSize = {render_width, render_height};
+-  create.backBufferFormat = ffxApiGetSurfaceFormatDX12(back_buffer_format_);
+-  ffxFunctions* fn = Functions();
+-  if (!fn || !fn->CreateContext ||
+-      fn->CreateContext(reinterpret_cast<ffxContext*>(&frame_generation_context_), &create.header,
+-                        nullptr) != FFX_API_RETURN_OK) {
+-    frame_generation_context_ = nullptr;
++  if (!CreateContext(render_width, render_height) && !FallBackToFsr3(render_width, render_height)) {
+     return false;
+   }
+   render_width_ = render_width;
+diff --git a/src/graphics/d3d12/gow2_fsr.cpp b/src/graphics/d3d12/gow2_fsr.cpp
+index bb3a95f..d672258 100644
+--- a/src/graphics/d3d12/gow2_fsr.cpp
++++ b/src/graphics/d3d12/gow2_fsr.cpp
+@@ -134,7 +134,7 @@ bool FsrLoaderInit(ID3D12Device* device) {
+   FsrInit(device);
+   return g_loader_ok;
+ }
+-bool FsrFrameGenerationProvider(FsrProvider* provider) {
++bool FsrFrameGenerationProvider(FsrProvider* provider, int wanted_major) {
+   std::lock_guard lock(g_mutex);
+   if (!provider || !g_loader_ok) return false;
+   if (!g_frame_generation_versions_queried) {
+@@ -160,17 +160,21 @@ bool FsrFrameGenerationProvider(FsrProvider* provider) {
+       }
+     }
+   }
+-  if (g_frame_generation_versions.empty()) return false;
+-  const Version* selected = &g_frame_generation_versions.front();
++  // The query passes the device, so the list only holds versions this GPU can run.
++  const Version* selected = nullptr;
++  int selected_major = -1;
+   for (const Version& version : g_frame_generation_versions) {
+-    if (VersionMajor(version.name) == 3) {
++    const int major = VersionMajor(version.name);
++    if (wanted_major && major != wanted_major) continue;
++    if (major > selected_major) {
+       selected = &version;
+-      break;
++      selected_major = major;
+     }
+   }
++  if (!selected) return false;
+   provider->id = selected->id;
+   provider->name = selected->name;
+-  provider->major3 = VersionMajor(selected->name) == 3;
++  provider->major = selected_major;
+   return true;
+ }
+ void* FsrFunctionTable() { return g_loader_ok ? &g_fn : nullptr; }
