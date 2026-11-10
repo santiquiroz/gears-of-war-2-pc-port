@@ -431,9 +431,11 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .label_en = "Texture cache",
       .label_es = "Caché de texturas",
       .help_en =
-          "Memory the runtime keeps for textures. More means less stutter when it fits in your GPU.",
+          "Memory the runtime keeps for textures. More means less stutter when it fits in your GPU. "
+          "Phones share it with the system: above Medium can stutter more.",
       .help_es =
-          "Memoria que el runtime guarda para texturas. Más significa menos tirones si cabe en tu GPU.",
+          "Memoria que el runtime guarda para texturas. Más significa menos tirones si cabe en tu GPU. "
+          "Los teléfonos la comparten con el sistema: por encima de Media puede dar más tirones.",
       .choices = {
           C("384/768", "Low (384 MB)", "Baja (384 MB)"),
           C("1024/2048", "Medium (1 GB)", "Media (1 GB)"),
