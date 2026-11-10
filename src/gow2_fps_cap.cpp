@@ -62,6 +62,25 @@ void BulkSleepNanos(int64_t nanos) {
 
 namespace {
 
+constexpr int64_t kRefreshRetryNanos = 1000000000;
+
+#ifdef _WIN32
+int MonitorRefreshRate(const void* native_handle) {
+  HMONITOR monitor = native_handle
+                         ? MonitorFromWindow(static_cast<HWND>(const_cast<void*>(native_handle)),
+                                             MONITOR_DEFAULTTOPRIMARY)
+                         : MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  MONITORINFOEXW info = {};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfoW(monitor, &info)) return 0;
+  DEVMODEW mode = {};
+  mode.dmSize = sizeof(mode);
+  if (!EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)) return 0;
+  // 0 and 1 mean "the hardware default", not a rate.
+  return mode.dmDisplayFrequency > 1 ? static_cast<int>(mode.dmDisplayFrequency) : 0;
+}
+#endif
+
 int DisplayRefreshCap() {
   SDL_DisplayID display = 0;
 #ifdef _WIN32
@@ -86,7 +105,12 @@ int DisplayRefreshCap() {
   }
   if (display == 0) display = SDL_GetPrimaryDisplay();
   const SDL_DisplayMode* mode = display == 0 ? nullptr : SDL_GetCurrentDisplayMode(display);
-  return mode ? CapFromRefreshRate(mode->refresh_rate) : 0;
+  const int cap = mode ? CapFromRefreshRate(mode->refresh_rate) : 0;
+#ifdef _WIN32
+  // The first engine ticks can run before SDL video is up; Windows always knows the rate.
+  if (cap == 0) return CapFromRefreshRate(static_cast<float>(MonitorRefreshRate(native_handle)));
+#endif
+  return cap;
 }
 
 bool FrameGenerationEnabled() {
@@ -119,17 +143,21 @@ void FpsCapTick(const PPCContext& ctx, uint8_t* base) {
   static bool frame_generation = false;
   static bool refresh_initialized = false;
   static bool unknown_refresh_logged = false;
+  static int64_t next_refresh_query = 0;
   const int selected = REXCVAR_GET(gow2_fps_cap);
   if (!refresh_initialized || selected != selected_cap) {
     selected_cap = selected;
     refresh_initialized = true;
     frame_generation = selected == -1 && FrameGenerationEnabled();
-    if (selected == -1) {
-      refresh_cap = DisplayRefreshCap();
-      if (refresh_cap == 0 && !unknown_refresh_logged) {
-        REXLOG_WARN("FPSCAP monitor refresh rate is unknown; VRR cap is off");
-        unknown_refresh_logged = true;
-      }
+    refresh_cap = 0;
+    next_refresh_query = 0;
+  }
+  if (selected_cap == -1 && refresh_cap == 0 && SteadyNowNanos() >= next_refresh_query) {
+    next_refresh_query = SteadyNowNanos() + kRefreshRetryNanos;
+    refresh_cap = DisplayRefreshCap();
+    if (refresh_cap == 0 && !unknown_refresh_logged) {
+      REXLOG_WARN("FPSCAP monitor refresh rate is unknown yet; the VRR cap waits for it");
+      unknown_refresh_logged = true;
     }
   }
   const bool unlocked = rex::cvar::Query<bool>("gow2_unlock_fps");
