@@ -1,0 +1,57 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 9a93d1f..1ebfba7 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -71,6 +71,12 @@ REXCVAR_DEFINE_BOOL(gpu_native_frontend_timing, false, "GPU",
+                     "Time each native draw's snapshot apply, shader binding and draw issue on the command "
+                     "thread and log the averages per draw next to the NATIVEFRONT line");
+ 
++REXCVAR_DEFINE_BOOL(gpu_bulk_register_writes, true, "GPU",
++                    "Copies command-stream register writes in the 0x2000-0x23FF range (no write "
++                    "side effects) straight into the register file and writes type-0 packet ranges "
++                    "in one call; false writes each register through WriteRegister (for A/B runs)")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ #if REX_PLATFORM_ANDROID
+ REXCVAR_DEFINE_INT32(gpu_worker_spin_us, -1, "GPU",
+                      "Microseconds the GPU command thread polls for new commands, pausing with an "
+@@ -151,6 +157,13 @@ bool g_pixel_shader_embedded = false;
+ constexpr uint32_t kMsaaFillMaxPitchPixels = 4096;
+ constexpr uint32_t kMsaaFillMaxWindowOffset = 4096;
+ constexpr uint32_t kScissorUnbounded = 8192;
++constexpr uint32_t kSideEffectFreeFirst = 0x2000;
++constexpr uint32_t kSideEffectFreeLast = 0x23FF;
++
++bool IsSideEffectFreeRange(uint32_t first, uint32_t count) {
++  return count && first >= kSideEffectFreeFirst && first <= kSideEffectFreeLast &&
++         count - 1 <= kSideEffectFreeLast - first;
++}
+ 
+ bool IsConstantFillShader(const Shader* shader) {
+   return shader && shader->is_ucode_analyzed() && shader->texture_bindings().empty() &&
+@@ -890,6 +903,14 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
+ 
+ void CommandProcessor::WriteRegistersFromMem(uint32_t start_index, uint32_t* base,
+                                              uint32_t num_registers) {
++  if (!num_registers) {
++    return;
++  }
++  if (REXCVAR_GET(gpu_bulk_register_writes) &&
++      IsSideEffectFreeRange(start_index, num_registers)) {
++    memory::copy_and_swap(register_file_->values + start_index, base, num_registers);
++    return;
++  }
+   for (uint32_t i = 0; i < num_registers; ++i) {
+     uint32_t data = memory::load_and_swap<uint32_t>(base + i);
+     WriteRegister(start_index + i, data);
+@@ -1099,6 +1120,10 @@ bool CommandProcessor::ExecutePacketType0(memory::RingBuffer* reader, uint32_t p
+ 
+   uint32_t base_index = (packet & 0x7FFF);
+   uint32_t write_one_reg = (packet >> 15) & 0x1;
++  if (REXCVAR_GET(gpu_bulk_register_writes) && !write_one_reg) {
++    WriteRegisterRangeFromRing(reader, base_index, count);
++    return true;
++  }
+   for (uint32_t m = 0; m < count; m++) {
+     uint32_t reg_data = reader->ReadAndSwap<uint32_t>();
+     uint32_t target_index = write_one_reg ? base_index : base_index + m;

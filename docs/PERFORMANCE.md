@@ -155,7 +155,7 @@ Gain ÷ effort, with the platform each one helps. "Status" says what is done.
 | # | Change | Helps | Expected gain | Effort | Status |
 |---|---|---|---|---|---|
 | 1 | **Native front end off by default on PC** (`gow2_native_frontend`): until the command processor stops reading the console's command stream, the per-draw snapshots are extra work | PC | 151 to 263 fps in the hospital (RX 7800 XT) | done | 0.3.8 |
-| 2 | **Write changed register ranges in bulk** instead of one virtual `WriteRegister` call per dword, on the command-stream path that PC uses again | PC, Android CPU | medium in busy scenes | low | planned (skipping unchanged constant blocks by pointer was tried on the front end path: no gain, section 6) |
+| 2 | **Write changed register ranges in bulk** instead of one virtual `WriteRegister` call per dword, on the command-stream path that PC uses again | PC, Android CPU | medium in busy scenes | low | SDK 0070 (`gpu_bulk_register_writes`). PC, hospital at 1440p, ABAB: 193.1 and 192.1 fps on, 191.5 and 191.5 off, inside the spread (with the emulated EDRAM default that scene is GPU-bound on the RX 7800 XT); not measured on Android yet |
 | 3 | **Draw buffer of the native front end** 4,096 to 8,192 draws a frame, so busy scenes stay on it where it is on | Android, PC when chosen | removes the fallback seen in #26 | done | 0.3.8 |
 | 4 | **Native front end by GPU on Android**: off on Mali (players on a Mali-G615 report far fewer stutters, #27), on elsewhere (Adreno 825: 60 fps on vs 23-30 fps and GPU hangs off, #33); on PC it cost 42 % of the frame | Android | fewer stutters on Mali, about 2x fps on Adreno (player reports) | low | done (0.3.10, 0.3.12) |
 | 5 | **Fewer render pass breaks on phones**: gather the uploads and texture loads a pass needs before it starts, instead of breaking it for each | Android | large (most of the 26 passes end at an upload) | medium-high | planned |
@@ -166,7 +166,7 @@ Gain ÷ effort, with the platform each one helps. "Status" says what is done.
 | 10 | **Skip the guest-memory resolve** when every reader was written natively (keep the guest copy stale until something reads it) | both | 1-2 GPU passes and a copy per resolve | medium-high, coherency risk | planned |
 | 11 | **Shaders translated ahead of time** (with @NeloRojo's XenosRecomp pipeline, #22) and a pipeline warm-up from the game's own cache on first start | both | no stutters the first time an effect appears; no Vulkan translation on the command thread | medium | in discussion (#22) |
 | 12 | **Heat-aware frame rate on Android**: keep the game's 30 fps cap by default and lower the internal resolution when Android reports little thermal headroom (ADPF), instead of racing to 50 fps and throttling | Android | a steadier warm frame rate | medium | idea |
-| 13 | **Idle command thread waits instead of yielding** (500 yields before each wait) | Android | CPU power, heat | low | idea |
+| 13 | **Idle command thread waits instead of yielding** (500 yields before each wait) | Android | CPU power, heat | low | measured, no gain: `gpu_worker_spin_us` (Android) polls for a set time instead; 50 µs changed neither CPU use nor the frame rate at the thermal cap on the S25 Ultra |
 | 14 | **Occlusion queries without GPU drains on PC**: read each result when the GPU has it, or a frame late | PC | none measurable in the hospital (on and off inside the spread); profile a scene with more queries first | medium | parked |
 
 Before each change: profile it in the scene it targets. The first numbers to take are the command
