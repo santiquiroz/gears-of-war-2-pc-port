@@ -140,6 +140,7 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `gpu_backend` — `any` (Direct3D 12), `d3d12` or `vulkan` (experimental); needs a restart.
 - `gow2_native_frontend` — draw source: `auto` (console commands on PC and Mali phones, Direct3D calls on other phones), `on` or `off`.
 - `gow2_skip_intro_movies` — skips the Epic Games and Microsoft Game Studios logo videos at start.
+- `gow2_skip_hint` — while a cinematic plays, a corner note shows the button that skips it (Back on a controller, Tab on the keyboard; only the host can skip). On by default.
 - `gow2_launcher` — Windows: opens PC Options before the game loads, with a Play button (`false` goes straight into the game).
 - `gow2_texture_pack` — Windows: the texture pack folder under `texture_packs` next to the exe, `textures` for the old `textures` folder, `off`, or empty to follow `texture_replace`; needs a restart.
 - `gow2_texture_build_scale`, `gow2_texture_build_quality` — Windows: Build texture pack's scale (`2` or `4`) and format (`disc` keeps each texture's own, `bc7`).

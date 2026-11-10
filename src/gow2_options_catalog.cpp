@@ -1544,7 +1544,7 @@ void AddSystem(std::vector<Setting>& out) {
       .tab = Tab::kSystem,
       .kind = Kind::kToggle,
       .apply = Apply::kNow,
-      .platforms = kAllPlatforms,
+      .platforms = kWindows,
       .label_en = "Show how to skip cinematics",
       .label_es = "Mostrar cómo saltar cinemáticas",
       .help_en = "While a cinematic plays, a corner note shows the button that skips it (Back on a controller, Tab on the keyboard). Only the host can skip.",

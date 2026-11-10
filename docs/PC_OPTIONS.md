@@ -50,16 +50,21 @@ Controller:
 
 Keyboard:
 
-- Arrows: move between rows and change values.
+- Arrows or W/A/S/D: move between rows and change values (Ctrl+S still saves).
 - Enter or Space: change. Esc or Backspace: back. Del: default.
-- Q / E or PgUp / PgDn: switch tabs. Ctrl+S: save.
+- Q / E or PgUp / PgDn: switch tabs. Ctrl+S: save. Ctrl+Q: quit the game.
 
 Mouse and touch:
 
 - Click or tap tabs, rows, and the arrows beside a value.
-- Four buttons at the bottom: Save, Default, Back (Close when clean), and
-  Quit game. Quit game sits in the footer of every page and quits the same
-  way as System > Quit the game. F10 or Back + Start opens the menu.
+- Three buttons at the bottom: Save, Default, Back (Close when clean).
+  F10 or Back + Start opens the menu.
+
+Quit game sits at the top right of every page with every device: click or tap
+it, press Ctrl+Q, or hold View (Back) on a controller for 0.7 s (a bar fills
+along the button). It asks first, with Cancel selected; pressing Ctrl+Q or
+holding View again confirms. Unsaved changes are saved before the game closes.
+System > Quit the game opens the same question.
 
 Text rows open an editor. Controllers get an on-screen keyboard there.
 
@@ -265,6 +270,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Subtitles and text | `user_language` | English, Latin American Spanish, French, German, Italian, Polish, Russian, Korean, Traditional Chinese | restart | both |
 | Voices | `gow2_voice_language` | same as subtitles, English, Latin American Spanish, French | restart | both |
 | Skip intro videos | `gow2_skip_intro_movies` | on, off | restart | both |
+| Show how to skip cinematics | `gow2_skip_hint` | on, off | now | Windows |
 | Show options at start | `gow2_launcher` | on, off | at start | Windows |
 | Show advanced options | `gow2_menu_advanced` | on, off | now | both |
 | All runtime settings | action | opens the F4 list | now | both |

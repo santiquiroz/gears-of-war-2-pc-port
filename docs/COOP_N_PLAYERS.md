@@ -897,6 +897,25 @@ Each item gives the evidence and then a candidate fix. Script changes are sized 
     POSIX guard is still open: the SDK's own SIGSEGV/SIGBUS handler from patch 0007 chains unclaimed
     faults, so a scoped sigsetjmp guard has to cooperate with it. [I]
 
+    0.3.16 (26e0b4e), from the logs of a three-player online session on 0.3.14 (2026-11-08):
+    - **Overlap during a cinematic.** At two chapter starts an extra spawned exactly inside the
+      human Dom (0 units), about 1.5 minutes after each act achievement. The leash never moved it,
+      because players in cinematic mode or hidden were excluded, and when the cinematic ended Dom
+      fell out of the level and kept falling. [V] An extra in cinematic mode or hidden that is
+      within 60 units of another pawn is now pulled next to that pawn at once (`PullOrder.cinematic`,
+      log `...; during a cinematic)`). [I]
+    - **Fallen heroes.** The leash only moved extras, so the falling Dom was never rescued, and it
+      even moved the extra next to him. [V] Now a Marcus or Dom more than `kFellBelowHeroes` (2000)
+      below every other standing player who also drops more than 300 units a second for 3 readings
+      is moved next to the nearest standing player (`PullReason::kHeroFell`, log `COOPLEASH ...
+      rescued next to ... (fell N units below every other player)`). A hero on a lower floor does
+      not drop, so he stays. A fallen player is never a target or an anchor. [I]
+    - **Left behind fast.** A third player started the convoy outside the trucks. [V] When an
+      extra's distance to the nearest hero grows more than 300 units in a second, each far second
+      counts 4, so the pull comes after about 2 s instead of 8. [I]
+    Host tests cover each rule (`tools/tests/coop_leash_test.cpp`); none of it has been played
+    online yet.
+
 #### Stage 2 integration (branch `stage2`, 2026-10-16)
 
 The four group branches (a-survival, b-scenes, c-body, d-tools) are merged into `stage2`.
@@ -927,7 +946,7 @@ separate: it applies once on the engine tick when `gow2_dev_cheats=true`.
 | gow2_coop_vehicle_ride | true | false: no CR rows; vehicles stay retail |
 | gow2_coop_scenes | true | false: no SC rows (cinematics, teleports, checkpoints, splits stay as in Stage 1) |
 | gow2_coop_scene_probe | false | debug: logs each player controller's cinematic state every 2 s |
-| gow2_coop_leash | true on Windows, false elsewhere | false: no leash. true: on the host, a player 3+ who stays more than gow2_coop_leash_distance from the nearest human Marcus or Dom for gow2_coop_leash_seconds is moved next to him (FindAvailableTeleportSpot near him, or near a player on foot next to him when he is in a vehicle; else one of 24 spots 120, 360 or 600 units around that player); the leash also keeps god mode for extras on foot while a hero rides; log lines COOPLEASH |
+| gow2_coop_leash | true on Windows, false elsewhere | false: no leash. true: on the host, a player 3+ who stays more than gow2_coop_leash_distance from the nearest human Marcus or Dom for gow2_coop_leash_seconds is moved next to him (FindAvailableTeleportSpot near him, or near a player on foot next to him when he is in a vehicle; else one of 24 spots 120, 360 or 600 units around that player); an extra within 60 units of another pawn is pulled at once, also during a cinematic; a Marcus or Dom 2000 units below every other standing player and still dropping for 3 s is moved next to the nearest one; the leash also keeps god mode for extras on foot while a hero rides; log lines COOPLEASH |
 | gow2_coop_leash_distance | 4000 | game units |
 | gow2_coop_leash_seconds | 8 | seconds |
 | net_beacon_gate | true | with gow2_coop_players 3+, System Link lists and answers only peers whose co-op hash matches (SDK patch 0012); false turns the check off |
