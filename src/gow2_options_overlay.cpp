@@ -623,7 +623,9 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
   void ReadMenuInput(int64_t now) {
     for (const auto command : reader_.Update(pad_, now)) Dispatch(command);
-    const bool ctrl = ImGui::GetIO().KeyCtrl;
+    // The SDK sends LeftCtrl/RightCtrl but never ImGuiMod_Ctrl, so io.KeyCtrl stays false.
+    const bool ctrl = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl) ||
+                      ImGui::GetIO().KeyCtrl;
     constexpr std::array<std::pair<ImGuiKey, Command>, 13> keys{{
         {ImGuiKey_UpArrow, Command::kUp}, {ImGuiKey_DownArrow, Command::kDown},
         {ImGuiKey_LeftArrow, Command::kLeft}, {ImGuiKey_RightArrow, Command::kRight},
