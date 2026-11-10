@@ -95,7 +95,7 @@ enum class TextId : uint8_t {
   kHintQuit,
   kHintPlay,           // the launcher's Back: leave the menu and load the game
   kEditTextTitle, kEditTextOk, kEditTextCancel,
-  kHintMove, kQuitTitle, kQuitConfirm, kQuitCancel, kQuitSavesNote,
+  kHintMove, kQuitTitle, kQuitConfirm, kQuitCancel, kQuitSavesNote, kOpeningDownload,
   kCineSkip, kCineHostOnly,
 };
 

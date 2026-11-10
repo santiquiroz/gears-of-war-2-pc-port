@@ -33,7 +33,8 @@ std::vector<NamedValue> ListSaveFolders(std::string_view current);
 // The standard folder picker. Empty when cancelled or outside Windows. UTF-8.
 std::optional<std::string> PickFolder(std::string_view title);
 
-bool OpenFolder(const std::filesystem::path& dir);
+void OpenInShell(std::wstring target, void* window_to_minimize);
+void OpenFolder(const std::filesystem::path& dir, void* window_to_minimize);
 
 // Starts this exe again with the same command line plus --gow2_wait_pid=<this pid>. True when it
 // started; the caller then closes the game.

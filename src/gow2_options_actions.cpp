@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -64,6 +65,38 @@ std::wstring Utf8ToWide(std::string_view text) {
   std::wstring out(size_t(size), L'\0');
   MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), out.data(), size);
   return out;
+}
+
+bool RunShellOpen(const std::wstring& target, DWORD* error) {
+  SHELLEXECUTEINFOW info{};
+  info.cbSize = sizeof(info);
+  info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+  info.lpVerb = L"open";
+  info.lpFile = target.c_str();
+  info.nShow = SW_SHOWNORMAL;
+  if (ShellExecuteExW(&info)) return true;
+  *error = GetLastError();
+  return false;
+}
+
+void LogShellOpenResult(const std::wstring& target, bool opened, DWORD error) {
+  if (opened) {
+    REXLOG_INFO("PCOPTIONS opened {}", WideToUtf8(target));
+    return;
+  }
+  REXLOG_WARN("PCOPTIONS could not open {} (error {})", WideToUtf8(target), error);
+}
+
+void OpenInShellOnWorker(std::wstring target, void* window_to_minimize) {
+  const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+  DWORD error = ERROR_SUCCESS;
+  const bool opened = RunShellOpen(target, &error);
+  LogShellOpenResult(target, opened, error);
+  if (opened && window_to_minimize != nullptr) {
+    // The browser or Explorer opens behind a fullscreen game.
+    ShowWindowAsync(static_cast<HWND>(window_to_minimize), SW_MINIMIZE);
+  }
+  if (SUCCEEDED(initialized)) CoUninitialize();
 }
 
 std::string Dimensions(int width, int height) {
@@ -569,18 +602,21 @@ std::optional<std::string> PickFolder(std::string_view title) {
 #endif
 }
 
-bool OpenFolder(const std::filesystem::path& dir) {
+void OpenInShell(std::wstring target, void* window_to_minimize) {
 #ifdef _WIN32
+  std::thread([target = std::move(target), window_to_minimize] {
+    OpenInShellOnWorker(target, window_to_minimize);
+  }).detach();
+#else
+  (void)target;
+  (void)window_to_minimize;
+#endif
+}
+
+void OpenFolder(const std::filesystem::path& dir, void* window_to_minimize) {
   std::error_code ec;
   if (!std::filesystem::exists(dir, ec)) std::filesystem::create_directories(dir, ec);
-  const std::wstring native = dir.wstring();
-  const HINSTANCE launched =
-      ShellExecuteW(nullptr, L"open", native.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-  return INT_PTR(launched) > 32;
-#else
-  (void)dir;
-  return false;
-#endif
+  OpenInShell(dir.wstring(), window_to_minimize);
 }
 
 bool RestartGame() {

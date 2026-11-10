@@ -1455,8 +1455,8 @@ void AddSystem(std::vector<Setting>& out) {
       .platforms = kWindows,
       .label_en = "Download",
       .label_es = "Descargar",
-      .help_en = "Opens the latest release page in your browser.",
-      .help_es = "Abre la página de la última versión en el navegador."});
+      .help_en = "Opens the latest release page in your browser. In fullscreen the game minimizes so you can see it.",
+      .help_es = "Abre la página de la última versión en el navegador. En pantalla completa el juego se minimiza para que la veas."});
   out.push_back(Setting{
       .id = "update_check_now",
       .tab = Tab::kSystem,
@@ -1754,6 +1754,9 @@ std::string_view Text(TextId id, Lang lang) {
       return Pick("Cancel", "Cancelar", lang);
     case TextId::kQuitSavesNote:
       return Pick("Your changes are saved first.", "Tus cambios se guardan antes de salir.", lang);
+    case TextId::kOpeningDownload:
+      return Pick("Opening the download page in your browser: ",
+                  "Abriendo la página de descarga en el navegador: ", lang);
     case TextId::kCineSkip:
       return Pick("Skip cinematic", "Saltar cinemática", lang);
     case TextId::kCineHostOnly:

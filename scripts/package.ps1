@@ -39,7 +39,7 @@
   Output folder for the zip and staging area. Default: out\package.
 
 .PARAMETER Config
-  Settings file shipped as gow2.toml. Default: config\gow2.toml.
+  Settings file shipped as gow2.default.toml; the game makes gow2.toml from it on the first start.
 
 .EXAMPLE
   .\scripts\build-sdk.ps1 -NoDlss
@@ -166,7 +166,7 @@ function Copy-RepoDocs([string]$Root, [string]$StageDir, [string]$ConfigPath) {
         Copy-Item -Force $src (Join-Path $StageDir $name)
     }
     if (-not (Test-Path $ConfigPath)) { Fail "Settings file not found: $ConfigPath" }
-    Copy-Item -Force $ConfigPath (Join-Path $StageDir 'gow2.toml')
+    Copy-Item -Force $ConfigPath (Join-Path $StageDir 'gow2.default.toml')
     # Texture pack helper (Python 3 + Pillow), see README "Texture packs".
     $tools = Join-Path $StageDir 'tools'
     New-Item -ItemType Directory -Force -Path $tools | Out-Null
@@ -327,7 +327,8 @@ function Write-QuickstartFile([string]$StageDir) {
         'SETTINGS AND LOGS',
         'F10 (or Back+Start) opens PC Options; its Quit game button closes the game.',
         'Language: PC Options > System > Subtitles and text, and Voices (English, Latin American Spanish or French); restart to apply.',
-        'Settings live in gow2.toml next to the exe.',
+        'Settings live in gow2.toml next to the exe (made from gow2.default.toml on the first start).',
+        'To update, extract the new zip over this folder: your gow2.toml, saves and shader cache stay.',
         'Logs and crash reports are written next to the exe (gow2_crash.log).',
         '',
         'Not affiliated with Microsoft, Epic Games or The Coalition.',
@@ -365,7 +366,8 @@ function Write-QuickstartFile([string]$StageDir) {
         'AJUSTES Y REGISTROS',
         'F10 (o Back+Start) abre Opciones de PC; su boton Salir del juego cierra el juego.',
         'Idioma: Opciones de PC > Sistema > Subtitulos y textos, y Voces (ingles, espanol latino o frances); se aplica al reiniciar.',
-        'Los ajustes estan en gow2.toml junto al exe.',
+        'Los ajustes estan en gow2.toml junto al exe (se crea desde gow2.default.toml al primer arranque).',
+        'Para actualizar, extrae el zip nuevo encima de esta carpeta: tu gow2.toml, partidas y shaders se conservan.',
         'Los registros e informes de fallo se escriben junto al exe (gow2_crash.log).',
         '',
         'Sin afiliacion con Microsoft, Epic Games o The Coalition.',

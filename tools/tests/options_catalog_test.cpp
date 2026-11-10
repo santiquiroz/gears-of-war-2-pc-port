@@ -153,8 +153,9 @@ void TestUiTexts() {
       options::TextId::kEditTextCancel,
       options::TextId::kCineSkip,
       options::TextId::kCineHostOnly,
+      options::TextId::kOpeningDownload,
   };
-  Expect(ids.size() == 38, "all 38 TextIds are listed");
+  Expect(ids.size() == 39, "all 39 TextIds are listed");
   for (options::TextId id : ids) {
     Expect(!options::Text(id, options::Lang::kEn).empty(), "Text EN is non-empty");
     Expect(!options::Text(id, options::Lang::kEs).empty(), "Text ES is non-empty");

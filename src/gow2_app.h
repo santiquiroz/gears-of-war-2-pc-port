@@ -20,6 +20,7 @@
 #include <rex/system.h>
 
 #include "gow2_coalesced.h"
+#include "gow2_config_seed.h"
 #include "gow2_widescreen.h"
 #include "gow2_audio_volume.h"
 #include "gow2_native_keys.h"
@@ -521,6 +522,7 @@ class Gow2App : public rex::ReXApp {
   }
 
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    rex::glue::SeedConfigFromDefault(paths.config_path);
     // Find the disc folder next to the exe so a double-click boots without --game_data_root.
     paths.game_data_root = ResolveContentRoot(paths.game_data_root);
     paths.update_data_root = paths.game_data_root / "$SystemUpdate";

@@ -162,6 +162,8 @@ Los parches comunitarios vienen de [xenia-canary/game-patches](https://github.co
 
 En Windows, el juego consulta GitHub para buscar una nueva versión como máximo dos veces al día y no envía ningún otro dato. Puedes desactivarlo en Opciones de PC > Sistema o poner `gow2_update_check = false` en `gow2.toml`.
 
+Para actualizar, usa Opciones de PC > Sistema > Descargar (o la página de Releases) y extrae el zip nuevo encima de la carpeta del juego, reemplazando archivos. Tus ajustes de `gow2.toml`, tus partidas y la caché de shaders se conservan: el zip trae sus valores por defecto como `gow2.default.toml` y el juego crea `gow2.toml` a partir de él solo si falta.
+
 ## Rendimiento
 
 Hospital del capítulo 2, tasa de cuadros desbloqueada: unos 260 fps a 1440p internos en un Ryzen 9 7900X3D + Radeon RX 7800 XT con el renderizador nativo (0.3.8; de la 0.3.3 a la 0.3.7 iba a unos 150 porque el front end nativo venía activado por defecto); 60 fps (el límite) con la GPU a cerca del 55 % en una GTX 1070; unos 46-53 fps desde un arranque en frío en un Galaxy S25 Ultra a 720p. Dónde se va el tiempo de cada cuadro en PC y Android, por qué el port necesita más GPU que "Hollow" y el plan ordenado para bajarlo: [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (en inglés). Para reportar errores, `gow2_frame_log = true` registra los tiempos de cuadro FRAMESTATS cada 5 s y `d3d12_stats_log = true` los contadores de D3D12.

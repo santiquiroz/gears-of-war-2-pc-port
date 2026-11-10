@@ -75,8 +75,12 @@ On Android the file is
 `Android/data/com.santiquiroz.gow2recomp/files/gow2.toml`. Every comment in
 the file is kept. Windows paths are written as literal strings.
 
-A build from source copies `config/gow2.toml` over the build folder's file.
-The release zip is not affected: your saved settings stay.
+A build from source and the release zip ship `config/gow2.toml` as
+`gow2.default.toml`. The game creates `gow2.toml` from it only when the file is
+missing, so rebuilding or extracting an update keeps your settings.
+
+System > Download opens the latest release page in your browser. In fullscreen,
+the game minimizes so you can see the browser.
 
 Leaving with unsaved changes asks Save / Discard / Cancel. Discard restores
 the values the menu opened with.

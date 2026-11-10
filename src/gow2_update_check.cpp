@@ -6,7 +6,6 @@
 
 #include <windows.h>
 #include <winhttp.h>
-#include <shellapi.h>
 
 #include <array>
 #include <chrono>
@@ -251,12 +250,6 @@ Checker& Service() {
   return checker;
 }
 
-bool SafeReleaseUrl(const std::string& url) {
-  constexpr std::string_view prefix = "https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/";
-  if (!url.starts_with(prefix)) return false;
-  return url.find_first_of("\r\n\t\\\"") == std::string::npos && url.find('\0') == std::string::npos;
-}
-
 }
 
 void Start(const std::filesystem::path& root) { Service().StartAt(root); }
@@ -266,12 +259,8 @@ Snapshot GetSnapshot() { return Service().SnapshotNow(); }
 std::string CurrentVersion() { return GOW2_VERSION; }
 bool TakeNotice() { return Service().Notice(); }
 
-bool OpenDownload() {
-  const auto snapshot = GetSnapshot();
-  if (!SafeReleaseUrl(snapshot.release.html_url)) return false;
-  const auto url = ToWide(snapshot.release.html_url);
-  if (url.empty()) return false;
-  return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+std::string DownloadPageUrl() {
+  return "https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest";
 }
 
 }
@@ -282,7 +271,9 @@ namespace rex::glue::update {
 void Start(const std::filesystem::path&) {}
 void CheckNow() {}
 void Dismiss() {}
-bool OpenDownload() { return false; }
+std::string DownloadPageUrl() {
+  return "https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest";
+}
 Snapshot GetSnapshot() { return {}; }
 std::string CurrentVersion() { return GOW2_VERSION; }
 bool TakeNotice() { return false; }

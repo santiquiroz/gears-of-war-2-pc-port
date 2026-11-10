@@ -20,7 +20,7 @@ struct Snapshot {
 void Start(const std::filesystem::path& user_data_root);
 void CheckNow();
 void Dismiss();
-bool OpenDownload();
+std::string DownloadPageUrl();
 Snapshot GetSnapshot();
 std::string CurrentVersion();
 bool TakeNotice();

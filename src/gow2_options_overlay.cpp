@@ -451,8 +451,26 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   }
 
   void OpenTexturePacks() {
-    options_actions::OpenFolder(rex::filesystem::GetExecutablePath().parent_path() / "texture_packs");
+    options_actions::OpenFolder(rex::filesystem::GetExecutablePath().parent_path() / "texture_packs",
+                                WindowToMinimize());
   }
+
+  void* WindowToMinimize() const {
+    auto* runtime = rex::Runtime::instance();
+    if (!runtime) return nullptr;
+    auto* window = runtime->display_window();
+    if (!window || !window->IsFullscreen()) return nullptr;
+    return window->GetNativeWindowHandle();
+  }
+
+#ifdef _WIN32
+  void OpenDownloadPage() {
+    const auto url = update::DownloadPageUrl();
+    options_actions::OpenInShell(std::wstring(url.begin(), url.end()), WindowToMinimize());
+    toast_ = std::string(T(TextId::kOpeningDownload)) + url;
+    toast_until_ = NowMs() + 6000;
+  }
+#endif
 
   void ApplyOutcome(const Outcome& outcome) {
     switch (outcome.kind) {
@@ -491,7 +509,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   void RunAction(const std::string& id) {
     REXLOG_INFO("PCOPTIONS action {}", id);
 #ifdef _WIN32
-    if (id == "update_download") { update::OpenDownload(); return; }
+    if (id == "update_download") { OpenDownloadPage(); return; }
     if (id == "update_check_now") { update::CheckNow(); return; }
     if (id == "update_dismiss") {
       update::Dismiss();
@@ -520,7 +538,10 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       return;
     }
     if (id == "gow2_open_texture_packs") { OpenTexturePacks(); return; }
-    if (id == "save_open") { options_actions::OpenFolder(values_.paths().user_data_root); return; }
+    if (id == "save_open") {
+      options_actions::OpenFolder(values_.paths().user_data_root, WindowToMinimize());
+      return;
+    }
     if (id == "save_dir_browse") { BrowseFolder(); return; }
     if (id == "host_open") { StartHost(); return; }
     if (id == "host_close") options_actions::Host().Stop();

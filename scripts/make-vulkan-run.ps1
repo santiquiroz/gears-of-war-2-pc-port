@@ -4,7 +4,7 @@ $release = Join-Path $root 'out\build\release'
 $sdk = Join-Path $root 'out\sdk-vulkan'
 $destination = Join-Path $root 'out\vulkan-run'
 
-$files = @('gow2.exe', 'gow2.toml', 'gamecontrollerdb.txt') | ForEach-Object {
+$files = @('gow2.exe', 'gow2.default.toml', 'gamecontrollerdb.txt') | ForEach-Object {
     Join-Path $release $_
 }
 $files += @('rexruntime.dll', 'rexgpu-xenos.dll', 'amd_fidelityfx_dx12.dll',
