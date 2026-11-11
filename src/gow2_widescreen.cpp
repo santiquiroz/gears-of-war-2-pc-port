@@ -212,26 +212,42 @@ void WidenUiImagesTick(const PPCContext& ctx, uint8_t* base) {
 
 [[maybe_unused]] const bool kUiTickRegistered = (AddEngineTickListener(&FixUiProjectionTick), true);
 
+double ComputeWidescreenAspect() {
+  const std::string mode = REXCVAR_GET(gow2_widescreen);
+  const double parsed = widescreen::ParseAspect(mode, DisplayAspect());
+  if (mode != "auto" || parsed <= 0.0) return parsed;
+  const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
+  const std::string gpu = ChooseRenderGpu().name;
+  const bool native = NativeRendererActive();
+  if (widescreen::AutoWidescreenSafe(native, path, gpu)) return parsed;
+  if (widescreen::AutoWidescreenSwitchesToRov(native, path, gpu) &&
+      rex::cvar::SetFlagByName("render_target_path_d3d12", "rov")) {
+    REXLOG_INFO("WIDESCREEN auto on {}: render target path set to 'rov' (host render targets show artifacts above "
+                "1280 wide); set render_target_path_d3d12 = \"rtv\" to keep 16:9 on host render targets", gpu);
+    return parsed;
+  }
+  REXLOG_INFO("WIDESCREEN auto stays 16:9 on {} with render target path '{}' (artifacts above 1280 wide); "
+              "set gow2_widescreen = \"21:9\" and render_target_path_d3d12 = \"rov\" to try it", gpu, path);
+  return 0.0;
+}
+
+void PreferHostRenderTargets(double aspect) {
+  const bool native = NativeRendererActive();
+  const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
+  const std::string gpu = ChooseRenderGpu().name;
+  if (!widescreen::AutoPicksHostRenderTargets(native, path, gpu, aspect)) return;
+  if (!rex::cvar::SetFlagByName("render_target_path_d3d12", "rtv")) return;
+  REXLOG_INFO("RTPATH {} at 16:9: render target path set to 'rtv' (ROV draws some weapons and heads blue or "
+              "white on NVIDIA, issue #44); set render_target_path_d3d12 = \"rov\" in gow2.toml to change", gpu);
+}
+
 }  // namespace
 
 double WidescreenAspect() {
   static const double aspect = [] {
-    const std::string mode = REXCVAR_GET(gow2_widescreen);
-    const double parsed = widescreen::ParseAspect(mode, DisplayAspect());
-    if (mode != "auto" || parsed <= 0.0) return parsed;
-    const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
-    const std::string gpu = ChooseRenderGpu().name;
-    const bool native = NativeRendererActive();
-    if (widescreen::AutoWidescreenSafe(native, path, gpu)) return parsed;
-    if (widescreen::AutoWidescreenSwitchesToRov(native, path, gpu) &&
-        rex::cvar::SetFlagByName("render_target_path_d3d12", "rov")) {
-      REXLOG_INFO("WIDESCREEN auto on {}: render target path set to 'rov' (host render targets show artifacts above "
-                  "1280 wide); set render_target_path_d3d12 = \"rtv\" to keep 16:9 on host render targets", gpu);
-      return parsed;
-    }
-    REXLOG_INFO("WIDESCREEN auto stays 16:9 on {} with render target path '{}' (artifacts above 1280 wide); "
-                "set gow2_widescreen = \"21:9\" and render_target_path_d3d12 = \"rov\" to try it", gpu, path);
-    return 0.0;
+    const double chosen = ComputeWidescreenAspect();
+    PreferHostRenderTargets(chosen);
+    return chosen;
   }();
   return aspect;
 }

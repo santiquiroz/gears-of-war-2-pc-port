@@ -48,6 +48,14 @@ inline bool AutoWidescreenSwitchesToRov(bool native_renderer, const std::string&
   return render_target_path.empty() && (GpuNameHas(gpu_name, "AMD") || GpuNameHas(gpu_name, "RADEON"));
 }
 
+// SDK patch 0024 makes ROV the automatic path on NVIDIA; it draws some weapons and heads blue or white there
+// (issue #44). 16:9 does not need ROV's wider EDRAM, so an unset path asks for host render targets.
+inline bool AutoPicksHostRenderTargets(bool native_renderer, const std::string& render_target_path,
+                                       const std::string& gpu_name, double aspect) {
+  if (native_renderer || !render_target_path.empty() || aspect != 0.0) return false;
+  return GpuNameHas(gpu_name, "NVIDIA");
+}
+
 // "off", "", "0", "false" -> 0; "auto" -> display_aspect outside the 16:9 tolerance; "21:9", "16:10" or "2.39" -> that
 // aspect. Anything outside 1.2 .. 4 names no aspect override (0).
 inline double ParseAspect(const std::string& text, double display_aspect) {

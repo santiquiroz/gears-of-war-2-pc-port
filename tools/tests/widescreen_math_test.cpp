@@ -30,6 +30,14 @@ int main() {
   Expect(!AutoWidescreenSwitchesToRov(false, "", "NVIDIA GeForce RTX 5080"), "NVIDIA is already ROV");
   Expect(!AutoWidescreenSwitchesToRov(false, "", ""), "unknown GPU is not switched");
   Expect(!AutoWidescreenSwitchesToRov(true, "", "AMD Radeon RX 7800 XT"), "native renderer keeps host render targets");
+
+  using rex::glue::widescreen::AutoPicksHostRenderTargets;
+  Expect(AutoPicksHostRenderTargets(false, "", "NVIDIA GeForce RTX 4070 Ti", 0.0), "16:9 on NVIDIA asks for host render targets");
+  Expect(!AutoPicksHostRenderTargets(false, "rov", "NVIDIA GeForce RTX 4070 Ti", 0.0), "an explicit rov on NVIDIA is kept");
+  Expect(!AutoPicksHostRenderTargets(false, "", "NVIDIA GeForce RTX 3070 Ti", 21.0 / 9.0), "ultrawide on NVIDIA keeps ROV");
+  Expect(!AutoPicksHostRenderTargets(false, "", "NVIDIA GeForce RTX 3070 Ti", 1.6), "16:10 on NVIDIA keeps ROV");
+  Expect(!AutoPicksHostRenderTargets(true, "", "NVIDIA GeForce RTX 4070 Ti", 0.0), "the native renderer is left alone");
+  Expect(!AutoPicksHostRenderTargets(false, "", "AMD Radeon RX 7800 XT", 0.0), "AMD already uses host render targets");
   Expect(rex::glue::widescreen::ParseAspect("auto", 16.0 / 9.0) == 0.0, "a 16:9 display stays 16:9");
   using namespace rex::glue::widescreen;
   Expect(ParseAspect("auto", 1280.0 / 800.0) == 1280.0 / 800.0, "auto selects a 16:10 display");
