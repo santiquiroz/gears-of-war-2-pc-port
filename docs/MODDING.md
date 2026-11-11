@@ -31,6 +31,8 @@ url=https://example.com/my-mod
 
 See [docs/TEXTURE_PACKS.md](TEXTURE_PACKS.md) for the format and how to build one.
 
+Texture packs, including the ones inside mods, load only with the Direct3D 12 graphics API; the experimental Vulkan API ignores them.
+
 Additional details:
 
 - Several packs can be active at once: every mod that contains a texture pack plus the pack chosen in PC Options. When two packs replace the same texture, the later mod wins, and mods win over the chosen pack.

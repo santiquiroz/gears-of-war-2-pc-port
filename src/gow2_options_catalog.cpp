@@ -271,10 +271,11 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .label_es = "API gráfica",
       .help_en = "Direct3D 12 is the tested path and the only one with FSR 2/3/4 and DLSS. Vulkan is "
                  "experimental: try it if your GPU driver crashes or stutters with Direct3D 12. On Vulkan only "
-                 "the FSR 1 and CAS present effects work.",
+                 "the FSR 1 and CAS present effects work, and texture packs and mod textures do not load.",
       .help_es = "Direct3D 12 es el camino probado y el único con FSR 2/3/4 y DLSS. Vulkan es experimental: "
                  "pruébalo si el driver de tu GPU se cuelga o da tirones con Direct3D 12. En Vulkan solo "
-                 "funcionan los efectos de presentación FSR 1 y CAS.",
+                 "funcionan los efectos de presentación FSR 1 y CAS, y los packs de texturas y las texturas "
+                 "de mods no cargan.",
       .choices = {
           C("any", "Automatic (Direct3D 12)", "Automático (Direct3D 12)"),
           C("d3d12", "Direct3D 12", "Direct3D 12"),

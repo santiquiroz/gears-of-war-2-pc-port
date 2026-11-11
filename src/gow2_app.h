@@ -526,6 +526,7 @@ class Gow2App : public rex::ReXApp {
                 pack.replace ? (*pack.replace ? "on" : "off") : "from gow2.toml",
                 pack_dir_value.empty() ? std::string("from gow2.toml") : pack_dir_value);
     WarnDumpIntoPack(choice);
+    WarnVulkanSkipsTextures(pack.replace.value_or(false));
   }
 
   // Dumps land in the active pack root, where Build texture pack does not look. The GPU plugin usually
@@ -541,6 +542,13 @@ class Gow2App : public rex::ReXApp {
     if (rex::cvar::GetFlagByName("texture_dump") != "true") return;
     REXLOG_WARN("TEXPACK texture_dump writes into texture_packs\\{}\\4D53082D\\dump; set Texture pack to Off "
                 "so Build texture pack finds the dumps", choice);
+  }
+
+  // Texture replacement lives only in the Direct3D 12 texture cache (issue #46).
+  static void WarnVulkanSkipsTextures(bool replace) {
+    if (!replace || rex::cvar::Query<std::string>("gpu_backend") != "vulkan") return;
+    REXLOG_WARN("TEXPACK texture packs and mod textures load only on Direct3D 12; with gpu_backend 'vulkan' "
+                "the game draws its own textures");
   }
 #endif
 

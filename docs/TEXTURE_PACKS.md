@@ -3,6 +3,9 @@
 A texture pack replaces the game's textures with larger versions. PC Options can build one for you
 from the textures your own copy dumps, upscaled on your GPU with Real-ESRGAN (Windows only).
 
+Texture packs load only with the Direct3D 12 graphics API (PC Options → Graphics → **Graphics API**:
+Automatic or Direct3D 12). The experimental Vulkan API draws the game's own textures.
+
 ## Dump, build, pick
 
 1. **Dump.** PC Options → Graphics: set **Texture pack** to **Off**, turn on **Dump textures** (an advanced
