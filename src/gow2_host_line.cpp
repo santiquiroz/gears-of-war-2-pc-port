@@ -23,7 +23,17 @@ struct Value {
   std::string text;
   std::vector<Value> items;
   std::vector<std::pair<std::string, Value>> fields;
+
+  Value() = default;
+  Value(const Value&) = default;
+  Value(Value&&) noexcept = default;
+  Value& operator=(const Value&) = default;
+  Value& operator=(Value&&) noexcept = default;
+  ~Value();
 };
+
+// Out of line: libstdc++ instantiates ~vector<pair<string, Value>> while Value is still incomplete.
+Value::~Value() = default;
 
 bool IsSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 

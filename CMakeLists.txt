@@ -89,11 +89,22 @@ if(WIN32)
         src/gow2_texture_pack_builder.cpp)
     set_source_files_properties(src/gow2.rc PROPERTIES
         OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/gow2.ico)
+elseif(UNIX AND NOT APPLE)
+    # The Windows guards rewrite x86 thunks in rexruntime.dll or rely on SEH. Linux loads
+    # librexruntime.so like Android, so it takes the Android stand-ins (android/gamelibs).
+    list(REMOVE_ITEM GOW2_SOURCES src/gow2_xam_input_guard.cpp src/gow2_utf8_guard.cpp
+        src/gow2_crash_watch.cpp)
+    list(APPEND GOW2_SOURCES android/gamelibs/gow2_android_glue.cpp)
 endif()
 
 add_executable(gow2 WIN32 ${GOW2_SOURCES})
 
 rexglue_setup_target(gow2 GPU_PLUGINS xenos)
+if(TARGET imgui)
+    # A source-tree SDK (REXSDK_DIR) links imgui privately into rexruntime; the installed SDK
+    # ships its headers in its include folder.
+    target_include_directories(gow2 PRIVATE "$<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>")
+endif()
 if(WIN32)
     target_link_libraries(gow2 PRIVATE winhttp shell32)
 endif()

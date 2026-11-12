@@ -7,7 +7,7 @@
 #include "gow2_mouse_aim.h"
 #include "gow2_host_ui.h"
 
-#if !defined(__ANDROID__)
+#ifdef _WIN32
 #include <windows.h>
 #endif
 
@@ -141,8 +141,8 @@ class MouseBankListener : public rex::ui::WindowInputListener {
 MouseBankListener g_mouse_listener;
 
 bool SafeInvoke(PPCFunc* fn, PPCContext* call, uint8_t* base) {
-#if defined(__ANDROID__)
-  // No SEH on Android: a guest fault in here reaches the runtime's signal handler instead.
+#ifndef _WIN32
+  // No SEH off Windows: a guest fault in here reaches the runtime's signal handler instead.
   fn(*call, base);
   return true;
 #else

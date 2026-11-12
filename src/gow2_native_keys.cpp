@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 #include "gow2_native_keys.h"
 
-#if !defined(__ANDROID__)
+#ifdef _WIN32
 #include <windows.h>
 #endif
 
@@ -134,7 +134,7 @@ uint64_t NameFor(const PPCContext& ctx, uint8_t* base, const std::string& engine
 }
 
 bool SafeCall(PPCFunc* fn, PPCContext* call, uint8_t* base) {
-#if defined(__ANDROID__)
+#ifndef _WIN32
   fn(*call, base);
   return true;
 #else

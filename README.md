@@ -91,6 +91,15 @@ The first time you play System Link co-op, Windows asks whether `gow2.exe` may u
 
 The first start, and the first start after an update that changes the graphics, compiles the shaders again: the window can sit on the title screen for a few minutes and Windows may call it "Not responding", and the first level takes a little longer to load. Leave it running; later starts use the saved shaders.
 
+### Linux and SteamOS (experimental)
+
+A native Linux build for Steam Deck, Legion Go with SteamOS and desktop distributions with Vulkan. It needs the extracted game folder (it cannot extract an `.iso` itself; use xdvdfs or copy the folder the Windows build made).
+
+1. Download `gow2-recomp-<version>-linux-x86_64.tar.gz` from the [latest release](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest), extract it and copy everything inside its folder into the game folder, next to `default.xex`.
+2. Run `./gow2.sh`. On SteamOS, add `gow2.sh` to Steam as a non-Steam game and leave Proton off.
+
+It runs on Vulkan, so the Direct3D 12 features (FSR and DLSS upscaling, frame generation, HDR10, texture packs) are not available. Details, save locations and building it yourself: [docs/LINUX.md](docs/LINUX.md).
+
 ### Android (experimental)
 
 Requirements: an arm64 phone with Android 10 or newer and Vulkan, and free space for a full copy of the game files.

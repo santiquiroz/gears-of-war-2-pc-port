@@ -40,8 +40,10 @@ def main(argv):
         if not name.endswith(".cpp"):
             continue
         src = os.path.join(gen, name)
-        obj = os.path.join(objs, name + ".obj")
-        if not os.path.exists(obj):
+        # clang-cl on Windows writes .obj, clang on Linux .o.
+        obj = next((p for p in (os.path.join(objs, name + ext) for ext in (".obj", ".o"))
+                    if os.path.exists(p)), None)
+        if obj is None:
             stale.append((name, "no object at all"))
             continue
         checked += 1
