@@ -108,7 +108,7 @@ Target ParseTargetToken(std::string_view token) {
 bool IsKnownVerb(std::string_view verb) {
   return verb == "list" || verb == "selftest" || verb == "listmapchanges" || verb == "god" ||
          verb == "kill" || verb == "knockdown" || verb == "damage" || verb == "specialmove" ||
-         verb == "call" || verb == "callpawn" ||
+         verb == "call" || verb == "callpawn" || verb == "set" ||
          verb == "mapchange" || verb == "mapcommit" || verb == "mark";
 }
 
@@ -118,7 +118,8 @@ bool ArityOk(std::string_view verb, size_t nargs) {
   if (verb == "kill") return nargs == 1;
   if (verb == "knockdown") return nargs == 1 || nargs == 2;
   if (verb == "damage") return nargs == 2 || nargs == 3;
-  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "specialmove")
+  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "specialmove" ||
+      verb == "set")
     return nargs == 2;
   return nargs == 0;
 }
@@ -128,7 +129,8 @@ std::string_view ArityText(std::string_view verb) {
   if (verb == "kill") return "1";
   if (verb == "knockdown") return "1 or 2";
   if (verb == "damage") return "2 or 3";
-  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "specialmove")
+  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "specialmove" ||
+      verb == "set")
     return "2";
   return "0";
 }
@@ -253,6 +255,16 @@ Command ParseCall(std::string_view verb, const std::vector<std::string>& tokens)
   return out;
 }
 
+// !set <cvar> <value>: the same cvar write PC Options does, so change callbacks run (live settings tests).
+Command ParseSet(const std::vector<std::string>& tokens) {
+  if (!IsValidFunctionName(tokens[1])) return MakeError("bad cvar name '" + tokens[1] + "'");
+  Command out;
+  out.kind = CommandKind::kHostVerb;
+  out.text = "set";
+  out.args = {tokens[1], tokens[2]};
+  return out;
+}
+
 Command ParseHostVerb(std::string_view trimmed) {
   const std::vector<std::string> tokens = SplitBlanks(trimmed.substr(1));
   const std::string verb = tokens.empty() ? std::string() : LowerAscii(tokens[0]);
@@ -268,6 +280,7 @@ Command ParseHostVerb(std::string_view trimmed) {
   if (verb == "damage") return ParseDamage(tokens);
   if (verb == "specialmove") return ParseSpecialMove(tokens);
   if (verb == "call" || verb == "callpawn") return ParseCall(verb, tokens);
+  if (verb == "set") return ParseSet(tokens);
   Command out;
   out.kind = CommandKind::kHostVerb;
   out.text = verb;

@@ -310,6 +310,12 @@ void TestParseHostVerbs() {
   Check(damage.args.size() == 1 && damage.args[0] == "2000", "!damage keeps the amount");
   Check(ParseCommandLine("!damage local").kind == CommandKind::kError, "!damage needs an amount");
   Check(!damage.instigator.has_value(), "!damage without a third argument has no instigator");
+  const Command set = ParseCommandLine("!set present_dither false");
+  Check(set.kind == CommandKind::kHostVerb && set.text == "set" && set.args.size() == 2 &&
+            set.args[0] == "present_dither" && set.args[1] == "false",
+        "!set keeps the cvar and the value");
+  Check(ParseCommandLine("!set present_dither").kind == CommandKind::kError, "!set needs a value");
+  Check(ParseCommandLine("!set bad-name 1").kind == CommandKind::kError, "!set rejects a bad name");
   const Command from = ParseCommandLine("!damage #1 50 #3");
   Check(from.kind == CommandKind::kHostVerb && from.target.kind == TargetKind::kIndex &&
             from.target.index == 1,

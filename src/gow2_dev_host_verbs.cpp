@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ppc.h>
 
@@ -376,6 +377,14 @@ std::optional<uint32_t> DamageInstigator(uint8_t* base, uint32_t engine,
   return found->front();
 }
 
+VerbResult SetVerb(const dev_commands::Command& command) {
+  const std::string& name = command.args[0];
+  const std::string& value = command.args[1];
+  if (!rex::cvar::GetFlagInfo(name)) return Fail("no cvar " + name);
+  if (!rex::cvar::SetFlagByName(name, value)) return Fail(name + " rejected '" + value + "'");
+  return Ok(name + " = " + value);
+}
+
 VerbResult DamageVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
                       const dev_commands::Command& command) {
   const std::optional<uint32_t> instigator = DamageInstigator(base, engine, command);
@@ -511,6 +520,7 @@ VerbResult RunHostVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
   if (verb == "call") return CallVerb(ctx, base, engine, command, false);
   if (verb == "callpawn") return CallVerb(ctx, base, engine, command, true);
   if (verb == "mark") return MarkVerb(command);
+  if (verb == "set") return SetVerb(command);
   if (verb == "listmapchanges") return ListMapChanges(ctx, base, engine, command);
   if (verb == "mapchange") return MapChange(ctx, base, engine, command);
   if (verb == "mapcommit") return MapCommit(ctx, base, engine, command);
