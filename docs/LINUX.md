@@ -21,12 +21,21 @@ other place works with `--game_data_root=/path/to/game`, or with that path writt
 
 ### Steam Deck and Legion Go (SteamOS)
 
-1. In Desktop Mode, extract the package into the game folder as above.
-2. Steam > Games > Add a Non-Steam Game to My Library > Browse, pick `gow2.sh` (show all file types),
-   and add it.
-3. In the shortcut's Properties, leave Compatibility unchecked: it is a native Linux program, not one
+1. In Desktop Mode, extract the package on the device itself (Dolphin: right-click the `.tar.gz` >
+   Extract > Extract archive here) and copy its files into the game folder as above. Files extracted
+   on Windows and copied over lose their "executable" permission, and Steam then refuses `gow2.sh`
+   with "Unsupported file type".
+2. If the files came from Windows anyway: in the game folder, right-click an empty area > Open
+   Terminal Here, and run `chmod +x gow2 gow2.sh`.
+3. Steam > Games > Add a Non-Steam Game to My Library > Browse, set File type to All Files, pick
+   `gow2.sh` and add it.
+4. In the shortcut's Properties, leave Compatibility unchecked: it is a native Linux program, not one
    for Proton.
-4. Start it from Gaming Mode. The built-in controller works as an Xbox controller.
+5. Start it from Gaming Mode. The built-in controller works as an Xbox controller.
+
+If Steam still says "Unsupported file type" after step 2, the game folder is on a drive formatted on
+Windows (FAT32, exFAT or NTFS), which does not keep that permission: move the folder to the internal
+storage or to a card formatted by SteamOS.
 
 ## Where things live
 

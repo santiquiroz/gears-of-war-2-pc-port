@@ -95,8 +95,8 @@ El primer arranque, y el primer arranque después de una actualización que camb
 
 Una build nativa de Linux para Steam Deck, Legion Go con SteamOS y distribuciones de escritorio con Vulkan. Necesita la carpeta del juego ya extraída (no extrae el `.iso` por sí misma; usa xdvdfs o copia la carpeta que hizo la build de Windows).
 
-1. Descarga `gow2-recomp-<versión>-linux-x86_64.tar.gz` del [último release](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest), extráelo y copia todo lo que hay dentro de su carpeta en la carpeta del juego, junto a `default.xex`.
-2. Ejecuta `./gow2.sh`. En SteamOS, agrega `gow2.sh` a Steam como juego que no es de Steam y deja Proton desactivado.
+1. Descarga `gow2-recomp-<versión>-linux-x86_64.tar.gz` del [último release](https://github.com/santiquiroz/gears-of-war-2-pc-port/releases/latest), extráelo en el propio dispositivo (no en Windows) y copia todo lo que hay dentro de su carpeta en la carpeta del juego, junto a `default.xex`.
+2. Ejecuta `./gow2.sh`. En SteamOS, agrega `gow2.sh` a Steam como juego que no es de Steam (en Examinar, cambia el tipo de archivo a Todos los archivos) y deja Proton desactivado. Si Steam dice "Unsupported file type", los archivos perdieron el permiso de ejecución, casi siempre por extraerlos en Windows: abre una terminal en la carpeta del juego y ejecuta `chmod +x gow2 gow2.sh`.
 
 Funciona con Vulkan, así que las funciones de Direct3D 12 (escalado FSR y DLSS, generación de cuadros, HDR10, paquetes de texturas) no están disponibles. Detalles, dónde quedan las partidas y cómo compilarla: [docs/LINUX.md](docs/LINUX.md) (en inglés).
 
