@@ -119,9 +119,9 @@ Defaults keep the original game and crossplay working.
 | Upscaler | `gow2_temporal` + `gow2_upscaler` | off, FSR 3.1, FSR 4 (DLSS on DLSS builds) | now | Windows |
 | Upscaling | info | internal -> screen ratio | now | Windows |
 | Final image filter | `present_effect` | bilinear, FSR 1, CAS (SGSR on Android) | restart | both |
-| FSR 1 softening | `present_fsr_sharpness_reduction` | 0 ... 2 | restart | both |
-| CAS sharpness | `present_cas_additional_sharpness` | 0 ... 1 | restart | both |
-| Dithering | `present_dither` | on, off | restart | both |
+| FSR 1 softening | `present_fsr_sharpness_reduction` | 0 ... 2 | now | both |
+| CAS sharpness | `present_cas_additional_sharpness` | 0 ... 1 | now | both |
+| Dithering | `present_dither` | on, off | now | both |
 | Anisotropic filtering | `anisotropic_override` | game default, off, 1x ... 16x | next level | both |
 | Texture cache | `texture_cache_memory_limit_soft` + `texture_cache_memory_limit_hard` | 384 MB, 1 GB, 2 GB, 4 GB | now | both |
 | Character lighting fix | `gow2_black_shading_fix` | on, off | restart | both |
@@ -234,6 +234,8 @@ next start. Menu prompts update after a restart.
 | Your name | `user_name` | text, up to 15 characters | restart | both |
 | System Link (LAN and internet) | `net_link_active` | on, off | restart | both |
 | Co-op players | `gow2_coop_players` | 2, 3, 4, 8, 10 (8 and 10 experimental) | restart | both |
+| Friendly fire (co-op) | `gow2_friendly_fire` | on, off | now | both |
+| Go to player 1 | action | | now | both |
 | Co-op check code | info | the combined hash | now | both |
 | Join a host (name or IP) | `net_peers` | text | restart | both |
 | Host over the internet | opens the page below | | now | Windows |
@@ -286,10 +288,10 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 
 ## New settings this release
 
-`gow2_fps_cap`, `gow2_audio_volume`, `gow2_menu_language`,
-`gow2_menu_advanced`, `gow2_host_lease_hours`, `gow2_host_close_on_exit`,
-`gow2_pc_options_entry`, `bind_pc_options` (F10), `user_language`,
-`gow2_voice_language`, `gow2_show_fps`.
+0.4.2: `gow2_friendly_fire` and the "Go to player 1" action. FSR 1 softening,
+CAS sharpness and Dithering now apply at once (SDK patch 0077). Runtime list
+only: `gow2_coop_requests` (on; off keeps both features out) and, on Linux,
+`load_renderdoc` (off; see [LINUX.md](LINUX.md)).
 
 ## Host over the internet
 
@@ -304,6 +306,23 @@ scheduled `-Stop` still covers a crash. See [ONLINE.md](ONLINE.md).
 With 3 or 4 players every player must see the same code: the same build and
 the same co-op settings. With 2 players it is not used. See
 [NETWORK_PLAY.md](NETWORK_PLAY.md).
+
+## Friendly fire and Go to player 1
+
+Friendly fire works in campaign co-op only, and only while every human
+player has it on: the host counts its own setting and the vote each guest's
+game sends every few seconds, and a guest who stops voting for 15 s counts
+as off. Split-screen players on one PC share that PC's setting. Turning it on changes nothing for AI squadmates, and melee never
+targets a teammate. While it is on, a teammate's grenade or explosion can
+also knock you down, as in the original game's friendly-fire modes.
+
+"Go to player 1" moves you next to player 1 (Marcus, or the host when
+nobody plays Marcus) when you are stuck. The host refuses it while either
+of you has no live character, rides a vehicle or turret, or watches a
+cutscene, and allows it once every 10 s. Both features need 0.4.2 or later
+on the host; a guest on an older build sends no vote, so friendly fire stays
+off. How it works:
+[COOP_N_PLAYERS.md](COOP_N_PLAYERS.md#requests-and-friendly-fire).
 
 ## All runtime settings
 

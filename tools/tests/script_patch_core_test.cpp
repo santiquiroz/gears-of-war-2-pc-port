@@ -2,6 +2,7 @@
 // from the rows themselves; no game files needed. Build target gow2_script_patch_test.
 #include "gow2_script_patches.h"
 #include "gow2_script_patch_body.h"
+#include "gow2_script_patch_requests.h"
 #include "gow2_script_patch_stack.h"
 
 #include "gow2_guest.h"
@@ -1011,6 +1012,27 @@ void TestCoopBodyGroupApplies() {
          "coop-body mesh PhysicsAsset");
 }
 
+void CheckGrownGroupApplies(const PatchGroup& group, std::string_view grown) {
+  const std::string name(group.name);
+  FakeGuest guest = BuildForGroup(group);
+  GuestTables tables = guest.tables();
+  GuestAlloc alloc = [&guest](uint32_t size) { return guest.Alloc(size); };
+  GroupResult first = ApplyGroup(guest.base(), tables, group, 2, alloc);
+  Expect(first.applied, name + " applies with 2 players");
+  Expect(first.lines.size() == 1u && first.lines[0].find(grown) != std::string::npos,
+         name + " " + std::string(grown));
+  uint32_t top = guest.Top();
+  GroupResult second = ApplyGroup(guest.base(), tables, group, 2, alloc);
+  Expect(second.applied && second.lines.size() == 1u && EndsWithApplied(second.lines[0]),
+         name + " second apply is already applied");
+  Expect(guest.Top() == top, name + " second apply allocates nothing");
+}
+
+void TestCoopRequestGroupsApply() {
+  CheckGrownGroupApplies(CoopRequestsGroup(), "script grown to 82 bytes");
+  CheckGrownGroupApplies(CoopFriendlyFireGroup(), "script grown to 754 bytes");
+}
+
 void TestCoopBodyGroupSecondApplyIsAlreadyApplied() {
   PatchGroup group = CoopBodyGroup(false, false);
   FakeGuest guest = BuildForGroup(group);
@@ -1269,6 +1291,7 @@ int main() {
   TestObjectFieldLinesComeLast();
   TestCoopBodyGroupApplies();
   TestCoopBodyGroupSecondApplyIsAlreadyApplied();
+  TestCoopRequestGroupsApply();
   TestCoopBodyCarmineKeepsBenBranch();
   TestCoopBodyMarcusClonesSkipsClassRow();
   TestCoopBodySkipsOnUngrownSuggest();

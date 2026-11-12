@@ -117,8 +117,8 @@ bool ArityOk(std::string_view verb, size_t nargs) {
   if (verb == "mapchange" || verb == "mapcommit") return nargs <= 1;
   if (verb == "kill") return nargs == 1;
   if (verb == "knockdown") return nargs == 1 || nargs == 2;
-  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "damage" ||
-      verb == "specialmove")
+  if (verb == "damage") return nargs == 2 || nargs == 3;
+  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "specialmove")
     return nargs == 2;
   return nargs == 0;
 }
@@ -127,8 +127,8 @@ std::string_view ArityText(std::string_view verb) {
   if (verb == "mapchange" || verb == "mapcommit") return "0 or 1";
   if (verb == "kill") return "1";
   if (verb == "knockdown") return "1 or 2";
-  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "damage" ||
-      verb == "specialmove")
+  if (verb == "damage") return "2 or 3";
+  if (verb == "god" || verb == "call" || verb == "callpawn" || verb == "specialmove")
     return "2";
   return "0";
 }
@@ -220,6 +220,7 @@ Command ParseDamage(const std::vector<std::string>& tokens) {
   out.text = "damage";
   out.target = ParseTargetToken(tokens[1]);
   out.args.push_back(tokens[2]);
+  if (tokens.size() > 3) out.instigator = ParseTargetToken(tokens[3]);
   return out;
 }
 

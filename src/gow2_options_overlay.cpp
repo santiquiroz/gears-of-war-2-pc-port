@@ -6,6 +6,7 @@
 #include "gow2_options_actions.h"
 #include "gow2_options_input.h"
 #include "gow2_cine_hint.h"
+#include "gow2_coop_requests.h"
 #include "gow2_cine_hint_plan.h"
 #include "gow2_input_activity.h"
 #include "gow2_prompt_swap.h"
@@ -561,6 +562,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       return;
     }
     if (id == "save_dir_browse") { BrowseFolder(); return; }
+    if (id == "coop_go_to_player1") { coop_requests::RequestGoToPlayer1(); return; }
     if (id == "host_open") { StartHost(); return; }
     if (id == "host_close") options_actions::Host().Stop();
   }

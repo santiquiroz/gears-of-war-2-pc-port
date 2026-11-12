@@ -463,7 +463,7 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .id = "present_fsr_sharpness_reduction",
       .tab = Tab::kGraphics,
       .kind = Kind::kNumber,
-      .apply = Apply::kRestart,
+      .apply = Apply::kNow,
       .platforms = kAllPlatforms,
       .label_en = "FSR 1 softening",
       .label_es = "Suavizado de FSR 1",
@@ -479,7 +479,7 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .id = "present_cas_additional_sharpness",
       .tab = Tab::kGraphics,
       .kind = Kind::kNumber,
-      .apply = Apply::kRestart,
+      .apply = Apply::kNow,
       .platforms = kAllPlatforms,
       .label_en = "CAS sharpness",
       .label_es = "Nitidez de CAS",
@@ -495,7 +495,7 @@ void AddGraphicsUpscaling(std::vector<Setting>& out) {
       .id = "present_dither",
       .tab = Tab::kGraphics,
       .kind = Kind::kToggle,
-      .apply = Apply::kRestart,
+      .apply = Apply::kNow,
       .platforms = kAllPlatforms,
       .label_en = "Dithering",
       .label_es = "Tramado (dithering)",
@@ -1180,6 +1180,32 @@ void AddMultiplayer(std::vector<Setting>& out) {
       .help_es =
           "En pantalla dividida, teclado y ratón juegan como jugador 1 y el primer mando como "
           "jugador 2. Se aplica al reiniciar."});
+  out.push_back(Setting{
+      .id = "gow2_friendly_fire",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Friendly fire (co-op)",
+      .label_es = "Fuego amigo (cooperativo)",
+      .help_en =
+          "Campaign co-op: players can hurt each other only while every player has this on. AI "
+          "squadmates never take or deal friendly damage, and melee never targets a teammate.",
+      .help_es =
+          "Campaña cooperativa: los jugadores pueden herirse entre sí solo mientras todos lo tengan "
+          "activado. Los compañeros de la IA nunca reciben ni causan daño amigo, y el cuerpo a "
+          "cuerpo nunca apunta a un compañero."});
+  out.push_back(Setting{
+      .id = "coop_go_to_player1",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kAction,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .need = Need::kGameRunning,
+      .label_en = "Go to player 1",
+      .label_es = "Ir con el jugador 1",
+      .help_en = "Moves you next to player 1 if you got stuck. Campaign co-op only.",
+      .help_es = "Te lleva junto al jugador 1 si quedaste atorado. Solo en campaña cooperativa."});
   out.push_back(Setting{
       .id = "coop_check",
       .tab = Tab::kMultiplayer,

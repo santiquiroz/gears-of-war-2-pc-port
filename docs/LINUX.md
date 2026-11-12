@@ -4,6 +4,10 @@ A native x86_64 Linux build of the port: the same recompiled game code as the Wi
 SDK's Vulkan backend, with SDL for the window, controllers and audio. It runs on SteamOS (Steam Deck,
 Legion Go) and on desktop distributions with a Vulkan driver.
 
+It needs an x86-64-v3 CPU (AVX2, FMA, BMI2, MOVBE): the Steam Deck and Legion Go, Intel Core from
+2013 (Haswell) and AMD from 2015 (Excavator, every Ryzen). On an older CPU `gow2.sh` stops with a
+message instead of crashing.
+
 ## Play
 
 You need your own retail Xbox 360 copy of Gears of War 2 as an extracted game folder: one that has
@@ -56,6 +60,11 @@ storage or to a card formatted by SteamOS.
   UDP 14001 and 41000 on your router yourself (see [ONLINE.md](ONLINE.md)).
 - The game needs an audio output (PipeWire, PulseAudio or ALSA). Without one it stops at the first
   movie.
+- SteamOS ships RenderDoc, a graphics debugger. Until 0.4.2 the game loaded it on every start, which
+  showed "Capturing Vulkan" and the frame time in the top-left corner and cost some performance. Now
+  RenderDoc is only used when you start the game from RenderDoc; `load_renderdoc = true` in
+  `gow2.toml` brings the overlay back (its F12 and Print Screen keys take captures). For a frame
+  counter, turn on PC Options > Display > Frame counter, or use Steam's Performance overlay.
 
 ## Build
 
@@ -75,5 +84,6 @@ The script clones ReXGlue at the pinned commit into `out/sdk-linux-src`, applies
 `sdk/patches/*.patch`, builds the SDK's `rexglue` tool and runs codegen on `game/default.xex` when
 `generated/` does not exist yet (later builds re-run it when its inputs change), configures
 `out/linux`, builds `gow2` and writes `out/linux/package/gow2-recomp-<version>-linux-x86_64.tar.gz`. The
-binaries target `x86-64-v2` and link the system `libstdc++`, so build on a distribution no newer than
+binaries target `x86-64-v3` (since 0.4.2: the byte-swapped guest loads and stores become `movbe` and
+every PowerPC multiply-add an inline FMA) and link the system `libstdc++`, so build on a distribution no newer than
 the one you run on (Ubuntu 24.04 builds run on current SteamOS).

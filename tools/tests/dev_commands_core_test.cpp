@@ -309,6 +309,16 @@ void TestParseHostVerbs() {
   Check(damage.target.kind == TargetKind::kLocal, "!damage targets local");
   Check(damage.args.size() == 1 && damage.args[0] == "2000", "!damage keeps the amount");
   Check(ParseCommandLine("!damage local").kind == CommandKind::kError, "!damage needs an amount");
+  Check(!damage.instigator.has_value(), "!damage without a third argument has no instigator");
+  const Command from = ParseCommandLine("!damage #1 50 #3");
+  Check(from.kind == CommandKind::kHostVerb && from.target.kind == TargetKind::kIndex &&
+            from.target.index == 1,
+        "!damage with an instigator still targets #1");
+  Check(from.instigator.has_value() && from.instigator->kind == TargetKind::kIndex &&
+            from.instigator->index == 3,
+        "!damage keeps the instigator #3");
+  Check(ParseCommandLine("!damage #1 50 #3 #4").kind == CommandKind::kError,
+        "!damage takes at most 3 arguments");
   Check(ParseCommandLine("!damage local 0").kind == CommandKind::kError, "!damage rejects 0");
   Check(ParseCommandLine("!damage local -5").kind == CommandKind::kError, "!damage rejects -5");
   Check(ParseCommandLine("!damage local 1000000").kind == CommandKind::kError,

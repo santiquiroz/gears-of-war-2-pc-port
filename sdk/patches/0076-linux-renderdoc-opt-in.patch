@@ -1,0 +1,57 @@
+diff --git a/src/ui/renderdoc_api.cpp b/src/ui/renderdoc_api.cpp
+index e1a5287..456f913 100644
+--- a/src/ui/renderdoc_api.cpp
++++ b/src/ui/renderdoc_api.cpp
+@@ -9,12 +9,43 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <rex/cvar.h>
+ #include <rex/logging.h>
+ #include <rex/ui/renderdoc_api.h>
+ 
++#if REX_PLATFORM_LINUX && !REX_PLATFORM_ANDROID
++#include <dlfcn.h>
++
++// SteamOS ships librenderdoc.so, so loading it by name put RenderDoc's capture layer, its overlay
++// and GPU debug markers into every run.
++REXCVAR_DEFINE_BOOL(load_renderdoc, false, "GPU",
++                    "Load RenderDoc whenever it is installed, not only when the game was started "
++                    "from RenderDoc. Shows RenderDoc's overlay (frame time, F12 to capture) and "
++                    "costs some performance.");
++#endif
++
+ namespace rex {
+ namespace ui {
+ 
++namespace {
++
++bool LoadRenderDocLibrary(platform::DynamicLibrary& library) {
++#if REX_PLATFORM_LINUX && !REX_PLATFORM_ANDROID
++  if (!REXCVAR_GET(load_renderdoc)) {
++    // RTLD_NOLOAD only finds a RenderDoc that is already in the process (started from RenderDoc).
++    void* handle = dlopen(platform::lib_names::kRenderDoc, RTLD_NOW | RTLD_NOLOAD);
++    if (!handle) {
++      return false;
++    }
++    library.Adopt(handle);
++    return true;
++  }
++#endif
++  return library.Load(platform::lib_names::kRenderDoc);
++}
++
++}  // namespace
++
+ std::unique_ptr<RenderDocAPI> RenderDocAPI::CreateIfConnected() {
+ #if REX_PLATFORM_MAC
+   // The vendored RenderDoc app API header doesn't expose a macOS path.
+@@ -28,7 +59,7 @@ std::unique_ptr<RenderDocAPI> RenderDocAPI::CreateIfConnected() {
+   // Try to load the RenderDoc library. If RenderDoc is attached, the library
+   // should already be loaded into the process and this will increment the
+   // reference count. If not attached, the load will fail and we return nullptr.
+-  if (!renderdoc_api->library_.Load(platform::lib_names::kRenderDoc)) {
++  if (!LoadRenderDocLibrary(renderdoc_api->library_)) {
+     return nullptr;
+   }
+   get_api = renderdoc_api->library_.GetSymbol<pRENDERDOC_GetAPI>("RENDERDOC_GetAPI");

@@ -1,0 +1,51 @@
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+index 901aea7..50de0a5 100644
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -312,6 +312,19 @@ GuestOutputPaintConfig BuildGuestOutputPaintConfigFromCVar() {
+   return config;
+ }
+ 
++// The sharpness and dither only change shader constants, so they follow their cvars at runtime; a
++// different effect needs a restart (effects present_effect cannot reach are never compiled).
++constexpr std::string_view kLivePaintCvars[] = {"present_cas_additional_sharpness",
++                                                "present_fsr_sharpness_reduction", "present_dither"};
++
++void ApplyLivePaintCvars(GuestOutputPaintConfig& config) {
++#if defined(REX_HAS_FIDELITYFX_SDK)
++  config.SetCasAdditionalSharpness(float(REXCVAR_GET(present_cas_additional_sharpness)));
++  config.SetFsrSharpnessReduction(float(REXCVAR_GET(present_fsr_sharpness_reduction)));
++#endif
++  config.SetDither(REXCVAR_GET(present_dither));
++}
++
+ }  // namespace
+ 
+ namespace rex {
+@@ -327,6 +340,8 @@ Presenter::~Presenter() {
+   // it if needed.
+   assert_false(is_executing_ui_drawers_);
+ 
++  for (std::string_view name : kLivePaintCvars) rex::cvar::UnregisterChangeCallbacks(name);
++
+ #if REX_PLATFORM_WIN32
+   if (dxgi_ui_tick_thread_.joinable()) {
+     {
+@@ -836,6 +851,17 @@ bool Presenter::InitializeCommonSurfaceIndependent() {
+     std::lock_guard<std::mutex> config_lock(guest_output_paint_config_mutex_);
+     guest_output_paint_config_ = BuildGuestOutputPaintConfigFromCVar();
+   }
++  for (std::string_view name : kLivePaintCvars) {
++    rex::cvar::RegisterChangeCallback(name, [this](std::string_view, std::string_view) {
++      Window* window = window_;
++      if (!window) return;
++      window->app_context().CallInUIThread([this] {
++        GuestOutputPaintConfig config = guest_output_paint_config_;
++        ApplyLivePaintCvars(config);
++        SetGuestOutputPaintConfigFromUIThread(config);
++      });
++    });
++  }
+ 
+   // Initialize UI frame rate limiting.
+ #if REX_PLATFORM_WIN32

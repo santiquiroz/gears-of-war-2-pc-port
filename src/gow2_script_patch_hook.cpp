@@ -10,6 +10,7 @@
 #include "gow2_script_patch_body.h"
 #include "gow2_coop_census.h"
 #include "gow2_coop_network.h"
+#include "gow2_script_patch_requests.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -63,6 +64,10 @@ REXCVAR_DEFINE_BOOL(gow2_coop_body, true, "Coop",
                     "Players 3+ get Dom's body on GearPawn_COGGear, the pistol and Gnasher at every "
                     "spawn, and spawn without Right Trigger (rows CB-1 to CB-5); off keeps the "
                     "Stage 1 behaviour");
+REXCVAR_DEFINE_BOOL(gow2_coop_requests, true, "Coop",
+                    "Campaign hosts read the co-op requests guests send (friendly fire vote, Go to "
+                    "player 1) and apply friendly fire when every player opts in (rows RQ-1 and "
+                    "FF-1); off keeps ServerMutate and ReduceDamage retail");
 
 namespace rex::glue {
 
@@ -89,6 +94,8 @@ constexpr int kLastCoopCount = 255;
 // Written once by the startup hook below; read by CoopStage1Applied() and CoopStackHash().
 std::atomic<bool> g_coop_stage1_applied{false};
 std::atomic<uint64_t> g_coop_stack_hash{0};
+std::atomic<bool> g_coop_requests_applied{false};
+std::atomic<bool> g_coop_ff_applied{false};
 
 uint32_t GuestMalloc(PPCContext& ctx, uint8_t* base, uint32_t size) {
   rex::Runtime* runtime = rex::Runtime::instance();
@@ -274,10 +281,27 @@ void PublishCoopHashToSystemLink(uint64_t combined) {
               "Link does not compare co-op hashes");
 }
 
+// Host-only rows that change nothing on the wire, so they stay out of the System Link hash.
+void ApplyRequestGroups(const script_patch::GuestAlloc& alloc, uint8_t* base, int players) {
+  if (!REXCVAR_GET(gow2_coop_requests)) {
+    REXLOG_INFO("SCRIPTPATCH coop-requests: off (gow2_coop_requests=false)");
+    return;
+  }
+  std::vector<script_patch::StackEntry> unused;
+  const GroupResult requests = ApplyAndLogGroup(base, script_patch::CoopRequestsGroup(), players,
+                                                alloc, "guests cannot send requests", unused);
+  const GroupResult ff = ApplyAndLogGroup(base, script_patch::CoopFriendlyFireGroup(), players,
+                                          alloc, "friendly fire stays retail", unused);
+  g_coop_requests_applied.store(requests.applied, std::memory_order_release);
+  g_coop_ff_applied.store(ff.applied, std::memory_order_release);
+}
+
 void ApplyStartupScriptPatches(PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("SCRIPTPATCH startup script packages loaded");
   StartCoopCensus(base);
   const int players = REXCVAR_GET(gow2_coop_players);
+  ApplyRequestGroups([&ctx, base](uint32_t size) { return GuestMalloc(ctx, base, size); }, base,
+                     players);
   if (players < kFirstCoopCount || players > kLastCoopCount) {
     REXLOG_INFO("SCRIPTPATCH coop: off (gow2_coop_players={})", players);
     return;
@@ -307,6 +331,8 @@ namespace script_patch {
 
 bool CoopStage1Applied() { return g_coop_stage1_applied.load(std::memory_order_acquire); }
 uint64_t CoopStackHash() { return g_coop_stack_hash.load(std::memory_order_acquire); }
+bool CoopRequestsApplied() { return g_coop_requests_applied.load(std::memory_order_acquire); }
+bool CoopFriendlyFireApplied() { return g_coop_ff_applied.load(std::memory_order_acquire); }
 
 }  // namespace script_patch
 

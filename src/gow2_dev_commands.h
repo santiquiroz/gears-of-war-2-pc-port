@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,6 +28,7 @@ struct Command {
   Target target;
   std::string text;
   std::vector<std::string> args;
+  std::optional<Target> instigator;  // !damage <target> <amount> <from>
 };
 
 Command ParseCommandLine(std::string_view line);

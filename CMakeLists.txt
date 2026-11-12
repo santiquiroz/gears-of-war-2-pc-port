@@ -35,12 +35,16 @@ set(GOW2_SOURCES
     src/gow2_script_patch_table.cpp
     src/gow2_script_patch_survival.cpp
     src/gow2_script_patch_body_table.cpp
+    src/gow2_script_patch_requests_table.cpp
     src/gow2_script_patch_hook.cpp
     src/gow2_script_patch_stack.cpp
     src/gow2_coop_census.cpp
     src/gow2_coop_scenes.cpp
     src/gow2_coop_leash_plan.cpp
     src/gow2_coop_leash.cpp
+    src/gow2_coop_pull.cpp
+    src/gow2_coop_requests_plan.cpp
+    src/gow2_coop_requests.cpp
     src/gow2_cine_hint_plan.cpp
     src/gow2_cine_hint.cpp
     src/gow2_test_input.cpp
@@ -119,7 +123,7 @@ if(GOW2_NATIVE_PROBE)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.4.1" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.4.2" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the
@@ -130,6 +134,7 @@ add_executable(gow2_script_patch_test EXCLUDE_FROM_ALL
     src/gow2_script_patches.cpp
     src/gow2_script_patch_table.cpp
     src/gow2_script_patch_body_table.cpp
+    src/gow2_script_patch_requests_table.cpp
 )
 target_include_directories(gow2_script_patch_test PRIVATE src)
 
@@ -173,6 +178,13 @@ add_executable(gow2_coop_leash_test EXCLUDE_FROM_ALL
     src/gow2_coop_leash_plan.cpp
 )
 target_include_directories(gow2_coop_leash_test PRIVATE src)
+
+# Host-side test of the co-op request rules: friendly-fire vote and Go to player 1 (pure).
+add_executable(gow2_coop_requests_test EXCLUDE_FROM_ALL
+    tools/tests/coop_requests_test.cpp
+    src/gow2_coop_requests_plan.cpp
+)
+target_include_directories(gow2_coop_requests_test PRIVATE src)
 
 add_executable(gow2_cine_hint_test EXCLUDE_FROM_ALL
     tools/tests/cine_hint_test.cpp

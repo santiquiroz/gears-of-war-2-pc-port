@@ -1411,6 +1411,46 @@ Deliberately not in Stage 1:
 - `MaxDynamicBandwidth` (Stage 3).
 - Any change to `PostLogin`.
 
+## Requests and friendly fire
+
+Two groups that apply with any player count, 2 included, each one fail-closed on its own and
+outside the System Link hash: they change only what the host does, nothing on the wire. Both are
+on with `gow2_coop_requests` (default on). The rows are `src/gow2_script_patch_requests_table.cpp`,
+printed and checked against the retail packages by `tools/script_patch_requests.py` (`--check
+<pkgdir>`, `--cpp --write`).
+
+| Group | Row | Target (ScriptSize) | Change | Checks |
+|---|---|---|---|---|
+| coop-requests | RQ-1 | `Engine.PlayerController.ServerMutate` (67 -> 82) | +0x02: the server branch jumps to a 15-byte tail that stores `LastBroadcastString[0] = MutateString` (`0F 1A 25 01 [LastBroadcastString] 00 [MutateString] 04 0B 53`) instead of calling `WorldInfo.Game.Mutate`, which only forwards to mutators and the campaign has none. | Context at +0x00, +0x03, +0x0C, +0x15, +0x1A, +0x1C, +0x23, +0x2C, +0x39, +0x3E, +0x42; operands `WorldInfo`, `NetMode`, `Game`, `MutateString`. |
+| coop-ff | FF-1 | `GearGame.GearGame.ReduceDamage` (602 -> 754) | +0x10 jumps to a tail that, when `bAllowFriendlyFire` is on outside a `GearGameMP_Base` and the hit is not human-to-human (`injured.IsHumanControlled()` and `PlayerController(InstigatedBy)`), clears the flag and marks `Idx = 1`; +0x1D9 jumps to a second tail that restores the flag when `Idx == 1`. Every path of the function passes +0x1D9. | Context at the jump sites and +0x1DA; operands `injured`, `GDT`, `GearDamageType`, `DamageType`, `bAllowFriendlyFire`, `Damage`, `Idx`. |
+
+The port code is `src/gow2_coop_requests.cpp` (engine tick, every 250 ms), with the rules in
+`src/gow2_coop_requests_plan.cpp` (tested by `gow2_coop_requests_test`):
+
+- A guest's game sends `mutate gow2 ff <0|1>` from each local GearPC when `gow2_friendly_fire`
+  changes and every 5 s, and `mutate gow2 tp` for "Go to player 1". `Mutate` is an exec function
+  that calls the reliable server RPC `ServerMutate`, so RQ-1 leaves the text in the guest's
+  PlayerController on the host.
+- The host reads `LastBroadcastString[0]` (PC +1308) of every GearPC and empties it only when it
+  holds one of the three requests, so chat keeps working.
+- Friendly fire is active when the game is a `GearGameSP_Base`, at least two humans play, and every
+  human's vote is on: local players use the host's setting, a guest's vote older than 15 s counts as
+  off. The host writes `GearGame.bAllowFriendlyFire` (GameInfo +972, mask 0x80000000, read-modify-
+  write: `bInCoopSplit` shares the word) and clears only a bit it set itself. `GearGRI.
+  bAllowFriendlyFire` is never touched, so melee, arrows and down-but-not-out rules stay retail.
+  While it is on, `GearExplosionActor` knocks teammates down and a stuck grenade can go off near a
+  teammate (`GearProj_Grenade.CheckAutoExplosion`), as in the original friendly-fire modes.
+- Go to player 1: player 1 is the GearPC whose `DefaultPawnClass` is `GearPawn_COGMarcus`, else the
+  host's first local player. The host refuses (`COOPTP rejected <name>: <reason>`) unless it is a
+  campaign host, the requester is not player 1, both have a live pawn, neither rides a vehicle or
+  turret or is in a cinematic, and 10 s passed since the requester's last move. Then it uses the
+  leash machinery (`src/gow2_coop_pull.cpp`): `GearPC.FindAvailableTeleportSpot`, else the 8
+  fallback spots around player 1 with `SetLocation` and `ClientSetLocation`.
+
+Log lines: `SCRIPTPATCH coop-requests ...`, `SCRIPTPATCH coop-ff ...`, `COOPFF active|inactive
+(n/m opted in)`, `COOPTP <name> -> player 1 (spot|fallback)`, `COOPTP rejected <name>: <reason>`,
+and on a guest `COOPTP asked the host to move N local player(s) next to player 1`.
+
 ## 5. Open questions
 
 Settled from code while writing patch 0010:

@@ -238,7 +238,7 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kGraphics) == 54, "graphics has 54 rows including frame generation, keep original menus, the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
-  Expect(CountTab(options::Tab::kMultiplayer) == 12, "multiplayer has 12 rows");
+  Expect(CountTab(options::Tab::kMultiplayer) == 14, "multiplayer has 14 rows including friendly fire and Go to player 1");
   Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
   Expect(CountTab(options::Tab::kSystem) == 19, "system has 19 rows including skip intro videos, the skip hint, show options at start and F12 screenshots");
@@ -472,18 +472,31 @@ void TestTexturePackBuilderRows() {
 }
 
 void TestLauncherAudit() {
-  const std::unordered_set<std::string_view> expected{"coop_check", "host_online", "host_status",
-                                                      "host_open", "host_close", "runtime_settings"};
+  const std::unordered_set<std::string_view> expected{"coop_check", "coop_go_to_player1",
+                                                      "host_online", "host_status", "host_open",
+                                                      "host_close", "runtime_settings"};
   std::unordered_set<std::string_view> found;
   for (const auto& setting : options::Catalog()) {
     if (setting.need == options::Need::kGameRunning) found.insert(setting.id);
   }
-  Expect(found == expected, "only the co-op check, host page entries and runtime settings need the game");
+  Expect(found == expected,
+         "only the co-op check, Go to player 1, host page entries and runtime settings need the game");
   for (const char* id : {"keybindings", "pad_buttons", "user_name", "local_users", "save_dir_browse",
                          "save_open", "restart_game", "quit_game"}) {
     const auto* row = options::FindSetting(id);
     Expect(row && row->need == options::Need::kNothing, std::string("works in the launcher: ") + id);
   }
+}
+
+void TestCoopRequestRows() {
+  const auto* ff = options::FindSetting("gow2_friendly_fire");
+  Expect(ff && ff->tab == options::Tab::kMultiplayer && ff->kind == options::Kind::kToggle &&
+             ff->apply == options::Apply::kNow && ff->platforms == options::kAllPlatforms,
+         "friendly fire is an apply-now Multiplayer toggle on every platform");
+  const auto* tp = options::FindSetting("coop_go_to_player1");
+  Expect(tp && tp->tab == options::Tab::kMultiplayer && tp->kind == options::Kind::kAction &&
+             tp->platforms == options::kAllPlatforms,
+         "Go to player 1 is a Multiplayer action on every platform");
 }
 
 void TestLetterboxRow() {
@@ -552,6 +565,7 @@ int main() {
     TestGpuBackendRow();
     TestFrameGenerationRow();
     TestSkipIntroRow();
+    TestCoopRequestRows();
     TestLetterboxRow();
     TestFrameCounterRow();
     TestLauncherRow();

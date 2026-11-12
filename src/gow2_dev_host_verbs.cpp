@@ -366,10 +366,23 @@ VerbResult KnockdownVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
 // 4 + 4 + 12 + 12 + 4 + 28 (TraceHitInfo) + 4 bytes; all but Damage stay zero / None.
 constexpr size_t kTakeDamageParmsBytes = 68;
 
+// The optional instigator is the first controller the third argument names (friendly fire tests).
+std::optional<uint32_t> DamageInstigator(uint8_t* base, uint32_t engine,
+                                         const dev_commands::Command& command) {
+  if (!command.instigator.has_value()) return 0u;
+  const std::optional<std::vector<uint32_t>> found =
+      GuardedTargets(base, engine, GuardedWorldInfo(base), *command.instigator);
+  if (!found.has_value() || found->empty()) return std::nullopt;
+  return found->front();
+}
+
 VerbResult DamageVerb(const PPCContext& ctx, uint8_t* base, uint32_t engine,
                       const dev_commands::Command& command) {
+  const std::optional<uint32_t> instigator = DamageInstigator(base, engine, command);
+  if (!instigator.has_value()) return Fail("instigator: " + NoTargetText(*command.instigator));
   std::vector<uint8_t> parms;
   AppendU32Be(uint32_t(std::stoul(command.args[0])), &parms);
+  AppendU32Be(*instigator, &parms);
   parms.resize(kTakeDamageParmsBytes, 0);
   return PawnEventVerb(ctx, base, engine, command, "TakeDamage", parms,
                        "damaged (" + command.args[0] + ")");

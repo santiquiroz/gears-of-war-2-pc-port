@@ -73,8 +73,8 @@ prepare_sdk() {
 common_cmake_args() {
   echo -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
-    -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2 \
-    -DCMAKE_LINKER_TYPE=LLD
+    -DCMAKE_C_FLAGS=-march=x86-64-v3 -DCMAKE_CXX_FLAGS=-march=x86-64-v3 \
+    -DCMAKE_LINKER_TYPE=LLD -DREXGLUE_ENABLE_TRACY=OFF
 }
 
 # CMakeLists.txt includes generated/rexglue.cmake, which codegen writes: a fresh checkout builds the
@@ -96,8 +96,9 @@ first_codegen() {
 
 configure_and_build() {
   step "Configuring $build with $CXX"
+  # GOW2_VERSION is a cache entry: pass it, or a configured tree keeps the old version.
   # shellcheck disable=SC2046
-  cmake -S "$root" -B "$build" $(common_cmake_args) -DREXSDK_DIR="$sdk"
+  cmake -S "$root" -B "$build" $(common_cmake_args) -DREXSDK_DIR="$sdk" -DGOW2_VERSION="$(game_version)"
   step "Building gow2 (codegen runs first when generated/ is missing or stale)"
   cmake --build "$build" --target gow2
 }
