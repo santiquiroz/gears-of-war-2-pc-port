@@ -65,6 +65,10 @@ storage or to a card formatted by SteamOS.
   RenderDoc is only used when you start the game from RenderDoc; `load_renderdoc = true` in
   `gow2.toml` brings the overlay back (its F12 and Print Screen keys take captures). For a frame
   counter, turn on PC Options > Display > Frame counter, or use Steam's Performance overlay.
+- Up to 0.4.2, when the game crashed or was closed by force (Steam's Exit Game, `kill -9`), it left
+  its memory behind in RAM as a `xenia_memory_*` file in `/dev/shm`, several hundred MB each, until
+  a reboot. Now the system frees it however the game ends (SDK patch 0084). With an older version,
+  reboot, or run `rm /dev/shm/xenia_memory_*` while the game is not running.
 
 ## Build
 
@@ -87,3 +91,9 @@ The script clones ReXGlue at the pinned commit into `out/sdk-linux-src`, applies
 binaries target `x86-64-v3` (since 0.4.2: the byte-swapped guest loads and stores become `movbe` and
 every PowerPC multiply-add an inline FMA) and link the system `libstdc++`, so build on a distribution no newer than
 the one you run on (Ubuntu 24.04 builds run on current SteamOS).
+
+The script links with lld (`-fuse-ld=lld` in the linker flags; `CMAKE_LINKER_TYPE` needs CMake 3.29 and
+3.28 ignores it). With lld the SDK's shared libraries call their own functions directly instead of
+through their PLT (`-Wl,-Bsymbolic-non-weak-functions`, SDK patch 0083); with GNU ld they still build,
+without that. The SDK and the game use the small code model, like every other target (SDK patch
+0081).

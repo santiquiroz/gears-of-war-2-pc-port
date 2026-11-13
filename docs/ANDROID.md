@@ -20,6 +20,10 @@ Light environment shadows caused the white lamp objects and hanging banner; the 
 Android default `LightEnvironmentShadows=0` removes them while keeping the world's dynamic shadows.
 The cause in the Vulkan backend or driver remains open. Still open on Android: keyboard/mouse
 hot-plug not tested on a phone; checkpoints saved by very old builds can crash on load.
+Since 0.4.3 the game survives leaving the screen and coming back (Home, another app, the screen
+turning off; SDK patch 0085). Up to 0.3.18 the return crashed in `vkCreateAndroidSurfaceKHR`, with a
+window Android had already freed. The game keeps running while it is off screen (only the picture
+and SDL's audio stop), so pause it before you leave.
 Target device for bring-up: Samsung Galaxy S25 Ultra
 (Snapdragon 8 Elite, Adreno 830, Vulkan 1.3). Controls:
 [`android/README.md`](../android/README.md#controls). [`ANDROID_EXPERIMENTS.md`](ANDROID_EXPERIMENTS.md)
@@ -242,8 +246,23 @@ below 24 fps; the panel request must then be 60 Hz. The guest vblank is a fixed 
 host presents never reach game timing and remain cross-play safe. This is not worth starting
 until the sustained base rate is near 28 fps; warm measurements are around 37 fps (v0.3.1, 38 °C).
 
-The codegen options `skip_msr` (plan C5) and register-as-local (C10) also change the PC build and
-need a PC/System Link regression.
+The codegen option `skip_msr` (plan C5) also changes the PC build and needs a PC/System Link
+regression. Register-as-local (C10) is on since 0.4.3: the manifest's six `*_as_local` options,
+with `tools/localize_fix.py` run on the Android copy too (`tools/prepare_android_sources.py`). On
+the phone it cut the main guest thread's instructions a frame by a third and its cycles by a fifth,
+as on Linux; the GPU work is the same, so the frame rate still follows the GPU clock
+([PERFORMANCE.md](PERFORMANCE.md), section 2). Still to do: a System Link game between a build with
+it and one without.
+
+SDK patches 0078-0083 (0.4.3): 0078-0080 stop the waiting threads from waking every 1 ms; on the
+phone the audio worker went from about three quarters of a core to under 1 %. 0082 keeps a draw's
+texture descriptor set when nothing in it changed (on by default only on Android): the phone keeps
+53 % of them in chapter 2 (`GPUSTATS` lines end the texture section with
+`texture_sets <written> kept <kept>`); an ABAB from a cool start with
+`vulkan_reuse_texture_descriptors` on and off would give its cost per frame. 0083 removes the PLT
+jump from calls inside `librexruntime.so` and `librexgpu-xenos.so`. The biggest CPU waste left is
+the game's render thread, which spins about a whole core while it waits for the GPU command thread
+([PERFORMANCE.md](PERFORMANCE.md), section 5 #19).
 
 ## Biggest unknowns
 
