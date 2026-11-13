@@ -9,6 +9,15 @@ game_root = "game"
 file_path = "game/default.xex"
 out_directory_path = "generated/default"
 includes = ["hints/harvested.toml", "hints/runtime.toml"]  # tools/harvest_hints.py output, scripts/run-harvest-loop.sh output
+# Guest registers as C++ locals instead of fields of ctx, so the compiler keeps them in host
+# registers. Guest code shares some across calls; tools/localize_fix.py (a build step after the
+# game patches) puts those back through ctx. See docs/PERFORMANCE.md.
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = true
+non_volatile_as_local = true
 
 # Function entry hints: addresses automatic function discovery misses.
 [entrypoint.functions]

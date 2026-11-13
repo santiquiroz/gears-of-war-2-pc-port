@@ -100,4 +100,4 @@ def test_failing_patcher_leaves_destination_alone(tmp_path):
 
 def test_real_patchers_run_in_order():
     names = [Path(command[1]).name for command in pas.patcher_commands(Path("staging"))]
-    assert names == ["patch_switch_traps.py", "patch_game_patches.py", "patch_memory_barriers.py", "patch_spin_hints.py"]
+    assert names == ["patch_switch_traps.py", "patch_game_patches.py", "localize_fix.py", "patch_memory_barriers.py", "patch_spin_hints.py"]

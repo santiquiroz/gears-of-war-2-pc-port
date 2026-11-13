@@ -1,0 +1,131 @@
+diff --git a/include/rex/ui/surface_android.h b/include/rex/ui/surface_android.h
+index 120ace9..a581191 100644
+--- a/include/rex/ui/surface_android.h
++++ b/include/rex/ui/surface_android.h
+@@ -13,6 +13,7 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <memory>
+ 
+ #include <rex/platform.h>
+ #include <rex/ui/surface.h>
+@@ -25,12 +26,17 @@ struct SDL_Window;
+ namespace rex {
+ namespace ui {
+ 
+-// Presentation surface wrapping the ANativeWindow owned by the SDL3 window.
+-// The native window lifetime is managed by SDL; this surface only borrows it.
++// Presentation surface wrapping the ANativeWindow of the SDL3 window. Android destroys that
++// window whenever the app leaves the screen, and SDL drops its reference on the Java thread
++// right then, so this surface holds a reference of its own: the pointer stays valid for as
++// long as the presenter can still reach it.
+ class AndroidNativeWindowSurface final : public Surface {
+  public:
+-  explicit AndroidNativeWindowSurface(ANativeWindow* window, SDL_Window* sdl_window)
+-      : window_(window), sdl_window_(sdl_window) {}
++  // Null while Android has no surface for the window (the app is in the background).
++  static std::unique_ptr<AndroidNativeWindowSurface> Create(SDL_Window* sdl_window);
++  ~AndroidNativeWindowSurface() override;
++  AndroidNativeWindowSurface(const AndroidNativeWindowSurface&) = delete;
++  AndroidNativeWindowSurface& operator=(const AndroidNativeWindowSurface&) = delete;
+   TypeIndex GetType() const override { return kTypeIndex_AndroidNativeWindow; }
+   ANativeWindow* window() const { return window_; }
+ 
+@@ -38,6 +44,9 @@ class AndroidNativeWindowSurface final : public Surface {
+   bool GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const override;
+ 
+  private:
++  AndroidNativeWindowSurface(ANativeWindow* acquired_window, SDL_Window* sdl_window)
++      : window_(acquired_window), sdl_window_(sdl_window) {}
++
+   ANativeWindow* window_;
+   SDL_Window* sdl_window_;
+ };
+diff --git a/src/ui/surface_android.cpp b/src/ui/surface_android.cpp
+index 5cfd233..87445b4 100644
+--- a/src/ui/surface_android.cpp
++++ b/src/ui/surface_android.cpp
+@@ -14,6 +14,8 @@
+ 
+ #if REX_PLATFORM_ANDROID
+ 
++#include <android/native_window.h>
++
+ #include <SDL3/SDL.h>
+ 
+ #include <rex/ui/surface_android.h>
+@@ -21,6 +23,34 @@
+ namespace rex {
+ namespace ui {
+ 
++std::unique_ptr<AndroidNativeWindowSurface> AndroidNativeWindowSurface::Create(
++    SDL_Window* sdl_window) {
++  if (!sdl_window) {
++    return nullptr;
++  }
++  // SDL clears the property under this lock before it releases the window on the Java thread,
++  // so a pointer read under the lock is still alive while the reference is taken.
++  SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window);
++  if (!props || !SDL_LockProperties(props)) {
++    return nullptr;
++  }
++  auto* window = static_cast<ANativeWindow*>(
++      SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
++  if (window) {
++    ANativeWindow_acquire(window);
++  }
++  SDL_UnlockProperties(props);
++  if (!window) {
++    return nullptr;
++  }
++  return std::unique_ptr<AndroidNativeWindowSurface>(
++      new AndroidNativeWindowSurface(window, sdl_window));
++}
++
++AndroidNativeWindowSurface::~AndroidNativeWindowSurface() {
++  ANativeWindow_release(window_);
++}
++
+ bool AndroidNativeWindowSurface::GetSizeImpl(uint32_t& width_out,
+                                              uint32_t& height_out) const {
+   int w = 0, h = 0;
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 24549f8..98c99ca 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -485,13 +485,8 @@ std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl(Surface::TypeFlags allowed
+     }
+   }
+ #elif REX_PLATFORM_ANDROID
+-  SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
+   if (allowed_types & Surface::kTypeFlag_AndroidNativeWindow) {
+-    auto* native_window = static_cast<struct ANativeWindow*>(
+-        SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
+-    if (native_window) {
+-      return std::make_unique<AndroidNativeWindowSurface>(native_window, sdl_window_);
+-    }
++    return AndroidNativeWindowSurface::Create(sdl_window_);
+   }
+ #else
+   SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
+@@ -579,9 +574,19 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
+       OnPaint(true);
+       break;
+     case SDL_EVENT_WINDOW_MINIMIZED:
++#if REX_PLATFORM_ANDROID
++      // SDL minimizes the window when the app leaves the screen, which is when Android destroys
++      // the window's surface. SDL's event pump blocks while the app is away, so this usually
++      // runs on the way back: the surface's own reference keeps the old window valid until now.
++      OnSurfaceChanged(false);
++#endif
+       OnMinimized(destruction_receiver);
+       break;
+     case SDL_EVENT_WINDOW_RESTORED:
++#if REX_PLATFORM_ANDROID
++      // Back on screen: connect the presenter to the window Android made for the return.
++      OnSurfaceChanged(true);
++#endif
+       OnRestored(destruction_receiver);
+       break;
+     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:

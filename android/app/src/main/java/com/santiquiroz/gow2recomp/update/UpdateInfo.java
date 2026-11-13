@@ -48,6 +48,15 @@ public final class UpdateInfo {
     }
 
     /**
+     * True when this release is newer than {@code currentVersion} and carries an APK. Releases
+     * for other platforms only are not updates for the phone.
+     */
+    public boolean isUpdateFor(String currentVersion) {
+        return apkUrl != null && !apkUrl.isEmpty()
+                && VersionCompare.isNewerThan(tag, currentVersion);
+    }
+
+    /**
      * Parses one GitHub release body. Returns null for drafts, prereleases and malformed
      * bodies, so callers keep the last known result silently.
      */

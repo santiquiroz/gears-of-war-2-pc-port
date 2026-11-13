@@ -167,6 +167,25 @@ SITES = [
 ]
 
 INSN = re.compile(r"^\s*// [a-z]")
+LOCALIZE_MARK = "// LOCALIZE_FIX"
+LOCAL_DECL = re.compile(r"^\s*PPC\w*Register (\w+)\{\};")
+
+
+# Codegen's *_as_local options turn some registers into C++ locals declared at the top of the
+# function (`PPCCRRegister cr6{};`): the SITES text names them `ctx.cr6`, the source `cr6`.
+def function_locals(lines: list[str], start: int) -> set[str]:
+    names = set()
+    for line in lines[start + 1:]:
+        m = LOCAL_DECL.match(line)
+        if m:
+            names.add(m.group(1))
+        elif INSN.match(line):
+            break
+    return names
+
+
+def localize(text: str, names: set[str]) -> str:
+    return re.sub(r"\bctx\.(\w+)", lambda m: m.group(1) if m.group(1) in names else m.group(0), text)
 
 
 def marked_line(existing: str, new: str, pid: int) -> str:
@@ -179,6 +198,15 @@ def rewrite_marked_line(existing: str, new: str, pid: int) -> str | None:
     if existing.strip() == f"{new}  // {MARK} {pid}":
         return None
     return marked_line(existing, new, pid)
+
+
+# localize_fix.py runs after this pass and copies registers through ctx around calls: on a rerun
+# over its output the patched line can sit below those copies.
+def next_patchable(lines: list[str], j: int) -> int:
+    k = j + 1
+    while LOCALIZE_MARK in lines[k]:
+        k += 1
+    return k
 
 
 def main(argv: list[str]) -> int:
@@ -209,6 +237,9 @@ def main(argv: list[str]) -> int:
         for addr, fstart, want, body, new, pid in sites:
             start = next(i for i, l in enumerate(lines)
                          if l.startswith(f"DEFINE_REX_FUNC(sub_{fstart:08X})"))
+            names = function_locals(lines, start)
+            body = [localize(b, names) for b in body]
+            new = localize(new, names)
             k = (addr - fstart) // 4
             seen = -1
             for j in range(start + 1, len(lines)):
@@ -219,11 +250,12 @@ def main(argv: list[str]) -> int:
                     if seen == k:
                         break
             comment = lines[j].strip()
-            if MARK in lines[j + 1]:
-                replacement = rewrite_marked_line(lines[j + 1], new, pid)
+            m = next_patchable(lines, j)
+            if MARK in lines[m]:
+                replacement = rewrite_marked_line(lines[m], new, pid)
                 if replacement is None:
                     continue
-                lines[j + 1] = replacement
+                lines[m] = replacement
                 changed = True
                 total += 1
                 continue

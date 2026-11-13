@@ -1,0 +1,30 @@
+diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
+index 9fc1470..a299db6 100644
+--- a/src/core/memory_posix.cpp
++++ b/src/core/memory_posix.cpp
+@@ -487,9 +487,11 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
+   if (ret < 0) {
+     return kFileMappingHandleInvalid;
+   }
++  // Drop the name at once: the fd keeps the object alive, and a crash or SIGKILL can no longer
++  // leave the touched guest memory pinned in /dev/shm until reboot.
++  shm_unlink(full_path.c_str());
+   if (rex_ftruncate64(ret, static_cast<off_t>(length)) != 0) {
+     close(ret);
+-    shm_unlink(full_path.c_str());
+     return kFileMappingHandleInvalid;
+   }
+   return static_cast<FileMappingHandle>(ret);
+@@ -497,11 +499,8 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
+ }
+ 
+ void CloseFileMappingHandle(FileMappingHandle handle, const std::filesystem::path& path) {
++  (void)path;
+   close(static_cast<int>(handle));
+-#if !REX_PLATFORM_ANDROID
+-  auto full_path = MakeShmName(path);
+-  shm_unlink(full_path.c_str());
+-#endif
+ }
+ 
+ void* MapFileView(FileMappingHandle handle, void* base_address, size_t length, PageAccess access,

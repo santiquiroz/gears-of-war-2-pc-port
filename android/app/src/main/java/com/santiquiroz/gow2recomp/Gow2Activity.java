@@ -76,22 +76,28 @@ public class Gow2Activity extends SDLActivity
             return;
         }
         UpdateChecker.refreshIfStale(getApplicationContext(), BuildConfig.VERSION_NAME);
-        Runnable continueLaunch = () -> {
-            if (needsGameSetup()) {
-                showGameSetup();
-            } else if (shouldShowLaunchOptions(previousLaunchCrashed)) {
-                showLaunchOptions(previousLaunchCrashed);
-            } else {
-                markNativeStarted();
-            }
-        };
         UpdateInfo pendingUpdate = UpdateChecker.pendingUpdate(this, BuildConfig.VERSION_NAME);
         if (pendingUpdate != null && !isFinishing()) {
-            showUpdateDialog(pendingUpdate, continueLaunch);
+            // SDL starts the game as soon as its surface is on screen: keep it off until the
+            // dialog is answered, or the game runs behind the dialog and under the next screen.
+            setContentView(new View(this));
+            showUpdateDialog(pendingUpdate, () -> continueLaunch(previousLaunchCrashed, true));
         } else {
-            continueLaunch.run();
+            continueLaunch(previousLaunchCrashed, false);
         }
         hideSystemBars();
+    }
+
+    private void continueLaunch(boolean previousLaunchCrashed, boolean surfaceHeldBack) {
+        if (needsGameSetup()) {
+            showGameSetup();
+        } else if (shouldShowLaunchOptions(previousLaunchCrashed)) {
+            showLaunchOptions(previousLaunchCrashed);
+        } else if (surfaceHeldBack) {
+            startNativeSide();
+        } else {
+            markNativeStarted();
+        }
     }
 
     @Override

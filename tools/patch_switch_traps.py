@@ -41,7 +41,17 @@ from collections import Counter
 from pathlib import Path
 
 TRAP = "__builtin_trap(); // Switch case out of range"
-REPL = "REX_CALL_INDIRECT_FUNC(ctx.ctr.u32);\n\t\treturn;"
+LOCAL_CTR = "PPCRegister ctr{};"
+
+
+# ctr_as_local turns ctr into a C++ local declared at the top of the function.
+def ctr_at(s: str, pos: int) -> str:
+    start = s.rfind("DEFINE_REX_FUNC(", 0, pos)
+    return "ctr" if LOCAL_CTR in s[start:pos] else "ctx.ctr"
+
+
+def trap_replacement(ctr: str) -> str:
+    return f"REX_CALL_INDIRECT_FUNC({ctr}.u32);\n\t\treturn;"
 
 FATAL_SITE = re.compile(
     r'(if \((?:!\s*)?ctx\.cr\d\.\w+\)) '
@@ -220,12 +230,12 @@ def main(pattern: str) -> int:
             for m in re.finditer(re.escape(TRAP), s):
                 ctx_before = s[max(0, m.start() - 8000):m.start()]
                 switch_pos = ctx_before.rfind("switch (")
-                mtctr_pos = ctx_before.rfind("ctx.ctr.u64 =")
+                mtctr_pos = ctx_before.rfind(f"{ctr_at(s, m.start())}.u64 =")
                 if mtctr_pos == -1 or switch_pos == -1 or mtctr_pos > switch_pos:
                     unsafe += 1
             s = re.sub(
                 r"(\t+)__builtin_trap\(\); // Switch case out of range",
-                lambda m: m.group(1) + REPL,
+                lambda m: m.group(1) + trap_replacement(ctr_at(s, m.start())),
                 s,
             )
             total += n

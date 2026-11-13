@@ -1,0 +1,22 @@
+diff --git a/src/graphics/graphics_system.cpp b/src/graphics/graphics_system.cpp
+index 3f9b069..2cc9659 100644
+--- a/src/graphics/graphics_system.cpp
++++ b/src/graphics/graphics_system.cpp
+@@ -268,7 +268,17 @@ X_STATUS GraphicsSystem::SetupGuestGpu(runtime::FunctionDispatcher* function_dis
+             MarkVblank();
+             last_frame_time += interval_ticks;
+           }
++#if REX_PLATFORM_WIN32
++          // Windows rounds sleeps up to its timer tick (15.6 ms unless raised), so sleeping to the
++          // next vblank would miss one; poll instead.
+           rex::thread::Sleep(std::chrono::milliseconds(1));
++#else
++          // Sleep to the next vblank: a fixed 1 ms poll woke this thread 1000 times a second even
++          // at 60 Hz.
++          uint64_t ticks_left = last_frame_time + interval_ticks - current_time;
++          rex::thread::Sleep(std::chrono::microseconds(
++              std::max<uint64_t>(1000, ticks_left * 1'000'000 / guest_tick_frequency)));
++#endif
+         }
+         return 0;
+       }));

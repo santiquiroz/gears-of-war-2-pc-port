@@ -123,7 +123,7 @@ if(GOW2_NATIVE_PROBE)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.4.2" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.4.3" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the
@@ -289,6 +289,8 @@ add_dependencies(gow2_sdk_dlls gow2)
 # by stamps because they edit the same files.
 #   switchtrap  jump tables codegen under-counted and unresolved branches: dispatch at runtime
 #   gamepatch   xenia-canary community patches for this XEX, each behind a gow2_* cvar
+#   localize    registers guest code shares across calls go back through ctx where the
+#               manifest's *_as_local options made them C++ locals
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(GOW2_GEN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/generated/default)
 set(_prev_stamp ${GOW2_GEN_DIR}/codegen.build.stamp)
@@ -310,6 +312,7 @@ endmacro()
 
 gow2_patch(switchtrap patch_switch_traps.py "Patching switch traps in generated code")
 gow2_patch(gamepatch patch_game_patches.py "Applying the game patches")
+gow2_patch(localize localize_fix.py "Routing registers shared between functions through ctx")
 
 # A patcher that rewrites an already-compiled file after ninja planned its work would link a
 # stale object and still report success. Fail the build in that case; build again.

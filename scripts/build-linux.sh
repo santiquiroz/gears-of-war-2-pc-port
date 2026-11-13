@@ -70,11 +70,14 @@ prepare_sdk() {
   echo "$stamp" > "$marker"
 }
 
+# lld through the linker flags: CMAKE_LINKER_TYPE needs CMake 3.29, and Ubuntu 24.04's 3.28 ignored
+# it and linked with GNU ld.
 common_cmake_args() {
   echo -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
     -DCMAKE_C_FLAGS=-march=x86-64-v3 -DCMAKE_CXX_FLAGS=-march=x86-64-v3 \
-    -DCMAKE_LINKER_TYPE=LLD -DREXGLUE_ENABLE_TRACY=OFF
+    -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld \
+    -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld -DREXGLUE_ENABLE_TRACY=OFF
 }
 
 # CMakeLists.txt includes generated/rexglue.cmake, which codegen writes: a fresh checkout builds the

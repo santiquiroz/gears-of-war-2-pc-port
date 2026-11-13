@@ -3,7 +3,9 @@
 package com.santiquiroz.gow2recomp.update;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -59,6 +61,23 @@ public class UpdateInfoTest {
 
         assertNull(info.apkUrl());
         assertEquals(PAGE_URL, info.downloadUrl());
+    }
+
+    @Test
+    public void aNewerReleaseWithAnApkIsAnUpdate() {
+        UpdateInfo info = UpdateInfo.parse(RELEASE);
+
+        assertTrue(info.isUpdateFor("0.2.2"));
+        assertFalse(info.isUpdateFor("0.2.3"));
+        assertFalse(info.isUpdateFor("0.3.0"));
+    }
+
+    @Test
+    public void aNewerReleaseWithoutAnApkIsNotAnUpdate() {
+        UpdateInfo pcOnly = new UpdateInfo("v0.4.2", PAGE_URL, null);
+
+        assertFalse(pcOnly.isUpdateFor("0.3.18"));
+        assertFalse(new UpdateInfo("v0.4.2", PAGE_URL, "").isUpdateFor("0.3.18"));
     }
 
     @Test

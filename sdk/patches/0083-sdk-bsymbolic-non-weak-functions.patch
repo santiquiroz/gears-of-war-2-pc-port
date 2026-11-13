@@ -1,0 +1,22 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 604c1cd..fabd729 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -119,6 +119,17 @@ if(NOT WIN32)
+     # The large model made every call and global access on Linux x86_64 an absolute 64-bit
+     # address through a register.
+     add_compile_options(-mcmodel=small)
++    # Calls between a shared SDK library's own functions bind inside it instead of going through
++    # its PLT: with default visibility every one was interposable (librexruntime.so had thousands
++    # of such PLT targets on Linux and Android). Weak functions (inline, templates) stay
++    # interposable, so every module still shares one copy of them. lld only (Android, and Linux
++    # with -fuse-ld=lld); GNU ld has no non-weak variant.
++    include(CheckLinkerFlag)
++    check_linker_flag(CXX "-Wl,-Bsymbolic-non-weak-functions" REX_LINKER_BSYMBOLIC_NON_WEAK)
++    if(REX_LINKER_BSYMBOLIC_NON_WEAK AND NOT APPLE)
++        add_link_options(
++            $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:-Wl,-Bsymbolic-non-weak-functions>)
++    endif()
+     # Position-independent code for all targets
+     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ endif()

@@ -1,0 +1,324 @@
+diff --git a/include/rex/graphics/vulkan/android_gpu_stats.h b/include/rex/graphics/vulkan/android_gpu_stats.h
+index fb6243a..21f6f85 100644
+--- a/include/rex/graphics/vulkan/android_gpu_stats.h
++++ b/include/rex/graphics/vulkan/android_gpu_stats.h
+@@ -37,6 +37,10 @@ struct AndroidGpuStats {
+   uint32_t draws_vertex_kill = 0;
+   uint32_t color_draws_vertex_kill = 0;
+   uint32_t missing_texture_bindings = 0;
++  // Texture descriptor sets (one per stage with textures or samplers) written, and kept because the
++  // draw binds what the set written earlier in the frame holds (vulkan_reuse_texture_descriptors).
++  uint32_t texture_sets_written = 0;
++  uint32_t texture_sets_kept = 0;
+   // Draws with a pixel shader and color writes, by the xenos::CompareFunction of their depth test;
+   // the last slot counts those with the depth test off.
+   std::array<uint32_t, 9> color_draws_by_depth_func{};
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+index 4fb7fd1..3eeacff 100644
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -462,6 +462,7 @@ class VulkanCommandProcessor : public CommandProcessor {
+       reg::RB_DEPTHCONTROL normalized_depth_control,
+       const PrimitiveProcessor::ProcessingResult& primitive_processing_result);
+   void RecordAndroidClipStats(const VulkanShader& vertex_shader, bool writes_color);
++  void CountAndroidTextureSets(bool stage_has_bindings, bool set_written);
+   void RecordAndroidOcclusionResult(uint64_t samples);
+   void LoadAndroidDrawSkipLists();
+   void ResolveAndroidColorDepthBias();
+@@ -567,6 +568,12 @@ class VulkanCommandProcessor : public CommandProcessor {
+                                          const VkDescriptorImageInfo* texture_image_info,
+                                          const VkDescriptorImageInfo* sampler_image_info,
+                                          VkWriteDescriptorSet* descriptor_set_writes_out);
++  void AppendTextureImageInfos(const std::vector<VulkanShader::TextureBinding>& textures);
++  void AppendSamplerImageInfos(
++      const std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>& samplers);
++  void KeepTextureSetIfUnchanged(size_t stage, uint32_t descriptor_set, uint32_t texture_count,
++                                 size_t begin, size_t end);
++  void RememberWrittenTextureSet(size_t stage, uint32_t texture_count, size_t begin, size_t end);
+ 
+   bool device_lost_ = false;
+ 
+@@ -626,6 +633,11 @@ class VulkanCommandProcessor : public CommandProcessor {
+   // Temporary storage with reusable memory for writing image and sampler
+   // descriptors.
+   std::vector<VkDescriptorImageInfo> descriptor_write_image_info_;
++  // What the texture descriptor sets last written in this frame hold, vertex [0] and pixel [1]: a
++  // draw with the same textures and samplers keeps the set instead of writing a new one.
++  std::vector<VkDescriptorImageInfo> written_texture_image_infos_[2];
++  uint32_t written_texture_counts_[2] = {};
++  uint64_t written_texture_destroyed_binding_counts_[2] = {};
+ 
+   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> uniform_buffer_pool_;
+ 
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+index d61260b..56d3f44 100644
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -90,6 +90,9 @@ class VulkanTextureCache final : public TextureCache {
+ 
+   VkImageView GetActiveBindingOrNullImageView(uint32_t fetch_constant_index,
+                                               xenos::FetchOpDimension dimension, bool is_signed);
++  // Changes whenever an image view or a sampler is destroyed: a descriptor written before then may
++  // name a handle that a new object now reuses.
++  uint64_t destroyed_binding_count() const { return destroyed_binding_count_; }
+ #if REX_PLATFORM_ANDROID
+   // Valid fetch constants bound without an image view (they read 0) since the last call.
+   uint32_t TakeAndroidMissingTextureBindings() {
+@@ -528,6 +531,7 @@ class VulkanTextureCache final : public TextureCache {
+   std::pair<const SamplerParameters, Sampler>* sampler_used_first_ = nullptr;
+   std::pair<const SamplerParameters, Sampler>* sampler_used_last_ = nullptr;
+   uint32_t custom_border_color_sampler_count_ = 0;
++  mutable uint64_t destroyed_binding_count_ = 0;
+ 
+   VkBuffer scaled_resolve_buffer_ = VK_NULL_HANDLE;
+   uint64_t scaled_resolve_buffer_size_ = 0;
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 6ccbb6f..0844b51 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -68,6 +68,18 @@ REXCVAR_DEFINE_BOOL(vulkan_submit_on_primary_buffer_end, true, "GPU/Vulkan",
+                     "Submit command buffer when PM4 primary buffer ends")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++// On by default only on Android: on a desktop RX 7800 XT it skipped half of the texture set writes
++// without a measurable frame rate change.
++#if REX_PLATFORM_ANDROID
++constexpr bool kReuseTextureDescriptorsByDefault = true;
++#else
++constexpr bool kReuseTextureDescriptorsByDefault = false;
++#endif
++REXCVAR_DEFINE_BOOL(vulkan_reuse_texture_descriptors, kReuseTextureDescriptorsByDefault, "GPU/Vulkan",
++                    "Keep a draw's texture descriptor set when it binds the same image views and "
++                    "samplers as the set last written in this frame, instead of writing a new one")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
+                     "Use VK_KHR_dynamic_rendering for Vulkan GPU emulation when supported by the "
+                     "device (falls back to render passes otherwise)")
+@@ -5660,14 +5672,16 @@ std::string FormatAndroidGpuStats(const AndroidGpuStats& stats, int64_t now_us)
+   const double seconds = double(now_us - stats.window_start_us) / kUsPerSecond;
+   return fmt::format(
+       "GPUSTATS {:.1f} s: swaps {} unpresented {} | draws {} pending {} no_ps {} no_ps_color {} "
+-      "no_ps_d24fs8_no_rt0 {} gs {} d24s8 {} d24fs8 {} missing_textures {} | color_draw_zfunc {} | "
++      "no_ps_d24fs8_no_rt0 {} gs {} d24s8 {} d24fs8 {} missing_textures {} texture_sets {} kept {} | "
++      "color_draw_zfunc {} | "
+       "passes {} submits {} drains {} | occlusion ends {} host {} zero {} samples {} | "
+       "pipeline_setup {:.1f} ms slow {} max {:.1f} ms | {} | {} | {} | {}",
+       seconds, stats.swaps, stats.swaps_skipped_pending, stats.draws, stats.draws_skipped_pending,
+       stats.draws_without_pixel_shader, stats.draws_without_pixel_shader_color_bound,
+       stats.float24_depth_only_draws_without_color_0,
+       stats.draws_geometry_shader, stats.draws_depth_d24s8, stats.draws_depth_d24fs8,
+-      stats.missing_texture_bindings, FormatDepthFuncCounts(stats), stats.render_passes,
++      stats.missing_texture_bindings, stats.texture_sets_written, stats.texture_sets_kept,
++      FormatDepthFuncCounts(stats), stats.render_passes,
+       stats.submissions, stats.queue_drains, stats.occlusion_query_ends,
+       stats.occlusion_host_results, stats.occlusion_zero_results, stats.occlusion_samples,
+       double(stats.pipeline_setup_us) / kUsPerMs,
+@@ -5985,6 +5999,13 @@ float VulkanCommandProcessor::GetAndroidColorDepthBias(
+       draw.depth_compare);
+ }
+ 
++void VulkanCommandProcessor::CountAndroidTextureSets(bool stage_has_bindings, bool set_written) {
++  if (!stage_has_bindings) {
++    return;
++  }
++  ++(set_written ? android_gpu_stats_.texture_sets_written : android_gpu_stats_.texture_sets_kept);
++}
++
+ void VulkanCommandProcessor::RecordAndroidClipStats(const VulkanShader& vertex_shader,
+                                                     bool writes_color) {
+   const auto pa_cl_clip_cntl = register_file_->Get<reg::PA_CL_CLIP_CNTL>();
+@@ -7690,18 +7711,39 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
+     sampler_count_pixel = 0;
+     texture_count_pixel = 0;
+   }
+-  // TODO(Triang3l): Reuse texture and sampler bindings if not changed.
+-  current_graphics_descriptor_set_values_up_to_date_ &=
+-      ~((UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex) |
+-        (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
++  // Fill the texture and sampler image infos of both stages, then keep each texture set written
++  // earlier in this frame that already holds exactly them.
++  descriptor_write_image_info_.clear();
++  descriptor_write_image_info_.reserve(texture_count_vertex + sampler_count_vertex +
++                                       texture_count_pixel + sampler_count_pixel);
++  size_t vertex_texture_image_info_offset = descriptor_write_image_info_.size();
++  if (texture_count_vertex) {
++    AppendTextureImageInfos(textures_vertex);
++  }
++  size_t vertex_sampler_image_info_offset = descriptor_write_image_info_.size();
++  if (sampler_count_vertex) {
++    AppendSamplerImageInfos(current_samplers_vertex_);
++  }
++  size_t pixel_texture_image_info_offset = descriptor_write_image_info_.size();
++  if (texture_count_pixel) {
++    AppendTextureImageInfos(*textures_pixel);
++  }
++  size_t pixel_sampler_image_info_offset = descriptor_write_image_info_.size();
++  if (sampler_count_pixel) {
++    AppendSamplerImageInfos(current_samplers_pixel_);
++  }
++  KeepTextureSetIfUnchanged(0, SpirvShaderTranslator::kDescriptorSetTexturesVertex,
++                            texture_count_vertex, vertex_texture_image_info_offset,
++                            pixel_texture_image_info_offset);
++  KeepTextureSetIfUnchanged(1, SpirvShaderTranslator::kDescriptorSetTexturesPixel,
++                            texture_count_pixel, pixel_texture_image_info_offset,
++                            descriptor_write_image_info_.size());
+ 
+   // Make sure new descriptor sets are bound to the command buffer.
+ 
+   current_graphics_descriptor_sets_bound_up_to_date_ &=
+       current_graphics_descriptor_set_values_up_to_date_;
+ 
+-  // Fill the texture and sampler write image infos.
+-
+   bool write_vertex_textures =
+       (texture_count_vertex || sampler_count_vertex) &&
+       !(current_graphics_descriptor_set_values_up_to_date_ &
+@@ -7710,50 +7752,10 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
+       (texture_count_pixel || sampler_count_pixel) &&
+       !(current_graphics_descriptor_set_values_up_to_date_ &
+         (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
+-  descriptor_write_image_info_.clear();
+-  descriptor_write_image_info_.reserve(
+-      (write_vertex_textures ? texture_count_vertex + sampler_count_vertex : 0) +
+-      (write_pixel_textures ? texture_count_pixel + sampler_count_pixel : 0));
+-  size_t vertex_texture_image_info_offset = descriptor_write_image_info_.size();
+-  if (write_vertex_textures && texture_count_vertex) {
+-    for (const VulkanShader::TextureBinding& texture_binding : textures_vertex) {
+-      VkDescriptorImageInfo& descriptor_image_info = descriptor_write_image_info_.emplace_back();
+-      descriptor_image_info.imageView = texture_cache_->GetActiveBindingOrNullImageView(
+-          texture_binding.fetch_constant, texture_binding.dimension,
+-          bool(texture_binding.is_signed));
+-      descriptor_image_info.imageLayout = descriptor_image_info.imageView != VK_NULL_HANDLE
+-                                              ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+-                                              : VK_IMAGE_LAYOUT_UNDEFINED;
+-    }
+-  }
+-  size_t vertex_sampler_image_info_offset = descriptor_write_image_info_.size();
+-  if (write_vertex_textures && sampler_count_vertex) {
+-    for (const std::pair<VulkanTextureCache::SamplerParameters, VkSampler>& sampler_pair :
+-         current_samplers_vertex_) {
+-      VkDescriptorImageInfo& descriptor_image_info = descriptor_write_image_info_.emplace_back();
+-      descriptor_image_info.sampler = sampler_pair.second;
+-    }
+-  }
+-  size_t pixel_texture_image_info_offset = descriptor_write_image_info_.size();
+-  if (write_pixel_textures && texture_count_pixel) {
+-    for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
+-      VkDescriptorImageInfo& descriptor_image_info = descriptor_write_image_info_.emplace_back();
+-      descriptor_image_info.imageView = texture_cache_->GetActiveBindingOrNullImageView(
+-          texture_binding.fetch_constant, texture_binding.dimension,
+-          bool(texture_binding.is_signed));
+-      descriptor_image_info.imageLayout = descriptor_image_info.imageView != VK_NULL_HANDLE
+-                                              ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+-                                              : VK_IMAGE_LAYOUT_UNDEFINED;
+-    }
+-  }
+-  size_t pixel_sampler_image_info_offset = descriptor_write_image_info_.size();
+-  if (write_pixel_textures && sampler_count_pixel) {
+-    for (const std::pair<VulkanTextureCache::SamplerParameters, VkSampler>& sampler_pair :
+-         current_samplers_pixel_) {
+-      VkDescriptorImageInfo& descriptor_image_info = descriptor_write_image_info_.emplace_back();
+-      descriptor_image_info.sampler = sampler_pair.second;
+-    }
+-  }
++  REX_ANDROID_GPU_STAT(CountAndroidTextureSets(texture_count_vertex || sampler_count_vertex,
++                                               write_vertex_textures));
++  REX_ANDROID_GPU_STAT(CountAndroidTextureSets(texture_count_pixel || sampler_count_pixel,
++                                               write_pixel_textures));
+ 
+   // Write the new descriptor sets.
+ 
+@@ -7845,6 +7847,14 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
+   // Only make valid if all descriptor sets have been allocated and written
+   // successfully.
+   current_graphics_descriptor_set_values_up_to_date_ |= write_descriptor_set_bits;
++  if (write_vertex_textures) {
++    RememberWrittenTextureSet(0, texture_count_vertex, vertex_texture_image_info_offset,
++                              pixel_texture_image_info_offset);
++  }
++  if (write_pixel_textures) {
++    RememberWrittenTextureSet(1, texture_count_pixel, pixel_texture_image_info_offset,
++                              descriptor_write_image_info_.size());
++  }
+ 
+   // Bind the new descriptor sets.
+   uint32_t descriptor_sets_needed = (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetCount) - 1;
+@@ -7875,6 +7885,57 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
+   return true;
+ }
+ 
++void VulkanCommandProcessor::AppendTextureImageInfos(
++    const std::vector<VulkanShader::TextureBinding>& textures) {
++  for (const VulkanShader::TextureBinding& texture_binding : textures) {
++    VkDescriptorImageInfo& descriptor_image_info = descriptor_write_image_info_.emplace_back();
++    descriptor_image_info.imageView = texture_cache_->GetActiveBindingOrNullImageView(
++        texture_binding.fetch_constant, texture_binding.dimension, bool(texture_binding.is_signed));
++    descriptor_image_info.imageLayout = descriptor_image_info.imageView != VK_NULL_HANDLE
++                                            ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
++                                            : VK_IMAGE_LAYOUT_UNDEFINED;
++  }
++}
++
++void VulkanCommandProcessor::AppendSamplerImageInfos(
++    const std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>& samplers) {
++  for (const std::pair<VulkanTextureCache::SamplerParameters, VkSampler>& sampler_pair :
++       samplers) {
++    VkDescriptorImageInfo& descriptor_image_info = descriptor_write_image_info_.emplace_back();
++    descriptor_image_info.sampler = sampler_pair.second;
++  }
++}
++
++static bool SameImageInfo(const VkDescriptorImageInfo& a, const VkDescriptorImageInfo& b) {
++  return a.sampler == b.sampler && a.imageView == b.imageView && a.imageLayout == b.imageLayout;
++}
++
++void VulkanCommandProcessor::KeepTextureSetIfUnchanged(size_t stage, uint32_t descriptor_set,
++                                                      uint32_t texture_count, size_t begin,
++                                                      size_t end) {
++  const uint32_t bit = UINT32_C(1) << descriptor_set;
++  const std::vector<VkDescriptorImageInfo>& written = written_texture_image_infos_[stage];
++  bool unchanged = REXCVAR_GET(vulkan_reuse_texture_descriptors) &&
++                   (current_graphics_descriptor_set_values_up_to_date_ & bit) &&
++                   written_texture_counts_[stage] == texture_count &&
++                   written_texture_destroyed_binding_counts_[stage] ==
++                       texture_cache_->destroyed_binding_count() &&
++                   written.size() == end - begin &&
++                   std::equal(written.begin(), written.end(),
++                              descriptor_write_image_info_.begin() + begin, SameImageInfo);
++  if (!unchanged) {
++    current_graphics_descriptor_set_values_up_to_date_ &= ~bit;
++  }
++}
++
++void VulkanCommandProcessor::RememberWrittenTextureSet(size_t stage, uint32_t texture_count,
++                                                      size_t begin, size_t end) {
++  written_texture_counts_[stage] = texture_count;
++  written_texture_destroyed_binding_counts_[stage] = texture_cache_->destroyed_binding_count();
++  written_texture_image_infos_[stage].assign(descriptor_write_image_info_.begin() + begin,
++                                             descriptor_write_image_info_.begin() + end);
++}
++
+ uint32_t VulkanCommandProcessor::WriteTransientTextureBindings(
+     bool is_vertex, uint32_t texture_count, uint32_t sampler_count,
+     VkDescriptorSetLayout descriptor_set_layout, const VkDescriptorImageInfo* texture_image_info,
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index 15343f0..5c1145f 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -884,6 +884,7 @@ VkSampler VulkanTextureCache::UseSampler(SamplerParameters parameters, bool& has
+       }
+     }
+     dfn.vkDestroySampler(device, sampler_used_first_->second.sampler, nullptr);
++    ++destroyed_binding_count_;
+     if (sampler_used_first_->second.used_next) {
+       sampler_used_first_->second.used_next->second.used_previous =
+           sampler_used_first_->second.used_previous;
+@@ -1946,6 +1947,7 @@ VulkanTextureCache::VulkanTexture::~VulkanTexture() {
+       vulkan_texture_cache.command_processor_.GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
++  ++vulkan_texture_cache.destroyed_binding_count_;
+   for (const auto& view_pair : views_) {
+     dfn.vkDestroyImageView(device, view_pair.second, nullptr);
+   }

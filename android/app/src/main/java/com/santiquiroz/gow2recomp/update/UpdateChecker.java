@@ -57,8 +57,8 @@ public final class UpdateChecker {
     }
 
     /**
-     * Returns the stored release when it is newer than {@code currentVersion} and was not
-     * skipped, otherwise null.
+     * Returns the stored release when it is newer than {@code currentVersion}, carries an APK
+     * and was not skipped, otherwise null.
      */
     public static UpdateInfo pendingUpdate(Context context, String currentVersion) {
         SharedPreferences prefs = prefs(context);
@@ -66,14 +66,12 @@ public final class UpdateChecker {
         if (tag == null || tag.isEmpty() || tag.equals(prefs.getString(KEY_SKIPPED_TAG, null))) {
             return null;
         }
-        if (!VersionCompare.isNewerThan(tag, currentVersion)) {
-            return null;
-        }
         String pageUrl = prefs.getString(KEY_PAGE_URL, null);
         if (pageUrl == null || pageUrl.isEmpty()) {
             return null;
         }
-        return new UpdateInfo(tag, pageUrl, prefs.getString(KEY_APK_URL, null));
+        UpdateInfo stored = new UpdateInfo(tag, pageUrl, prefs.getString(KEY_APK_URL, null));
+        return stored.isUpdateFor(currentVersion) ? stored : null;
     }
 
     /** Remembers that the user dismissed this tag; a newer tag still shows again. */
@@ -106,8 +104,7 @@ public final class UpdateChecker {
         }
         if (listener != null) {
             try {
-                listener.onResult(ok, info,
-                        info != null && VersionCompare.isNewerThan(info.tag(), currentVersion));
+                listener.onResult(ok, info, info != null && info.isUpdateFor(currentVersion));
             } catch (RuntimeException e) {
                 Log.w(TAG, "update listener failed", e);
             }
