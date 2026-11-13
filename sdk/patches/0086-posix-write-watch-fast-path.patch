@@ -1,0 +1,109 @@
+diff --git a/src/system/mmio_handler.cpp b/src/system/mmio_handler.cpp
+index 2b93005..8496e04 100644
+--- a/src/system/mmio_handler.cpp
++++ b/src/system/mmio_handler.cpp
+@@ -14,6 +14,7 @@
+ #include <utility>
+ 
+ #include <rex/assert.h>
++#include <rex/cvar.h>
+ #include <rex/exception_handler.h>
+ #include <rex/logging.h>
+ #include <rex/memory.h>
+@@ -23,6 +24,11 @@
+ 
+ using namespace rex::arch;
+ 
++REXCVAR_DEFINE_BOOL(write_watch_fast_path, true, "Memory",
++                    "Linux and Android: hand guest write faults to the write watches before "
++                    "rechecking the page protection, which reads /proc/self/maps; off = recheck "
++                    "first, as on Windows");
++
+ namespace rex::runtime {
+ 
+ MMIOHandler* MMIOHandler::global_handler_ = nullptr;
+@@ -368,6 +374,15 @@ bool MMIOHandler::ExceptionCallbackThunk(arch::Exception* ex, void* data) {
+   return reinterpret_cast<MMIOHandler*>(data)->ExceptionCallback(ex);
+ }
+ 
++// True when the host page now allows the access: another thread cleared the watch first.
++static bool HostPageAllowsAccess(void* host_address, bool is_write) {
++  memory::PageAccess access = memory::PageAccess::kNoAccess;
++  size_t length = memory::page_size();
++  memory::QueryProtect(host_address, length, access);
++  return access != memory::PageAccess::kNoAccess &&
++         (!is_write || access != memory::PageAccess::kReadOnly);
++}
++
+ bool MMIOHandler::ExceptionCallback(arch::Exception* ex) {
+   if (ex->code() != arch::Exception::Code::kAccessViolation) {
+     return false;
+@@ -406,21 +421,26 @@ bool MMIOHandler::ExceptionCallback(arch::Exception* ex) {
+     // clears the watch we just hit).
+     // Do this under the lock so we don't introduce another race condition.
+     auto lock = global_critical_region_.Acquire();
+-    memory::PageAccess cur_access;
+-    size_t page_length = memory::page_size();
+-    memory::QueryProtect(fault_host_address, page_length, cur_access);
+-    if (cur_access != memory::PageAccess::kNoAccess &&
+-        (!is_write || cur_access != memory::PageAccess::kReadOnly)) {
++    // QueryProtect parses /proc/self/maps on POSIX, too slow for every write-watch fault: writes
++    // go to the callback first there, and are rechecked only when it does not handle them.
++    const bool recheck_after_callback =
++        is_write && !REX_PLATFORM_WIN32 && REXCVAR_GET(write_watch_fast_path);
++    if (!recheck_after_callback && HostPageAllowsAccess(fault_host_address, is_write)) {
+       // Another thread has cleared this watch. Abort.
+       return true;
+     }
+     // The address is not found within any range, so either a write watch or an
+     // actual access violation.
+-    if (access_violation_callback_) {
+-      return access_violation_callback_(std::move(lock), access_violation_callback_context_,
+-                                        fault_host_address, is_write);
++    if (access_violation_callback_ &&
++        access_violation_callback_(std::move(lock), access_violation_callback_context_,
++                                   fault_host_address, is_write)) {
++      return true;
+     }
+-    return false;
++    if (!recheck_after_callback) {
++      return false;
++    }
++    auto relock = global_critical_region_.Acquire();
++    return HostPageAllowsAccess(fault_host_address, is_write);
+   }
+ 
+   auto rip = ex->pc();
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+index f4adbe8..ef61b74 100644
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -62,6 +62,14 @@ static const char* DescribeAllocationState(uint32_t state) {
+   return "free";
+ }
+ 
++static bool HostPageWritable(void* host_address) {
++  rex::memory::PageAccess access = rex::memory::PageAccess::kNoAccess;
++  size_t length = rex::memory::page_size();
++  rex::memory::QueryProtect(host_address, length, access);
++  return access == rex::memory::PageAccess::kReadWrite ||
++         access == rex::memory::PageAccess::kExecuteReadWrite;
++}
++
+ /**
+  * Memory map:
+  * 0x00000000 - 0x3FFFFFFF (1024mb) - virtual 4k pages
+@@ -596,6 +604,13 @@ bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> glob
+     return true;
+   }
+ 
++  // No watch covers the page. A write that lost the race to clear the watch finds the host page
++  // writable again (on POSIX the fault handler no longer rechecks writes before calling here):
++  // retry it without the stale-protection recovery and its warning.
++  if (is_write && HostPageWritable(host_address)) {
++    return true;
++  }
++
+   // Recovery path for stale host protection state in physical memory:
+   // if guest metadata says the page is writable but host protection is still
+   // read-only / no-access, restore write access and resume execution.

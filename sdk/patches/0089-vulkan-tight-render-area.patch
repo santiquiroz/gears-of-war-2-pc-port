@@ -1,0 +1,408 @@
+diff --git a/src/graphics/vulkan/deferred_command_buffer.cpp b/src/graphics/vulkan/deferred_command_buffer.cpp
+index 6715e39..a3a2c1d 100644
+--- a/src/graphics/vulkan/deferred_command_buffer.cpp
++++ b/src/graphics/vulkan/deferred_command_buffer.cpp
+@@ -14,6 +14,7 @@
+ #include <cstring>
+ 
+ #include <rex/assert.h>
++#include <rex/cvar.h>
+ #include <rex/dbg.h>
+ #include <rex/graphics/flags.h>
+ #include <rex/graphics/vulkan/command_processor.h>
+@@ -21,6 +22,13 @@
+ #include <rex/math.h>
+ 
+ #include "pass_timing.h"
++#include "render_area.h"
++
++REXCVAR_DEFINE_BOOL(vulkan_tight_render_area, true, "GPU/Vulkan",
++                    "Begin each render pass with a render area that covers only what its draws and "
++                    "clears can write (the scissors in effect at its draws and its clear rectangles) "
++                    "instead of the whole render target, so tile-based GPUs load and store less memory")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
+ namespace rex::graphics::vulkan {
+ 
+@@ -59,6 +67,65 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
+   const uintmax_t* stream = command_stream_.data();
+   size_t stream_remaining = command_stream_.size();
+   DeferredGapCounts* const gap_counts = deferred_gap_counts;
++  VkRect2D scissor = {};
++  bool has_scissor = false;
++
++  // A lambda, not a helper: the command types are private and the header stays unchanged.
++  const auto pass_render_area = [](const uintmax_t* pass_stream, size_t pass_remaining,
++                                   const VkRect2D& full, VkRect2D pass_scissor,
++                                   bool pass_has_scissor) -> VkRect2D {
++    render_area::PassArea area;
++    while (pass_remaining) {
++      const CommandHeader& header = *reinterpret_cast<const CommandHeader*>(pass_stream);
++      pass_stream += kCommandHeaderSizeElements;
++      pass_remaining -= kCommandHeaderSizeElements;
++
++      switch (header.command) {
++        case Command::kVkEndRenderPass:
++        case Command::kVkEndRendering:
++          return render_area::TightRenderArea(area, full);
++
++        case Command::kVkSetScissor: {
++          auto& args = *reinterpret_cast<const ArgsVkSetScissor*>(pass_stream);
++          if (args.first_scissor == 0 && args.scissor_count >= 1) {
++            const VkRect2D* rects = reinterpret_cast<const VkRect2D*>(
++                reinterpret_cast<const uint8_t*>(pass_stream) +
++                rex::align(sizeof(ArgsVkSetScissor), alignof(VkRect2D)));
++            pass_scissor = rects[0];
++            pass_has_scissor = true;
++          }
++          break;
++        }
++
++        case Command::kVkDraw:
++        case Command::kVkDrawIndexed:
++          render_area::AddDraw(area, pass_has_scissor ? &pass_scissor : nullptr);
++          break;
++
++        case Command::kVkClearAttachments: {
++          auto& args = *reinterpret_cast<const ArgsVkClearAttachments*>(pass_stream);
++          size_t offset_bytes =
++              rex::align(sizeof(ArgsVkClearAttachments), alignof(VkClearAttachment));
++          offset_bytes = rex::align(offset_bytes + sizeof(VkClearAttachment) * args.attachment_count,
++                                    alignof(VkClearRect));
++          const VkClearRect* rects = reinterpret_cast<const VkClearRect*>(
++              reinterpret_cast<const uint8_t*>(pass_stream) + offset_bytes);
++          for (uint32_t i = 0; i < args.rect_count; ++i) {
++            render_area::AddClearRect(area, rects[i].rect);
++          }
++          break;
++        }
++
++        default:
++          break;
++      }
++
++      pass_stream += header.arguments_size_elements;
++      pass_remaining -= header.arguments_size_elements;
++    }
++    return full;
++  };
++
+   while (stream_remaining) {
+     const CommandHeader& header = *reinterpret_cast<const CommandHeader*>(stream);
+     stream += kCommandHeaderSizeElements;
+@@ -73,7 +140,13 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
+         render_pass_begin_info.pNext = nullptr;
+         render_pass_begin_info.renderPass = args.render_pass;
+         render_pass_begin_info.framebuffer = args.framebuffer;
+-        render_pass_begin_info.renderArea = args.render_area;
++        const VkRect2D render_area =
++            REXCVAR_GET(vulkan_tight_render_area)
++                ? pass_render_area(stream + header.arguments_size_elements,
++                                   stream_remaining - header.arguments_size_elements, args.render_area,
++                                   scissor, has_scissor)
++                : args.render_area;
++        render_pass_begin_info.renderArea = render_area;
+         render_pass_begin_info.clearValueCount = args.clear_value_count;
+         if (render_pass_begin_info.clearValueCount) {
+           offset_bytes = rex::align(offset_bytes, alignof(VkClearValue));
+@@ -257,7 +330,13 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
+         VkRenderingInfo rendering_info = {};
+         rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+         rendering_info.flags = args.flags;
+-        rendering_info.renderArea = args.render_area;
++        const VkRect2D render_area =
++            REXCVAR_GET(vulkan_tight_render_area)
++                ? pass_render_area(stream + header.arguments_size_elements,
++                                   stream_remaining - header.arguments_size_elements, args.render_area,
++                                   scissor, has_scissor)
++                : args.render_area;
++        rendering_info.renderArea = render_area;
+         rendering_info.layerCount = args.layer_count;
+         rendering_info.viewMask = args.view_mask;
+         rendering_info.colorAttachmentCount = args.color_attachment_count;
+@@ -335,10 +414,14 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
+ 
+       case Command::kVkSetScissor: {
+         auto& args = *reinterpret_cast<const ArgsVkSetScissor*>(stream);
+-        dfn.vkCmdSetScissor(command_buffer, args.first_scissor, args.scissor_count,
+-                            reinterpret_cast<const VkRect2D*>(
+-                                reinterpret_cast<const uint8_t*>(stream) +
+-                                rex::align(sizeof(ArgsVkSetScissor), alignof(VkRect2D))));
++        const VkRect2D* rects = reinterpret_cast<const VkRect2D*>(
++            reinterpret_cast<const uint8_t*>(stream) +
++            rex::align(sizeof(ArgsVkSetScissor), alignof(VkRect2D)));
++        dfn.vkCmdSetScissor(command_buffer, args.first_scissor, args.scissor_count, rects);
++        if (args.first_scissor == 0 && args.scissor_count >= 1) {
++          scissor = rects[0];
++          has_scissor = true;
++        }
+       } break;
+ 
+       case Command::kVkSetStencilCompareMask: {
+diff --git a/src/graphics/vulkan/render_area.h b/src/graphics/vulkan/render_area.h
+new file mode 100644
+index 0000000..b3ffd31
+--- /dev/null
++++ b/src/graphics/vulkan/render_area.h
+@@ -0,0 +1,104 @@
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++#include <rex/ui/vulkan/api.h>
++
++namespace rex::graphics::vulkan::render_area {
++
++// Smallest rect holding both; an empty rect adds nothing.
++inline VkRect2D UnionRect(const VkRect2D& a, const VkRect2D& b) {
++  int64_t ax = static_cast<int64_t>(a.offset.x);
++  int64_t ay = static_cast<int64_t>(a.offset.y);
++  int64_t aw = static_cast<int64_t>(a.extent.width);
++  int64_t ah = static_cast<int64_t>(a.extent.height);
++  int64_t bx = static_cast<int64_t>(b.offset.x);
++  int64_t by = static_cast<int64_t>(b.offset.y);
++  int64_t bw = static_cast<int64_t>(b.extent.width);
++  int64_t bh = static_cast<int64_t>(b.extent.height);
++
++  if (aw == 0 || ah == 0) {
++    return b;
++  }
++  if (bw == 0 || bh == 0) {
++    return a;
++  }
++
++  int64_t x = std::min(ax, bx);
++  int64_t y = std::min(ay, by);
++  int64_t right = std::max(ax + aw, bx + bw);
++  int64_t bottom = std::max(ay + ah, by + bh);
++
++  VkRect2D result = {};
++  result.offset.x = static_cast<int32_t>(x);
++  result.offset.y = static_cast<int32_t>(y);
++  result.extent.width = static_cast<uint32_t>(right - x);
++  result.extent.height = static_cast<uint32_t>(bottom - y);
++  return result;
++}
++
++// What one render pass can write, gathered while walking its commands.
++struct PassArea {
++  VkRect2D covered = {};    // union so far; empty = nothing yet
++  bool unbounded = false;   // a draw ran with no known scissor
++};
++
++inline void AddDraw(PassArea& area, const VkRect2D* scissor) {
++  if (!scissor) {
++    area.unbounded = true;
++    return;
++  }
++  area.covered = UnionRect(area.covered, *scissor);
++}
++
++inline void AddClearRect(PassArea& area, const VkRect2D& rect) {
++  area.covered = UnionRect(area.covered, rect);
++}
++
++inline VkRect2D OnePixelAt(const VkOffset2D& offset) {
++  VkRect2D r = {};
++  r.offset = offset;
++  r.extent.width = 1;
++  r.extent.height = 1;
++  return r;
++}
++
++// The render area to begin the pass with, inside `full` (the area the pass was recorded with):
++// unbounded -> full; nothing covered -> 1x1 at full.offset; otherwise covered intersected with full,
++// and 1x1 at full.offset when that intersection is empty.
++inline VkRect2D TightRenderArea(const PassArea& area, const VkRect2D& full) {
++  if (area.unbounded) {
++    return full;
++  }
++
++  VkRect2D covered = area.covered;
++  int64_t cw = static_cast<int64_t>(covered.extent.width);
++  int64_t ch = static_cast<int64_t>(covered.extent.height);
++
++  if (cw == 0 || ch == 0) {
++    return OnePixelAt(full.offset);
++  }
++
++  int64_t fx = static_cast<int64_t>(full.offset.x);
++  int64_t fy = static_cast<int64_t>(full.offset.y);
++  int64_t fw = static_cast<int64_t>(full.extent.width);
++  int64_t fh = static_cast<int64_t>(full.extent.height);
++
++  int64_t x = std::max(static_cast<int64_t>(covered.offset.x), fx);
++  int64_t y = std::max(static_cast<int64_t>(covered.offset.y), fy);
++  int64_t right = std::min(static_cast<int64_t>(covered.offset.x) + cw, fx + fw);
++  int64_t bottom = std::min(static_cast<int64_t>(covered.offset.y) + ch, fy + fh);
++
++  if (right <= x || bottom <= y) {
++    return OnePixelAt(full.offset);
++  }
++
++  VkRect2D result = {};
++  result.offset.x = static_cast<int32_t>(x);
++  result.offset.y = static_cast<int32_t>(y);
++  result.extent.width = static_cast<uint32_t>(right - x);
++  result.extent.height = static_cast<uint32_t>(bottom - y);
++  return result;
++}
++
++}  // namespace rex::graphics::vulkan::render_area
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index 19cae67..324ad83 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -28,6 +28,7 @@ add_executable(unit_tests
+     ppc/fpscr_rounding_test.cpp
+     graphics/android_draw_experiments_test.cpp
+     graphics/pipeline_cache_file_test.cpp
++    graphics/render_area_test.cpp
+ )
+ 
+ target_sources(unit_tests PRIVATE
+diff --git a/tests/unit/graphics/render_area_test.cpp b/tests/unit/graphics/render_area_test.cpp
+new file mode 100644
+index 0000000..bef5001
+--- /dev/null
++++ b/tests/unit/graphics/render_area_test.cpp
+@@ -0,0 +1,139 @@
++// Tight render area computation for Vulkan render passes.
++
++#include <catch2/catch_test_macros.hpp>
++
++#include "graphics/vulkan/render_area.h"
++
++namespace ra = rex::graphics::vulkan::render_area;
++
++namespace {
++
++VkRect2D Full() {
++  VkRect2D r = {};
++  r.offset.x = 0;
++  r.offset.y = 0;
++  r.extent.width = 1520;
++  r.extent.height = 3456;
++  return r;
++}
++
++VkRect2D Rect(int32_t x, int32_t y, uint32_t w, uint32_t h) {
++  VkRect2D r = {};
++  r.offset.x = x;
++  r.offset.y = y;
++  r.extent.width = w;
++  r.extent.height = h;
++  return r;
++}
++
++void AddScissoredDraw(ra::PassArea& area, VkRect2D scissor) {
++  ra::AddDraw(area, &scissor);
++}
++
++}  // namespace
++
++TEST_CASE("nothing added yields 1x1 at full offset", "[render_area]") {
++  ra::PassArea area;
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 0);
++  CHECK(result.offset.y == 0);
++  CHECK(result.extent.width == 1);
++  CHECK(result.extent.height == 1);
++}
++
++TEST_CASE("one draw with scissor yields that scissor", "[render_area]") {
++  ra::PassArea area;
++  AddScissoredDraw(area, Rect(0, 0, 1280, 720));
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 0);
++  CHECK(result.offset.y == 0);
++  CHECK(result.extent.width == 1280);
++  CHECK(result.extent.height == 720);
++}
++
++TEST_CASE("two draws union their scissors", "[render_area]") {
++  ra::PassArea area;
++  AddScissoredDraw(area, Rect(0, 0, 640, 360));
++  AddScissoredDraw(area, Rect(640, 360, 640, 360));
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 0);
++  CHECK(result.offset.y == 0);
++  CHECK(result.extent.width == 1280);
++  CHECK(result.extent.height == 720);
++}
++
++TEST_CASE("only a clear rect yields that rect", "[render_area]") {
++  ra::PassArea area;
++  ra::AddClearRect(area, Rect(100, 100, 50, 50));
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 100);
++  CHECK(result.offset.y == 100);
++  CHECK(result.extent.width == 50);
++  CHECK(result.extent.height == 50);
++}
++
++TEST_CASE("draw with unknown scissor makes render area full", "[render_area]") {
++  ra::PassArea area;
++  AddScissoredDraw(area, Rect(0, 0, 1280, 720));
++  ra::AddDraw(area, nullptr);
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.extent.width == 1520);
++  CHECK(result.extent.height == 3456);
++}
++
++TEST_CASE("scissor clipped to full render area", "[render_area]") {
++  ra::PassArea area;
++  AddScissoredDraw(area, Rect(1400, 3400, 500, 500));
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 1400);
++  CHECK(result.offset.y == 3400);
++  CHECK(result.extent.width == 120);
++  CHECK(result.extent.height == 56);
++}
++
++TEST_CASE("scissor outside full yields 1x1 at full offset", "[render_area]") {
++  ra::PassArea area;
++  AddScissoredDraw(area, Rect(2000, 4000, 10, 10));
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 0);
++  CHECK(result.offset.y == 0);
++  CHECK(result.extent.width == 1);
++  CHECK(result.extent.height == 1);
++}
++
++TEST_CASE("empty scissor alone yields 1x1 at full offset", "[render_area]") {
++  ra::PassArea area;
++  AddScissoredDraw(area, Rect(0, 0, 0, 720));
++  VkRect2D result = ra::TightRenderArea(area, Full());
++  CHECK(result.offset.x == 0);
++  CHECK(result.offset.y == 0);
++  CHECK(result.extent.width == 1);
++  CHECK(result.extent.height == 1);
++}
++
++TEST_CASE("non-zero full offset with nothing added", "[render_area]") {
++  ra::PassArea area;
++  VkRect2D full = Rect(16, 32, 100, 100);
++  VkRect2D result = ra::TightRenderArea(area, full);
++  CHECK(result.offset.x == 16);
++  CHECK(result.offset.y == 32);
++  CHECK(result.extent.width == 1);
++  CHECK(result.extent.height == 1);
++}
++
++TEST_CASE("UnionRect ignores empty rect in both orders", "[render_area]") {
++  VkRect2D empty = {};
++  VkRect2D nonEmpty = Rect(5, 6, 7, 8);
++
++  VkRect2D r1 = ra::UnionRect(empty, nonEmpty);
++  CHECK(r1.offset.x == 5);
++  CHECK(r1.offset.y == 6);
++  CHECK(r1.extent.width == 7);
++  CHECK(r1.extent.height == 8);
++
++  VkRect2D r2 = ra::UnionRect(nonEmpty, empty);
++  CHECK(r2.offset.x == 5);
++  CHECK(r2.offset.y == 6);
++  CHECK(r2.extent.width == 7);
++  CHECK(r2.extent.height == 8);
++}

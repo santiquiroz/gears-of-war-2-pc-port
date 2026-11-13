@@ -71,6 +71,7 @@ set(GOW2_SOURCES
     src/gow2_options_overlay.cpp
     src/gow2_host_ui.cpp
     src/gow2_fps_cap.cpp
+    src/gow2_gpu_wait.cpp
     src/gow2_idle_worker.cpp
     src/gow2_audio_volume.cpp
     src/gow2_frame_stats.cpp
@@ -123,7 +124,7 @@ if(GOW2_NATIVE_PROBE)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.4.3" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.4.4" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the

@@ -1,0 +1,64 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 1ebfba7..6a395c9 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -100,6 +100,14 @@ REXCVAR_DEFINE_BOOL(clear_memory_page_state, true, "GPU",
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ #endif
+ 
++// Off by default: on the phone it changed nothing while the guest spins on the read pointer; it
++// is meant for guests that sleep between polls.
++REXCVAR_DEFINE_BOOL(gpu_read_pointer_writeback_blocks, false, "GPU",
++                    "Write the ring buffer's read pointer back to the guest every block the guest "
++                    "asked for while packets run, like the Xbox 360 GPU, instead of only after a "
++                    "whole batch")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ REXCVAR_DEFINE_BOOL(occlusion_query_enable, true, "GPU", "Enable host occlusion query handling")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
+@@ -477,6 +485,20 @@ static void PauseGpuWorkerPoll() {
+ }
+ #endif
+ 
++// Writes the read index back once the reader has moved a whole block past the last index written
++// back; returns the index last written back.
++uint32_t WriteBackReadIndexEveryBlock(const memory::RingBuffer& reader, uint32_t written_back,
++                                      uint32_t block_dwords, void* writeback) {
++  const uint32_t ring_dwords = uint32_t(reader.capacity() / sizeof(uint32_t));
++  const uint32_t index = uint32_t(reader.read_offset() / sizeof(uint32_t));
++  const uint32_t moved = (index + ring_dwords - written_back) % ring_dwords;
++  if (moved < block_dwords) {
++    return written_back;
++  }
++  memory::store_and_swap<uint32_t>(writeback, index);
++  return index;
++}
++
+ ReadbackResolveMode ParseReadbackResolveMode(std::string_view value) {
+   if (value == "fast") {
+     return ReadbackResolveMode::kFast;
+@@ -1037,6 +1059,13 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+   memory::RingBuffer reader(memory_->TranslatePhysical(primary_buffer_ptr_), primary_buffer_size_);
+   reader.set_read_offset(read_index * sizeof(uint32_t));
+   reader.set_write_offset(write_index * sizeof(uint32_t));
++  // The guest waits on the read pointer for ring space: write it back block by block, as the GPU
++  // does, not only after the batch (WorkerThreadMain still writes the batch end).
++  void* const writeback = read_ptr_writeback_ptr_ && REXCVAR_GET(gpu_read_pointer_writeback_blocks)
++                              ? memory_->TranslatePhysical(read_ptr_writeback_ptr_)
++                              : nullptr;
++  const uint32_t block_dwords = std::max(read_ptr_update_freq_, uint32_t(1));
++  uint32_t written_back = read_index;
+   do {
+     if (!ExecutePacket(&reader)) {
+       // This probably should be fatal - but we're going to continue anyways.
+@@ -1044,6 +1073,9 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+       assert_always();
+       break;
+     }
++    if (writeback) {
++      written_back = WriteBackReadIndexEveryBlock(reader, written_back, block_dwords, writeback);
++    }
+   } while (reader.read_count());
+ 
+   OnPrimaryBufferEnd();
