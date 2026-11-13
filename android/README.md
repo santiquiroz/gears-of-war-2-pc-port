@@ -480,6 +480,12 @@ copied to the GPU again every frame: about 1,850 uploads and 21 MB a frame in Ac
 transfer that ends the Vulkan render pass (about 1,600 render passes a frame). Off, the memory
 watches still invalidate the pages the CPU writes; the frame rate doubled at the same GPU clock.
 
+`vulkan_tight_render_area` (SDK 0089, on by default on every Vulkan platform) begins each render
+pass with a render area that covers only the scissors of its draws and its clear rectangles. The
+render targets are sized for the whole EDRAM (1520x3456 in the phone's logs) and every pass loads
+and stores them, so the tile GPU moved about 5.7 times the 1280x720 a 720p pass draws. It is not
+measured on the phone yet; `false` takes effect at once and goes back to the whole target.
+
 The Vulkan shader and pipeline storage survives a relaunch: Bionic starts reading an `"a+"`
 stream at the end of the file, so the storage found no header and truncated itself at every
 launch, and every pipeline was built again during play. Each new pipeline held the GPU command
@@ -503,10 +509,22 @@ the driver cache against 27.5 s without, on a warm phone.
 `gpu_worker_spin_us` defaults to -1, the SDK's 500 yield polls before sleeping.
 Setting it to 50 makes the GPU command thread poll for up to 50 microseconds with ISB
 pauses, then sleep on the write pointer event in 5 ms waits; 0 sleeps at once.
-`gow2_android_gpu_wait_yield` defaults to false; true also calls
-`sched_yield` once per poll of the game's wait for the GPU (`sub_8298C2A0` through `sub_82977688`),
-keeping the guest work and its time-base timeout. P9 measured no difference on the warm phone
-at the same GPU clock, so both defaults returned to the SDK behaviour.
+P9 measured no difference on the warm phone at the same GPU clock, so the default returned to the
+SDK behaviour.
+
+The game's render thread waits for room in the GPU ring buffer by polling the read pointer the
+command processor writes back (`sub_8298C2A0` through `sub_82977688`). On the phone that wait takes
+about 80 % of the thread's time, spinning a whole core. `gow2_gpu_wait_sleep_us` (default 0, the
+console's spin) makes it sleep that many microseconds between polls, at most 1 ms before the game's
+own check runs again; `gow2_gpu_wait_spin_us` spins that long first. Both take effect at once, and
+`gow2_gpu_wait_stats` logs a GPUWAIT line every five seconds. `gow2_swap_queue_limit` (default 0, the
+game's 15) caps the frames D3D Swap lets the render thread queue ahead of the GPU command thread; it
+is not measured yet. On the S25 Ultra (chapter 2, A B B A,
+November 13), 200 µs took the render thread from 99 % to 43 % of a core and the process from 200 %
+to 155 %, with 1.5 fps less once the heat drift is removed: inside the spread, but about 7 % fewer
+frames per GPU GHz in two sessions, so it stays off until it is measured with the read pointer
+written back block by block (SDK 0088, `gpu_read_pointer_writeback_blocks`, also off by default:
+with the spin it changed nothing).
 
 At build time `tools/prepare_android_sources.py` runs `tools/patch_spin_hints.py` on the Android
 copy of the generated code. It adds a guarded `__builtin_arm_isb(15)` after Xenon delay hints, which

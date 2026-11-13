@@ -264,6 +264,16 @@ jump from calls inside `librexruntime.so` and `librexgpu-xenos.so`. The biggest 
 the game's render thread, which spins about a whole core while it waits for the GPU command thread
 ([PERFORMANCE.md](PERFORMANCE.md), section 5 #19).
 
+SDK patches 0086-0089 and the GPU wait (0.4.4): 0086 takes `/proc/self/maps` out of the write-watch
+path (15.6 % of the render thread's cycles in 0.4.3) and 0087 the per-draw cvar lookup and vector of
+the GPU command thread. `gow2_gpu_wait_sleep_us = 200` took the render thread from 99 % to 43 % of a
+core, but frames per GPU GHz fell about 7 % in two A B B A sessions, so it ships off; next, measure
+it with 0088 (`gpu_read_pointer_writeback_blocks`, also off), which writes the read pointer back
+block by block so the command processor need not idle while the render thread sleeps. 0089
+(`vulkan_tight_render_area`, on) begins each render pass with only the area its draws and clears
+can write instead of the whole EDRAM-sized target: the first thing to measure on the phone, with an
+A B B A of `vulkan_tight_render_area` and `vulkan_android_pass_timing` for the GPU time a pass.
+
 ## Biggest unknowns
 
 - Whether the Xenos emulation (EDRAM resolves, memexport) is fast enough for UE3 on the Adreno 830.

@@ -443,6 +443,7 @@ The APK from `scripts\build-android.ps1 -LowPriority` at this commit (or later) 
 - **CPU waits.** After P9 measured no difference, `gpu_worker_spin_us` defaults to -1 (the SDK's
   roughly 500 yield polls before sleeping) and `gow2_android_gpu_wait_yield` to false (the game's
   SDK wait behaviour, without the added yield). Its guest work and time-base timeout stay the same.
+  November 13: `gow2_gpu_wait_sleep_us` replaced that yield (see the defaults table).
   At build time `tools/prepare_android_sources.py` runs `tools/patch_spin_hints.py` on the Android
   copy of the generated code, adding a guarded `__builtin_arm_isb(15)` (inside
   `#if defined(__aarch64__)`) after Xenon delay hints the recompiler otherwise omits. GoW2 has 12
@@ -467,7 +468,7 @@ The APK from `scripts\build-android.ps1 -LowPriority` at this commit (or later) 
   | `present_android_frame_rate` | 30 | Ask Android 11+ for this window frame rate in Hz; 0 makes no request; launch default 0 with `gow2_unlock_fps` unless configured |
   | `vulkan_pipeline_cache_file` | true | Load and save the driver's `.vkpc` cache beside shader storage (restart) |
   | `gpu_worker_spin_us` | -1 | -1 keeps roughly 500 SDK yield polls; 0 sleeps immediately; N polls with ISB pauses for N microseconds, then waits in 5 ms sleeps; 50 was measured with no difference |
-  | `gow2_android_gpu_wait_yield` | false | True yields once per poll of the game's GPU wait without changing guest work or its time-base timeout; P9 measured no difference |
+  | `gow2_gpu_wait_sleep_us` | 0 | Microseconds the render thread sleeps between polls of its wait for ring buffer space, at most 1 ms per wait; 0 spins like the console. 200 took the process from 200 % to 155 % of a core for 1.5 fps less (November 13); replaces `gow2_android_gpu_wait_yield`, whose yield per poll P9 measured with no difference |
   | `gow2_android_sustained_performance` | false | Request supported window sustained performance mode (restart); opt-in until measured |
   | `vulkan_android_empty_fragment_shader` | false | Draws without a pixel shader that have color targets bound get an empty fragment shader instead of none (restart) |
   | `vulkan_android_invariant_position_member` | false | `gl_Position` also gets the `Invariant` member decoration glslang emits (restart) |

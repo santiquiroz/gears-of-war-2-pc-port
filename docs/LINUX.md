@@ -69,6 +69,13 @@ storage or to a card formatted by SteamOS.
   its memory behind in RAM as a `xenia_memory_*` file in `/dev/shm`, several hundred MB each, until
   a reboot. Now the system frees it however the game ends (SDK patch 0084). With an older version,
   reboot, or run `rm /dev/shm/xenia_memory_*` while the game is not running.
+- Since 0.4.4 each Vulkan render pass covers only the area its draws and clears can write, instead
+  of the whole render target (SDK patch 0089). If part of the picture looks missing or stale, set
+  `vulkan_tight_render_area = false` in `gow2.toml` and open an issue with the scene.
+- While it waits for the GPU, the game's render thread spins a CPU core. `gow2_gpu_wait_sleep_us =
+  200` in `gow2.toml` makes it sleep between checks: on a phone that freed about half a core for
+  about 7 % fewer frames per GPU clock. It is off by default and not measured on a Steam Deck; try it
+  if battery life matters more than the last frames.
 
 ## Build
 
