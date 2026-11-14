@@ -1,0 +1,300 @@
+diff --git a/include/rex/graphics/d3d12/gow2_framegen.h b/include/rex/graphics/d3d12/gow2_framegen.h
+index 15df10d..f801b7f 100644
+--- a/include/rex/graphics/d3d12/gow2_framegen.h
++++ b/include/rex/graphics/d3d12/gow2_framegen.h
+@@ -4,6 +4,8 @@
+ #include <atomic>
+ #include <mutex>
+ #include <string>
++#include <utility>
++#include <vector>
+ 
+ #include <rex/ui/d3d12/d3d12_swap_chain_source.h>
+ 
+@@ -20,22 +22,28 @@ class FrameGeneration final : public ui::d3d12::SwapChainSource {
+   bool Prepare(ID3D12GraphicsCommandList* list, uint64_t frame_id, ID3D12Resource* depth,
+                ID3D12Resource* motion, uint32_t render_width, uint32_t render_height,
+                float jitter_x, float jitter_y, float frame_ms, float camera_near,
+-               float camera_far, float fov_y, bool reset);
++               float camera_far, float fov_y, bool reset, uint64_t submission);
+   void ConfigureFrame(uint64_t frame_id);
+   bool Dispatch(void* desc);
++  void RetireCompleted(uint64_t completed_submission);
+   void Shutdown();
+   bool enabled() const { return enabled_.load(std::memory_order_relaxed); }
+ 
+  private:
+   bool LoadProvider(ID3D12Device* device);
+-  bool EnsureContext(uint32_t render_width, uint32_t render_height);
++  bool EnsureContext(uint32_t render_width, uint32_t render_height, uint64_t submission);
+   bool CreateContext(uint32_t render_width, uint32_t render_height);
+   bool FallBackToFsr3(uint32_t render_width, uint32_t render_height);
+   void DestroyContext();
++  void RetireContext(uint64_t submission);
++  void DisableInSwapChain();
++  void DestroyRetiredContexts(uint64_t completed_submission);
+ 
+   std::mutex mutex_;
++  std::mutex dispatch_mutex_;  // FFX contexts are not thread-safe: Prepare vs Dispatch
+   void* swap_chain_context_ = nullptr;
+   void* frame_generation_context_ = nullptr;
++  std::vector<std::pair<uint64_t, void*>> retired_contexts_;
+   IDXGISwapChain4* swap_chain_ = nullptr;
+   uint32_t display_width_ = 0;
+   uint32_t display_height_ = 0;
+diff --git a/include/rex/graphics/d3d12/gow2_fsr.h b/include/rex/graphics/d3d12/gow2_fsr.h
+index 80c1e0c..c983f57 100644
+--- a/include/rex/graphics/d3d12/gow2_fsr.h
++++ b/include/rex/graphics/d3d12/gow2_fsr.h
+@@ -20,6 +20,7 @@ struct FsrEval {
+   float camera_near = 10.0f, camera_far = 8000.0f, fov_y = 1.0f;
+   // 3 = FSR 3.1, 4 = FSR 4 (when the loader reports it), 0 = whatever the loader picks
+   int wanted_major = 3;
++  uint64_t submission = 0;  // command processor submission that records this dispatch
+ };
+ 
+ struct FsrProvider {
+@@ -41,6 +42,7 @@ bool FsrFrameGenerationProvider(FsrProvider* provider, int wanted_major = 0);
+ void* FsrFunctionTable();
+ ID3D12Device* FsrDevice();
+ bool FsrEvaluate(ID3D12GraphicsCommandList* list, const FsrEval& eval);
++void FsrRetireCompleted(uint64_t completed_submission);
+ void FsrShutdown();
+ 
+ }  // namespace rex::graphics::d3d12::gow2
+diff --git a/src/graphics/d3d12/gow2_framegen.cpp b/src/graphics/d3d12/gow2_framegen.cpp
+index 236eb8c..07b36a4 100644
+--- a/src/graphics/d3d12/gow2_framegen.cpp
++++ b/src/graphics/d3d12/gow2_framegen.cpp
+@@ -158,6 +158,7 @@ void FrameGeneration::Released() {
+   std::lock_guard lock(mutex_);
+ #ifdef GOW2_HAS_FFX
+   DestroyContext();
++  DestroyRetiredContexts(UINT64_MAX);
+   ffxFunctions* fn = Functions();
+   if (swap_chain_context_ && fn && fn->DestroyContext) {
+     fn->DestroyContext(reinterpret_cast<ffxContext*>(&swap_chain_context_), nullptr);
+@@ -215,6 +216,63 @@ void FrameGeneration::DestroyContext() {
+   context_display_height_ = 0;
+ }
+ 
++void FrameGeneration::RetireContext(uint64_t submission) {
++  if (frame_generation_context_) {
++    DisableInSwapChain();
++    retired_contexts_.emplace_back(submission, frame_generation_context_);
++    frame_generation_context_ = nullptr;
++  }
++  render_width_ = 0;
++  render_height_ = 0;
++  context_display_width_ = 0;
++  context_display_height_ = 0;
++}
++
++void FrameGeneration::DisableInSwapChain() {
++#ifdef GOW2_HAS_FFX
++  ffxFunctions* fn = Functions();
++  if (!frame_generation_context_ || !swap_chain_ || !fn || !fn->Configure) return;
++  ffxConfigureDescFrameGeneration configure = {};
++  configure.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
++  configure.swapChain = swap_chain_;
++  configure.frameGenerationCallback = &DispatchFrameGeneration;
++  configure.frameGenerationCallbackUserContext = this;
++  configure.frameGenerationEnabled = false;
++  configure.allowAsyncWorkloads = false;
++  configure.generationRect = {0, 0, int32_t(display_width_), int32_t(display_height_)};
++  configure.frameID = prepared_frame_id_;
++  // Waits for in-flight presents; afterwards the swap chain stops calling Dispatch.
++  ffxReturnCode_t result = fn->Configure(
++      reinterpret_cast<ffxContext*>(&frame_generation_context_), &configure.header);
++  if (result != FFX_API_RETURN_OK && !configure_error_logged_) {
++    REXGPU_WARN("frame generation: disable before context change failed ({})", uint32_t(result));
++    configure_error_logged_ = true;
++  }
++#endif
++}
++
++void FrameGeneration::DestroyRetiredContexts(uint64_t completed_submission) {
++#ifdef GOW2_HAS_FFX
++  ffxFunctions* fn = Functions();
++  if (fn && fn->DestroyContext) {
++    std::erase_if(retired_contexts_, [&](auto& entry) {
++      if (entry.first <= completed_submission) {
++        fn->DestroyContext(reinterpret_cast<ffxContext*>(&entry.second), nullptr);
++        return true;
++      }
++      return false;
++    });
++  }
++#else
++  (void)completed_submission;
++#endif
++}
++
++void FrameGeneration::RetireCompleted(uint64_t completed_submission) {
++  std::lock_guard lock(mutex_);
++  DestroyRetiredContexts(completed_submission);
++}
++
+ bool FrameGeneration::LoadProvider(ID3D12Device* device) {
+   return device && FsrLoaderInit(device) && !provider_name_.empty();
+ }
+@@ -257,7 +315,8 @@ bool FrameGeneration::FallBackToFsr3(uint32_t render_width, uint32_t render_heig
+   return CreateContext(render_width, render_height);
+ }
+ 
+-bool FrameGeneration::EnsureContext(uint32_t render_width, uint32_t render_height) {
++bool FrameGeneration::EnsureContext(uint32_t render_width, uint32_t render_height,
++                                    uint64_t submission) {
+ #ifdef GOW2_HAS_FFX
+   if (!enabled() || !swap_chain_ || !LoadProvider(FsrDevice())) return false;
+   DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
+@@ -271,7 +330,7 @@ bool FrameGeneration::EnsureContext(uint32_t render_width, uint32_t render_heigh
+       context_display_height_ == display_height_) {
+     return true;
+   }
+-  DestroyContext();
++  RetireContext(submission);
+   if (!CreateContext(render_width, render_height) && !FallBackToFsr3(render_width, render_height)) {
+     return false;
+   }
+@@ -294,12 +353,14 @@ bool FrameGeneration::Prepare(ID3D12GraphicsCommandList* list, uint64_t frame_id
+                               ID3D12Resource* depth, ID3D12Resource* motion,
+                               uint32_t render_width, uint32_t render_height, float jitter_x,
+                               float jitter_y, float frame_ms, float camera_near, float camera_far,
+-                              float fov_y, bool reset) {
++                              float fov_y, bool reset, uint64_t submission) {
+   if (!enabled()) return false;
+   std::lock_guard lock(mutex_);
+ #ifdef GOW2_HAS_FFX
+   if (!enabled()) return false;
+-  if (!list || !depth || !motion || !EnsureContext(render_width, render_height)) return false;
++  if (!list || !depth || !motion || !EnsureContext(render_width, render_height, submission)) {
++    return false;
++  }
+   ffxDispatchDescFrameGenerationPrepareV2 prepare = {};
+   prepare.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2;
+   prepare.frameID = frame_id;
+@@ -318,9 +379,13 @@ bool FrameGeneration::Prepare(ID3D12GraphicsCommandList* list, uint64_t frame_id
+   prepare.motionVectors = ffxApiGetResourceDX12(
+       motion, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+   ffxFunctions* fn = Functions();
+-  bool result = fn && fn->Dispatch &&
+-                fn->Dispatch(reinterpret_cast<ffxContext*>(&frame_generation_context_),
+-                             &prepare.header) == FFX_API_RETURN_OK;
++  bool result = false;
++  {
++    std::lock_guard dispatch_lock(dispatch_mutex_);
++    result = fn && fn->Dispatch &&
++             fn->Dispatch(reinterpret_cast<ffxContext*>(&frame_generation_context_),
++                          &prepare.header) == FFX_API_RETURN_OK;
++  }
+   prepared_ = result;
+   prepared_frame_id_ = frame_id;
+   return result;
+@@ -384,7 +449,8 @@ void FrameGeneration::ConfigureFrame(uint64_t frame_id) {
+ }
+ 
+ bool FrameGeneration::Dispatch(void* desc) {
+-  std::lock_guard lock(mutex_);
++  // Not mutex_: Present holds the FFX swap chain lock, which ConfigureFrame takes under mutex_.
++  std::lock_guard lock(dispatch_mutex_);
+ #ifdef GOW2_HAS_FFX
+   if (!desc || !frame_generation_context_) return false;
+   ffxFunctions* fn = Functions();
+diff --git a/src/graphics/d3d12/gow2_fsr.cpp b/src/graphics/d3d12/gow2_fsr.cpp
+index d672258..60f730e 100644
+--- a/src/graphics/d3d12/gow2_fsr.cpp
++++ b/src/graphics/d3d12/gow2_fsr.cpp
+@@ -7,6 +7,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <string>
++#include <utility>
+ #include <mutex>
+ #include <vector>
+ 
+@@ -32,6 +33,7 @@ HMODULE g_module = nullptr;
+ ffxFunctions g_fn = {};
+ bool g_tried = false, g_ok = false, g_loader_ok = false;
+ ffxContext g_ctx = nullptr;
++std::vector<std::pair<uint64_t, ffxContext>> g_retired;
+ uint32_t g_rw, g_rh, g_ow, g_oh;
+ int g_major = -1;
+ std::string g_provider;
+@@ -240,7 +242,7 @@ bool FsrEvaluate(ID3D12GraphicsCommandList* list, const FsrEval& e) {
+   if (!g_ctx || g_rw != e.render_w || g_rh != e.render_h || g_ow != e.out_w || g_oh != e.out_h ||
+       g_major != e.wanted_major) {
+     if (g_ctx) {
+-      g_fn.DestroyContext(&g_ctx, nullptr);
++      g_retired.emplace_back(e.submission, g_ctx);
+       g_ctx = nullptr;
+     }
+     if (!CreateCtxWithFallback(e)) return false;
+@@ -275,10 +277,27 @@ bool FsrEvaluate(ID3D12GraphicsCommandList* list, const FsrEval& e) {
+   return true;
+ }
+ 
++void FsrRetireCompleted(uint64_t completed_submission) {
++  if (!g_fn.DestroyContext) return;
++  std::erase_if(g_retired, [&](auto& entry) {
++    if (entry.first <= completed_submission) {
++      g_fn.DestroyContext(&entry.second, nullptr);
++      return true;
++    }
++    return false;
++  });
++}
++
+ void FsrShutdown() {
+   std::lock_guard lock(g_mutex);
+-  if (g_ctx && g_fn.DestroyContext) g_fn.DestroyContext(&g_ctx, nullptr);
++  if (g_fn.DestroyContext) {
++    if (g_ctx) g_fn.DestroyContext(&g_ctx, nullptr);
++    for (auto& entry : g_retired) {
++      g_fn.DestroyContext(&entry.second, nullptr);
++    }
++  }
+   g_ctx = nullptr;
++  g_retired.clear();
+ }
+ 
+ #else  // !GOW2_HAS_FFX
+@@ -291,6 +310,7 @@ void* FsrFunctionTable() { return nullptr; }
+ ID3D12Device* FsrDevice() { return nullptr; }
+ const char* FsrProviderName() { return ""; }
+ bool FsrEvaluate(ID3D12GraphicsCommandList*, const FsrEval&) { return false; }
++void FsrRetireCompleted(uint64_t) {}
+ void FsrShutdown() {}
+ 
+ #endif
+diff --git a/src/graphics/d3d12/gow2_upscale.cpp b/src/graphics/d3d12/gow2_upscale.cpp
+index faabe6e..d49ca8e 100644
+--- a/src/graphics/d3d12/gow2_upscale.cpp
++++ b/src/graphics/d3d12/gow2_upscale.cpp
+@@ -421,6 +421,7 @@ void RunJob(ID3D12GraphicsCommandList* list, void* user) {
+       e.camera_far = j.cam_far;
+       e.fov_y = j.fov_y;
+       e.wanted_major = j.fsr_major;
++      e.submission = j.submission;
+       have_out = FsrEvaluate(list, e);
+     } else {
+       DlssEval e;
+@@ -464,7 +465,8 @@ void RunJob(ID3D12GraphicsCommandList* list, void* user) {
+             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+     if (GetFrameGeneration().enabled()) {
+       GetFrameGeneration().Prepare(list, j.frame_id, j.depth.Get(), j.mv, j.rw, j.rh, j.jx,
+-                                   j.jy, 16.7f, j.cam_near, j.cam_far, j.fov_y, j.reset);
++                                   j.jy, 16.7f, j.cam_near, j.cam_far, j.fov_y, j.reset,
++                                   j.submission);
+     }
+   }
+ }
+@@ -631,6 +633,8 @@ bool UpscaleFinal(D3D12CommandProcessor& cp, ID3D12Resource* color, uint32_t in_
+     else
+       ++i;
+   }
++  FsrRetireCompleted(cp.GetCompletedSubmission());
++  GetFrameGeneration().RetireCompleted(cp.GetCompletedSubmission());
+   // This frame's depth; the next frame starts with none.
+   ComPtr<ID3D12Resource> frame_depth = std::move(g.depth_tex);
+   g.depth_tex.Reset();
