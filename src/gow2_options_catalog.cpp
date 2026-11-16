@@ -1207,6 +1207,48 @@ void AddMultiplayer(std::vector<Setting>& out) {
       .help_en = "Moves you next to player 1 if you got stuck. Campaign co-op only.",
       .help_es = "Te lleva junto al jugador 1 si quedaste atorado. Solo en campaña cooperativa."});
   out.push_back(Setting{
+      .id = "bind_coop_go_to_player1",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kKeybind,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Key: go to player 1",
+      .label_es = "Tecla: ir con el jugador 1",
+      .help_en = "Accept, then press the key that moves you next to player 1. Campaign co-op only.",
+      .help_es = "Acepta y pulsa la tecla que te lleva junto al jugador 1. Solo en campaña cooperativa."});
+  out.push_back(Setting{
+      .id = "gow2_coop_go_to_player1_pad",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kChoice,
+      .apply = Apply::kNow,
+      .platforms = kAllPlatforms,
+      .label_en = "Controller: go to player 1",
+      .label_es = "Mando: ir con el jugador 1",
+      .help_en = "Button combo that moves you next to player 1. Campaign co-op only.",
+      .help_es = "Combinación de botones que te lleva junto al jugador 1. Solo en campaña cooperativa.",
+      .choices = {
+          C("none", "Off", "Apagado"),
+          C("back_dpad_up", "Back + D-pad up", "Back + cruceta arriba"),
+          C("back_dpad_down", "Back + D-pad down", "Back + cruceta abajo"),
+          C("ls_rs", "Both stick clicks (LS + RS)", "Clic de ambos sticks (LS + RS)"),
+      }});
+  out.push_back(Setting{
+      .id = "gow2_coop_extra_players_game_over",
+      .tab = Tab::kMultiplayer,
+      .kind = Kind::kToggle,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "Players 3+ dying ends the game",
+      .label_es = "Si muere el jugador 3 o 4, termina la partida",
+      .help_en =
+          "Campaign co-op with 3 or more players: when player 3 or 4 dies the game is over for "
+          "everyone, as with Marcus and Dom. Off: they come back next to a teammate. Every "
+          "player must use the same value.",
+      .help_es =
+          "Campaña cooperativa con 3 o más jugadores: si muere el jugador 3 o 4 se acaba la "
+          "partida para todos, como con Marcus y Dom. Apagado: reaparece junto a un compañero. "
+          "Todos los jugadores deben usar el mismo valor."});
+  out.push_back(Setting{
       .id = "coop_check",
       .tab = Tab::kMultiplayer,
       .kind = Kind::kInfo,
@@ -1522,6 +1564,20 @@ void AddSaves(std::vector<Setting>& out) {
       .label_es = "Abrir la carpeta de partidas",
       .help_en = "Opens it in File Explorer.",
       .help_es = "La abre en el Explorador de archivos."});
+  out.push_back(Setting{
+      .id = "gow2_unlock_all_chapters",
+      .tab = Tab::kSaves,
+      .kind = Kind::kToggle,
+      .apply = Apply::kRestart,
+      .platforms = kAllPlatforms,
+      .label_en = "All chapters unlocked",
+      .label_es = "Todos los capítulos desbloqueados",
+      .help_en =
+          "Every act and chapter can be picked in Campaign, at every difficulty. Your saved "
+          "progress is not changed.",
+      .help_es =
+          "Puedes elegir cualquier acto y capítulo en Campaña, en cualquier dificultad. Tu "
+          "progreso guardado no cambia."});
 }
 
 void AddAudio(std::vector<Setting>& out) {

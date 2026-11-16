@@ -238,8 +238,8 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kGraphics) == 54, "graphics has 54 rows including frame generation, keep original menus, the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
-  Expect(CountTab(options::Tab::kMultiplayer) == 14, "multiplayer has 14 rows including friendly fire and Go to player 1");
-  Expect(CountTab(options::Tab::kSaves) == 5, "saves has 5 rows");
+  Expect(CountTab(options::Tab::kMultiplayer) == 17, "multiplayer has 17 rows including friendly fire, Go to player 1 and its key and controller rows, and players 3+ dying ends the game");
+  Expect(CountTab(options::Tab::kSaves) == 6, "saves has 6 rows including all chapters unlocked");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
   Expect(CountTab(options::Tab::kSystem) == 19, "system has 19 rows including skip intro videos, the skip hint, show options at start and F12 screenshots");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
@@ -497,6 +497,48 @@ void TestCoopRequestRows() {
   Expect(tp && tp->tab == options::Tab::kMultiplayer && tp->kind == options::Kind::kAction &&
              tp->platforms == options::kAllPlatforms,
          "Go to player 1 is a Multiplayer action on every platform");
+  const auto* key = options::FindSetting("bind_coop_go_to_player1");
+  Expect(key && key->tab == options::Tab::kMultiplayer && key->kind == options::Kind::kKeybind &&
+             key->apply == options::Apply::kNow && key->page == options::Page::kMain &&
+             key->platforms == options::kAllPlatforms,
+         "go to player 1 key is an apply-now Multiplayer keybind on the main page");
+  const auto* pad = options::FindSetting("gow2_coop_go_to_player1_pad");
+  Expect(pad && pad->tab == options::Tab::kMultiplayer && pad->kind == options::Kind::kChoice &&
+             pad->apply == options::Apply::kNow && pad->platforms == options::kAllPlatforms,
+         "go to player 1 controller combo is an apply-now Multiplayer choice");
+  if (pad) {
+    Expect(pad->choices.size() == 4 && pad->choices[0].value == "none" &&
+               pad->choices[1].value == "back_dpad_up" &&
+               pad->choices[2].value == "back_dpad_down" && pad->choices[3].value == "ls_rs",
+           "go to player 1 combo offers none, back plus d-pad and both stick clicks");
+  }
+}
+
+void TestUnlockAllChaptersRow() {
+  const auto* row = options::FindSetting("gow2_unlock_all_chapters");
+  Expect(row != nullptr, "all chapters unlocked row exists");
+  if (!row) return;
+  Expect(row->tab == options::Tab::kSaves && row->kind == options::Kind::kToggle &&
+             row->apply == options::Apply::kRestart && row->platforms == options::kAllPlatforms,
+         "all chapters unlocked is a Saves restart toggle on both platforms");
+}
+
+void TestExtraPlayersGameOverRow() {
+  const auto* row = options::FindSetting("gow2_coop_extra_players_game_over");
+  Expect(row != nullptr, "players 3+ dying ends the game row exists");
+  if (!row) return;
+  Expect(row->tab == options::Tab::kMultiplayer && row->kind == options::Kind::kToggle &&
+             row->apply == options::Apply::kRestart && row->platforms == options::kAllPlatforms,
+         "players 3+ dying ends the game is a Multiplayer restart toggle on both platforms");
+  const auto& catalog = options::Catalog();
+  const auto at = [&](std::string_view id) {
+    for (size_t i = 0; i < catalog.size(); ++i) {
+      if (catalog[i].id == id) return static_cast<int>(i);
+    }
+    return -1;
+  };
+  Expect(at("gow2_coop_extra_players_game_over") == at("gow2_coop_go_to_player1_pad") + 1,
+         "players 3+ dying ends the game comes right after the go to player 1 controller row");
 }
 
 void TestLetterboxRow() {
@@ -566,6 +608,8 @@ int main() {
     TestFrameGenerationRow();
     TestSkipIntroRow();
     TestCoopRequestRows();
+    TestUnlockAllChaptersRow();
+    TestExtraPlayersGameOverRow();
     TestLetterboxRow();
     TestFrameCounterRow();
     TestLauncherRow();

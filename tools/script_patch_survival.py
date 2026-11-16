@@ -315,11 +315,13 @@ def render_cpp():
     lines.extend([
         "}  // namespace",
         "",
-        "PatchGroup CoopSurvivalGroup() {",
-        "  return {",
-        '      .name = "survival",',
-        "      .scripts = {RowS2A_1(), RowS2A_2(), RowS2A_3(), RowS2A_5()},",
-        "  };",
+        "PatchGroup CoopSurvivalGroup(bool extra_players_end_game) {",
+        '  PatchGroup group{.name = "survival"};',
+        "  group.scripts.push_back(RowS2A_1());",
+        "  if (!extra_players_end_game) group.scripts.push_back(RowS2A_2());",
+        "  group.scripts.push_back(RowS2A_3());",
+        "  group.scripts.push_back(RowS2A_5());",
+        "  return group;",
         "}",
         "",
         "PatchGroup CoopSplitReviveGroup() {",
@@ -334,8 +336,9 @@ def render_cpp():
     return "\n".join(lines) + "\n"
 
 
-def survival_rows():
-    return [ROWS[i] for i in SURVIVAL_ORDER]
+def survival_rows(extra_players_end_game=False):
+    ids = [i for i in SURVIVAL_ORDER if i != "S2A-2"] if extra_players_end_game else SURVIVAL_ORDER
+    return [ROWS[i] for i in ids]
 
 
 def split_revive_rows():

@@ -11,6 +11,7 @@
 #include "gow2_coop_census.h"
 #include "gow2_coop_network.h"
 #include "gow2_script_patch_requests.h"
+#include "gow2_unlock_chapters.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -50,6 +51,10 @@ REXCVAR_DEFINE_BOOL(gow2_coop_survival, true, "Coop",
                     "respawn near a teammate instead of ending the game, leave without an AI Dom "
                     "taking their body, and do not block checkpoints while dead (Stage 2 group A, "
                     "docs/COOP_STAGE2_SURVIVAL.md). false keeps Stage 1 only");
+REXCVAR_DEFINE_BOOL(gow2_coop_extra_players_game_over, false, "Coop",
+                    "With gow2_coop_players 3+ and gow2_coop_survival: a dead player 3+ ends the "
+                    "game for everyone, like Marcus and Dom (row S2A-2 is left out). false: he "
+                    "respawns near a teammate");
 REXCVAR_DEFINE_BOOL(gow2_coop_split_revive, false, "Coop",
                     "Debug, row S2A-4: in co-op splits a standing player 3+ of the downed "
                     "player's squad counts as a reviver");
@@ -205,8 +210,14 @@ void ApplySurvivalGroups(uint8_t* base, const script_patch::GuestAlloc& alloc, b
     RecordOff(stack, "split-revive");
     return;
   }
-  const GroupResult survival = ApplyAndLogGroup(base, script_patch::CoopSurvivalGroup(), players,
-                                                alloc, "Stage 1 stays applied", stack);
+  const bool extra_players_end_game = REXCVAR_GET(gow2_coop_extra_players_game_over);
+  if (extra_players_end_game) {
+    REXLOG_INFO("SCRIPTPATCH survival: S2A-2 off (gow2_coop_extra_players_game_over=true): "
+                "players 3+ dying ends the game");
+  }
+  const GroupResult survival =
+      ApplyAndLogGroup(base, script_patch::CoopSurvivalGroup(extra_players_end_game), players,
+                       alloc, "Stage 1 stays applied", stack);
   if (survival.applied && REXCVAR_GET(gow2_coop_split_revive)) {
     ApplyAndLogGroup(base, script_patch::CoopSplitReviveGroup(), players, alloc,
                      "the survival group stays applied", stack);
@@ -299,6 +310,7 @@ void ApplyRequestGroups(const script_patch::GuestAlloc& alloc, uint8_t* base, in
 void ApplyStartupScriptPatches(PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("SCRIPTPATCH startup script packages loaded");
   StartCoopCensus(base);
+  ApplyUnlockChaptersPatch(ctx, base);
   const int players = REXCVAR_GET(gow2_coop_players);
   ApplyRequestGroups([&ctx, base](uint32_t size) { return GuestMalloc(ctx, base, size); }, base,
                      players);

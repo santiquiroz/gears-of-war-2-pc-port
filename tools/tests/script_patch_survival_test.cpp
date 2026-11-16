@@ -555,7 +555,7 @@ void CheckS2A5(FakeGuest& guest, uint32_t old_data) {
 }
 
 void TestSurvivalGroupApplies() {
-  PatchGroup group = CoopSurvivalGroup();
+  PatchGroup group = CoopSurvivalGroup(false);
   FakeGuest guest = BuildForGroup(group);
   uint32_t s1 = guest.Path("GearGame.GearGameSP_Base.SpawnDefaultPawnFor", "Function");
   uint32_t s2 = guest.Path("GearGame.GearPC.ProcessGameOver", "Function");
@@ -577,7 +577,7 @@ void TestSurvivalGroupApplies() {
 }
 
 void TestSurvivalSecondApplyIsAlreadyApplied() {
-  PatchGroup group = CoopSurvivalGroup();
+  PatchGroup group = CoopSurvivalGroup(false);
   FakeGuest guest = BuildForGroup(group);
   GuestAlloc alloc = [&guest](uint32_t size) { return guest.Alloc(size); };
   GroupResult first = ApplyGroup(guest.base(), guest.tables(), group, 4, alloc);
@@ -609,7 +609,7 @@ void TestSurvivalSecondApplyIsAlreadyApplied() {
 }
 
 void TestCorruptS2A3SkipsWholeGroup() {
-  PatchGroup group = CoopSurvivalGroup();
+  PatchGroup group = CoopSurvivalGroup(false);
   FakeGuest guest = BuildForGroup(group, [](FakeGuest& inner) {
     uint32_t func = inner.Path("GearGame.GearPC.Destroyed", "Function");
     inner.Put8(inner.U32(func + 84u) + 0x66u, 0x83);
@@ -644,13 +644,31 @@ void TestSplitReviveGroupApplies() {
 }
 
 void TestSurvivalHashStable() {
-  Expect(GroupHash(CoopSurvivalGroup(), 4) == GroupHash(CoopSurvivalGroup(), 4),
+  Expect(GroupHash(CoopSurvivalGroup(false), 4) == GroupHash(CoopSurvivalGroup(false), 4),
          "survival hash stable");
-  Expect(GroupHash(CoopSurvivalGroup(), 4) != 0u, "survival hash nonzero");
-  Expect(GroupHash(CoopSurvivalGroup(), 4) != GroupHash(CoopStage1Group(false), 4),
+  Expect(GroupHash(CoopSurvivalGroup(false), 4) != 0u, "survival hash nonzero");
+  Expect(GroupHash(CoopSurvivalGroup(false), 4) != GroupHash(CoopStage1Group(false), 4),
          "survival hash differs from stage1");
-  Expect(GroupHash(CoopSurvivalGroup(), 4) != GroupHash(CoopSplitReviveGroup(), 4),
+  Expect(GroupHash(CoopSurvivalGroup(false), 4) != GroupHash(CoopSplitReviveGroup(), 4),
          "survival hash differs from split-revive");
+}
+
+std::string RowIds(const PatchGroup& group) {
+  std::string ids;
+  for (const ScriptRow& row : group.scripts) {
+    if (!ids.empty()) ids.push_back(',');
+    ids += row.id;
+  }
+  return ids;
+}
+
+void TestSurvivalGameOverFlagLeavesOutS2A2() {
+  Expect(RowIds(CoopSurvivalGroup(false)) == "S2A-1,S2A-2,S2A-3,S2A-5",
+         "survival rows with flag false");
+  Expect(RowIds(CoopSurvivalGroup(true)) == "S2A-1,S2A-3,S2A-5",
+         "survival rows with flag true");
+  Expect(GroupHash(CoopSurvivalGroup(false), 4) != GroupHash(CoopSurvivalGroup(true), 4),
+         "survival hash differs with flag true");
 }
 
 }  // namespace
@@ -661,6 +679,7 @@ int main() {
   TestCorruptS2A3SkipsWholeGroup();
   TestSplitReviveGroupApplies();
   TestSurvivalHashStable();
+  TestSurvivalGameOverFlagLeavesOutS2A2();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures != 0 ? 1 : 0;
 }

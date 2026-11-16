@@ -1,0 +1,97 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 3fc78db..e203dab 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -50,6 +50,8 @@
+ 
+ #include "pass_timing.h"
+ 
++#include <unordered_set>
++
+ // Legacy backend compatibility aliases for shared readback controls.
+ REXCVAR_DEFINE_BOOL(vulkan_readback_resolve, false, "GPU/Vulkan",
+                     "Read render-to-texture results on the CPU")
+@@ -85,6 +87,10 @@ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
+                     "device (falls back to render passes otherwise)")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_BOOL(vulkan_skip_tessellated_draws, false, "GPU/Vulkan",
++                    "Diagnostic: skip every tessellated draw")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ REXCVAR_DECLARE(bool, gpu_vertex_buffer_state_skip);
+ 
+ #if REX_PLATFORM_ANDROID
+@@ -4320,6 +4326,31 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+                    uint32_t(host_vertex_shader_type));
+       return false;
+     }
++    if (primitive_processing_result.IsTessellated()) {
++      static std::unordered_set<uint64_t> logged_tess_draws;
++      const uint64_t key = vertex_shader->ucode_data_hash() ^
++                           (uint64_t(host_vertex_shader_type) << 56) ^
++                           (uint64_t(primitive_processing_result.tessellation_mode) << 48) ^
++                           (uint64_t(primitive_processing_result.index_buffer_type) << 40);
++      if (logged_tess_draws.size() < 32 && logged_tess_draws.insert(key).second) {
++        REXGPU_INFO(
++            "TESSDRAW vs {:016X} host_vs_type {} mode {} guest_prim {} host_prim {} guest_count {} "
++            "host_count {} index_type {} index_format {} endian {} min_raw {:08X} max_raw {:08X}",
++            vertex_shader->ucode_data_hash(), uint32_t(host_vertex_shader_type),
++            uint32_t(primitive_processing_result.tessellation_mode),
++            uint32_t(primitive_processing_result.guest_primitive_type),
++            uint32_t(primitive_processing_result.host_primitive_type),
++            primitive_processing_result.guest_draw_vertex_count,
++            primitive_processing_result.host_draw_vertex_count,
++            uint32_t(primitive_processing_result.index_buffer_type),
++            uint32_t(primitive_processing_result.host_index_format),
++            uint32_t(primitive_processing_result.host_shader_index_endian),
++            regs[XE_GPU_REG_VGT_HOS_MIN_TESS_LEVEL], regs[XE_GPU_REG_VGT_HOS_MAX_TESS_LEVEL]);
++      }
++      if (REXCVAR_GET(vulkan_skip_tessellated_draws)) {
++        return true;
++      }
++    }
+ 
+     // Shader modifications.
+     vertex_shader_modification = pipeline_cache_->GetCurrentVertexShaderModification(
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 8ebe0bf..5bcb40d 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -300,7 +300,10 @@ constexpr bool IsPatchIndexedHostVertexShaderType(
+ 
+ std::string GetTessellationSystemConstantsBlockGlsl() {
+   std::string source;
+-  source += "layout(set = 0, binding = 0, std140) uniform XeSystemConstants {\n";
++  // The system constants are in the constants set; set 0 holds the shared memory and the EDRAM.
++  source += fmt::format("layout(set = {}, binding = {}, std140) uniform XeSystemConstants {{\n",
++                        uint32_t(SpirvShaderTranslator::kDescriptorSetConstants),
++                        uint32_t(SpirvShaderTranslator::kConstantBufferSystem));
+   source += fmt::format("  layout(offset = {}) uint xe_vertex_index_endian;\n",
+                         offsetof(SpirvShaderTranslator::SystemConstants, vertex_index_endian));
+   source += fmt::format("  layout(offset = {}) int xe_vertex_base_index;\n",
+@@ -337,7 +340,7 @@ uint xe_swap_16_in_32(uint value) {
+ void main() {
+   uint value = uint(gl_VertexIndex);
+   uint endian = xe_system_cbuffer.xe_vertex_index_endian;
+-  if (endian == 1u || endian == 2u || endian == 3u) {
++  if (endian == 1u || endian == 2u) {
+     value = xe_swap_8_in_16(value);
+   }
+   if (endian == 2u || endian == 3u) {
+@@ -371,13 +374,13 @@ uint xe_swap_16_in_32(uint value) {
+ void main() {
+   uint value = uint(gl_VertexIndex);
+   uint endian = xe_system_cbuffer.xe_vertex_index_endian;
+-  if (endian == 1u || endian == 2u || endian == 3u) {
++  if (endian == 1u || endian == 2u) {
+     value = xe_swap_8_in_16(value);
+   }
+   if (endian == 2u || endian == 3u) {
+     value = xe_swap_16_in_32(value);
+   }
+-  float tessellation_factor = float(value) + 1.0;
++  float tessellation_factor = uintBitsToFloat(value) + 1.0;
+   tessellation_factor = max(
+       tessellation_factor, xe_system_cbuffer.xe_tessellation_factor_range_min);
+   tessellation_factor = min(

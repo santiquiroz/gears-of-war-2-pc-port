@@ -212,12 +212,21 @@ void WidenUiImagesTick(const PPCContext& ctx, uint8_t* base) {
 
 [[maybe_unused]] const bool kUiTickRegistered = (AddEngineTickListener(&FixUiProjectionTick), true);
 
+// The render target path rules below are D3D12's; off Windows there is no D3D12 path.
+std::string D3d12GpuName() {
+#ifdef _WIN32
+  return ChooseRenderGpu().name;
+#else
+  return {};
+#endif
+}
+
 double ComputeWidescreenAspect() {
   const std::string mode = REXCVAR_GET(gow2_widescreen);
   const double parsed = widescreen::ParseAspect(mode, DisplayAspect());
   if (mode != "auto" || parsed <= 0.0) return parsed;
   const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
-  const std::string gpu = ChooseRenderGpu().name;
+  const std::string gpu = D3d12GpuName();
   const bool native = NativeRendererActive();
   if (widescreen::AutoWidescreenSafe(native, path, gpu)) return parsed;
   if (widescreen::AutoWidescreenSwitchesToRov(native, path, gpu) &&
@@ -234,7 +243,7 @@ double ComputeWidescreenAspect() {
 void PreferHostRenderTargets(double aspect) {
   const bool native = NativeRendererActive();
   const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
-  const std::string gpu = ChooseRenderGpu().name;
+  const std::string gpu = D3d12GpuName();
   if (!widescreen::AutoPicksHostRenderTargets(native, path, gpu, aspect)) return;
   if (!rex::cvar::SetFlagByName("render_target_path_d3d12", "rtv")) return;
   REXLOG_INFO("RTPATH {} at 16:9: render target path set to 'rtv' (ROV draws some weapons and heads blue or "
@@ -260,7 +269,7 @@ int ComputeBackBufferHeight() {
   const bool native = NativeRendererActive();
   // WidescreenAspect may switch the render path to ROV; use that final path for this height.
   const std::string path = rex::cvar::Query<std::string>("render_target_path_d3d12");
-  const bool virtual_edram = widescreen::AutoWidescreenSafe(native, path, ChooseRenderGpu().name);
+  const bool virtual_edram = widescreen::AutoWidescreenSafe(native, path, D3d12GpuName());
   const int edram_tiles = virtual_edram ? widescreen::kVirtualEdramTiles : widescreen::kConsoleEdramTiles;
   const int height = widescreen::BackBufferHeight(aspect, base_height, edram_tiles);
   const int requested = widescreen::BackBufferHeight(aspect, base_height, widescreen::kVirtualEdramTiles);

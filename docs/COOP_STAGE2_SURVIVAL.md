@@ -186,6 +186,13 @@ DPC = `GearGame.GearPC.DefaultPawnClass`.
   when EndGameCondition armed every PC) does nothing and bleeds out later.
 - An extra being destroyed does nothing.
 
+The option `gow2_coop_extra_players_game_over` (PC Options > Multiplayer,
+"Players 3+ dying ends the game") leaves S2A-2 out of the survival group, so the
+retail game-over rule applies to every player: a dead player 3+ ends the game
+for everyone, like Marcus and Dom. The hook logs `SCRIPTPATCH survival: S2A-2
+off (gow2_coop_extra_players_game_over=true)` when it applies the group without
+the row.
+
 ### S2A-3 tail at +0x0437
 
 ```
@@ -250,6 +257,7 @@ DefaultPawnClass is Dom).
 | Setting | Default | Effect |
 |---|---|---|
 | `gow2_coop_survival` | true | With `gow2_coop_players` 3+ applies the survival group after Stage 1; false logs `SCRIPTPATCH survival: off (gow2_coop_survival=false)` |
+| `gow2_coop_extra_players_game_over` | false | Leaves S2A-2 out of the survival group, so a dead player 3+ ends the game for everyone |
 | `gow2_coop_split_revive` | false | Debug, row S2A-4; applies the split-revive group only after the survival group applied |
 
 Log lines: `SCRIPTPATCH survival S2A-1 ...` one per row, then

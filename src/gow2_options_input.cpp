@@ -33,6 +33,13 @@ uint64_t Elapsed(int64_t now_ms, int64_t start_ms) {
   return static_cast<uint64_t>(now_ms) - static_cast<uint64_t>(start_ms);
 }
 
+uint16_t ComboMask(std::string_view combo) {
+  if (combo == "back_dpad_up") return 0x0020 | 0x0001;
+  if (combo == "back_dpad_down") return 0x0020 | 0x0002;
+  if (combo == "ls_rs") return 0x0040 | 0x0080;
+  return 0;
+}
+
 void AppendButtonCommands(std::vector<Command>& commands, uint16_t pressed) {
   constexpr std::array<uint16_t, 6> bits{0x1000, 0x2000, 0x4000, 0x8000, 0x0100, 0x0200};
   constexpr std::array<Command, 6> actions{
@@ -44,6 +51,13 @@ void AppendButtonCommands(std::vector<Command>& commands, uint16_t pressed) {
 }
 
 }  // namespace
+
+bool ComboJustPressed(uint16_t previous_buttons, uint16_t current_buttons,
+                      std::string_view combo) {
+  const uint16_t mask = ComboMask(combo);
+  if (mask == 0) return false;
+  return (current_buttons & mask) == mask && (previous_buttons & mask) != mask;
+}
 
 bool RepeatGate::Update(bool held, int64_t now_ms) {
   if (!held) {

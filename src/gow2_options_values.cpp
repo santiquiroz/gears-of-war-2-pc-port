@@ -52,6 +52,7 @@ REXCVAR_DEFINE_INT32(gow2_texture_build_scale, 2, "GPU/Textures", "Build texture
 REXCVAR_DEFINE_STRING(gow2_texture_build_quality, "disc", "GPU/Textures",
                       "Build texture pack: disc keeps each texture's format, bc7 is sharper and larger")
     .allowed({"disc", "bc7"});
+REXCVAR_DEFINE_STRING(gow2_coop_go_to_player1_pad, "none", "Input", "Controller combo for Go to player 1: none, back_dpad_up, back_dpad_down or ls_rs");
 
 namespace {
 

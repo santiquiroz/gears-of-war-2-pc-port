@@ -19,6 +19,7 @@ set(GOW2_SOURCES
     src/gow2_voice_language_setup.cpp
     src/gow2_sha_table.cpp
     src/gow2_gpu_pick.cpp
+    src/gow2_vulkan_probe.cpp
     src/gow2_native_frontend.cpp
     src/gow2_mouse_aim.cpp
     src/gow2_key_names.cpp
@@ -58,6 +59,8 @@ set(GOW2_SOURCES
     src/gow2_dev_map_change.cpp
     src/gow2_dev_cheats.cpp
     src/gow2_dev_cheats_table.cpp
+    src/gow2_unlock_chapters.cpp
+    src/gow2_unlock_chapters_table.cpp
     # In-game PC Options menu (src/gow2_options_*), its saving, actions and the settings it adds.
     src/gow2_toml_edit.cpp
     src/gow2_config_seed.cpp
@@ -113,6 +116,9 @@ endif()
 if(WIN32)
     target_link_libraries(gow2 PRIVATE winhttp shell32)
 endif()
+if(UNIX)
+    target_link_libraries(gow2 PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # Native renderer phase 0 (docs/NATIVE_RENDERER_STUDY.md): counting hooks on the PM4-emitting functions.
 option(GOW2_NATIVE_PROBE "Build the native renderer identification probe (development only)" OFF)
@@ -124,7 +130,7 @@ if(GOW2_NATIVE_PROBE)
 endif()
 
 # Shown in the PC Options menu; scripts/package.ps1 names the release zip with the same version.
-set(GOW2_VERSION "0.4.4" CACHE STRING "Port version shown in game")
+set(GOW2_VERSION "0.4.5" CACHE STRING "Port version shown in game")
 target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 
 # Host-side test of the script patcher on synthetic guest memory (no game data). Not part of the

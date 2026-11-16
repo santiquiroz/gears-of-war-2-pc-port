@@ -165,6 +165,16 @@ void TestQuitHold() {
   Expect(progress.QuitHoldProgress(800) == 0.f, "quit hold progress is zero when released");
 }
 
+void TestComboJustPressed() {
+  Expect(ComboJustPressed(0x0000, 0x0021, "back_dpad_up"), "back plus dpad up press edge fires");
+  Expect(!ComboJustPressed(0x0021, 0x0021, "back_dpad_up"), "held back plus dpad up does not fire");
+  Expect(!ComboJustPressed(0x0000, 0x0020, "back_dpad_up"), "only back held does not fire");
+  Expect(ComboJustPressed(0x0040, 0x00C0, "ls_rs"), "both stick clicks press edge fires");
+  Expect(!ComboJustPressed(0x00C0, 0x00C0, "ls_rs"), "held stick clicks do not fire");
+  Expect(!ComboJustPressed(0x0000, 0x0021, "none"), "none never fires");
+  Expect(!ComboJustPressed(0x0000, 0xFFFF, "xyz"), "unknown combo never fires");
+}
+
 int main() {
   TestRepeatGate();
   TestChordGate();
@@ -172,6 +182,7 @@ int main() {
   TestDirections();
   TestSuppressionAndReset();
   TestQuitHold();
+  TestComboJustPressed();
   std::printf("options_input_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }

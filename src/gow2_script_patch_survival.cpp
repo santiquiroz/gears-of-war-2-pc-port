@@ -347,11 +347,13 @@ ScriptRow RowS2A_4() {
 
 }  // namespace
 
-PatchGroup CoopSurvivalGroup() {
-  return {
-      .name = "survival",
-      .scripts = {RowS2A_1(), RowS2A_2(), RowS2A_3(), RowS2A_5()},
-  };
+PatchGroup CoopSurvivalGroup(bool extra_players_end_game) {
+  PatchGroup group{.name = "survival"};
+  group.scripts.push_back(RowS2A_1());
+  if (!extra_players_end_game) group.scripts.push_back(RowS2A_2());
+  group.scripts.push_back(RowS2A_3());
+  group.scripts.push_back(RowS2A_5());
+  return group;
 }
 
 PatchGroup CoopSplitReviveGroup() {

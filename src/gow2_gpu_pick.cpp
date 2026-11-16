@@ -6,6 +6,7 @@
 #include <rex/cvar.h>
 
 #include "gow2_native_renderer_math.h"
+#include "gow2_vulkan_probe.h"
 
 REXCVAR_DEFINE_STRING(gow2_gpu, "auto", "UI/D3D12",
                       "GPU to render on: auto (the one Windows sets as high performance), part "
@@ -32,6 +33,16 @@ bool NativeRendererActive() {
   }();
   return active;
 }
+
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+namespace {
+// Built once: ChooseRenderGpu runs several times at startup.
+const std::vector<VulkanDevice>& CachedVulkanDevices() {
+  static const std::vector<VulkanDevice> devices = ListVulkanDevices();
+  return devices;
+}
+}  // namespace
+#endif
 
 }  // namespace rex::glue
 
@@ -152,6 +163,16 @@ bool QueryIntegrated(IDXGIFactory1* factory, const Adapter& adapter) {
   return LooksIntegrated(uma.has_value(), uma.value_or(false), uint64_t(adapter.dedicated));
 }
 
+bool RunningUnderWine() {
+  return GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+}
+
+// vkd3d-proton reports UMA = false for integrated GPUs, so Vulkan's device type wins there.
+bool IntegratedUnderWine(const std::string& name) {
+  if (!RunningUnderWine()) return false;
+  return VulkanSaysIntegrated(CachedVulkanDevices(), name);
+}
+
 const Adapter* FindByLuid(const std::vector<Adapter>& adapters, LUID luid) {
   for (const Adapter& a : adapters) {
     if (a.luid.LowPart == luid.LowPart && a.luid.HighPart == luid.HighPart) return &a;
@@ -193,7 +214,8 @@ GpuChoice ChooseAuto(IDXGIFactory1* factory, const std::vector<Adapter>& adapter
   const std::vector<LUID> order = HighPerformanceOrder(factory);
   for (const LUID& luid : order) {
     const Adapter* a = FindByLuid(adapters, luid);
-    if (a && !QueryUma(factory, luid).value_or(false)) return ToChoice(a, "first dedicated GPU in Windows' high-performance order");
+    if (a && !QueryUma(factory, luid).value_or(false) && !IntegratedUnderWine(a->name))
+      return ToChoice(a, "first dedicated GPU in Windows' high-performance order");
   }
   if (!order.empty()) {
     if (const Adapter* a = FindByLuid(adapters, order.front())) return ToChoice(a, "Windows high-performance GPU");
@@ -220,7 +242,7 @@ GpuChoice ChooseRenderGpu() {
   GpuChoice choice = ChooseFromSetting(factory, adapters, REXCVAR_GET(gow2_gpu));
   for (const Adapter& adapter : adapters) {
     if (choice.index >= 0 && adapter.index == choice.index) {
-      choice.integrated = QueryIntegrated(factory, adapter);
+      choice.integrated = QueryIntegrated(factory, adapter) || IntegratedUnderWine(adapter.name);
       break;
     }
   }
@@ -239,6 +261,16 @@ std::vector<GpuAdapterInfo> ListRenderGpus() {
   }
   return out;
 }
+
+}  // namespace rex::glue
+
+#elif defined(__linux__) && !defined(__ANDROID__)
+
+namespace rex::glue {
+
+GpuChoice ChooseRenderGpu() { return ChooseVulkanGpu(CachedVulkanDevices(), REXCVAR_GET(gow2_gpu)); }
+
+std::vector<GpuAdapterInfo> ListRenderGpus() { return {}; }
 
 }  // namespace rex::glue
 

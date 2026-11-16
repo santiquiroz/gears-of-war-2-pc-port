@@ -256,6 +256,14 @@ def test_render_cpp_matches_file():
 
 def test_render_cpp_contains_groups():
     text = sv.render_cpp()
-    assert "PatchGroup CoopSurvivalGroup()" in text
-    assert ".scripts = {RowS2A_1(), RowS2A_2(), RowS2A_3(), RowS2A_5()}," in text
+    assert "PatchGroup CoopSurvivalGroup(bool extra_players_end_game)" in text
+    assert "if (!extra_players_end_game) group.scripts.push_back(RowS2A_2());" in text
     assert "PatchGroup CoopSplitReviveGroup()" in text
+
+
+@pytest.mark.parametrize("flag, want", [
+    (False, ["S2A-1", "S2A-2", "S2A-3", "S2A-5"]),
+    (True, ["S2A-1", "S2A-3", "S2A-5"]),
+])
+def test_survival_rows_flag_leaves_out_s2a2(flag, want):
+    assert [row.id for row in sv.survival_rows(flag)] == want

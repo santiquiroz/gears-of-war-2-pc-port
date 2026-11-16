@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 #include "gow2_options_model.h"
@@ -16,6 +17,9 @@ struct PadSample {
   float lx = 0;
   float ly = 0;
 };
+
+bool ComboJustPressed(uint16_t previous_buttons, uint16_t current_buttons,
+                      std::string_view combo);
 
 class RepeatGate {
  public:

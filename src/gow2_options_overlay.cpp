@@ -306,10 +306,13 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     reader_.Reset(CurrentPad());
     rex::ui::RegisterBind("bind_pc_options", "F10", "Toggle the PC Options menu",
                           [] { TogglePcOptions(OpenSource::kShortcut); });
+    rex::ui::RegisterBind("bind_coop_go_to_player1", "F6", "Go to player 1 (campaign co-op)",
+                          [] { coop_requests::RequestGoToPlayer1(); });
   }
 
   ~OptionsOverlay() override {
     rex::ui::UnregisterBind("bind_pc_options");
+    rex::ui::UnregisterBind("bind_coop_go_to_player1");
     CloseForShutdown();
     {
       std::lock_guard lock(g_modal_mutex);
@@ -386,6 +389,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   void OnDraw(ImGuiIO& io) override {
     ApplyMenuStyleScale();
     pad_ = CurrentPad();
+    CheckCoopCombo();
     const auto now = NowMs();
     if (reader_.ToggleChord(pad_, now)) Toggle(OpenSource::kChord);
     ObserveHostResult();
@@ -627,6 +631,18 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 #else
     return io.MouseSource == ImGuiMouseSource_TouchScreen;
 #endif
+  }
+
+  void CheckCoopCombo() {
+    if (!coop_previous_valid_) {
+      coop_previous_buttons_ = pad_.buttons;
+      coop_previous_valid_ = true;
+      return;
+    }
+    const bool edge = ComboJustPressed(coop_previous_buttons_, pad_.buttons,
+        rex::cvar::Query<std::string>("gow2_coop_go_to_player1_pad"));
+    coop_previous_buttons_ = pad_.buttons;
+    if (!open_ && edge) coop_requests::RequestGoToPlayer1();
   }
 
   void TrackDevice(const ImGuiIO& io) {
@@ -1510,6 +1526,8 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   PadReader popup_pad_;
   PadSample pad_{};
   PadSample previous_pad_{};
+  uint16_t coop_previous_buttons_ = 0;
+  bool coop_previous_valid_ = false;
   std::array<RepeatGate,4> keyboard_gates_{};
   bool touch_ = false;
   bool open_ = false;

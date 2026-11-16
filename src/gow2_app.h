@@ -285,7 +285,7 @@ class Gow2App : public rex::ReXApp {
   }
 
   // An explicit d3d12_adapter in gow2.toml or on the command line wins over gow2_gpu.
-  // Off Windows ChooseRenderGpu picks nothing (index -1), so this stays a no-op there.
+  // On Linux ChooseRenderGpu picks a Vulkan device (d3d12_adapter does not exist there, so that SetIfUnset is a no-op); on Android it picks nothing (index -1).
   static void PickRenderGpu() {
     const rex::glue::GpuChoice gpu = rex::glue::ChooseRenderGpu();
     if (gpu.index >= 0 && SetIfUnset("d3d12_adapter", std::to_string(gpu.index))) {

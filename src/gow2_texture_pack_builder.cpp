@@ -7,6 +7,7 @@
 #include "gow2_gpu_pick.h"
 #include "gow2_texture_pack_plan.h"
 #include "gow2_texture_packs.h"
+#include "gow2_vulkan_probe.h"
 
 #include <algorithm>
 #include <atomic>
@@ -55,43 +56,6 @@ struct Job {
   plan::Plan plan;
 };
 
-// Mirrors vulkan_core.h: the SDK ships no Vulkan headers and only these few are needed.
-namespace vk {
-using Instance = struct Instance_T*;
-using PhysicalDevice = struct PhysicalDevice_T*;
-using Result = int32_t;
-using VoidFunction = void (*)();
-constexpr int32_t kStructureTypeApplicationInfo = 0;
-constexpr int32_t kStructureTypeInstanceCreateInfo = 1;
-constexpr uint32_t kApiVersion10 = 1u << 22;
-constexpr size_t kDeviceNameOffset = 20;
-constexpr size_t kDeviceNameSize = 256;
-struct ApplicationInfo {
-  int32_t sType;
-  const void* pNext;
-  const char* pApplicationName;
-  uint32_t applicationVersion;
-  const char* pEngineName;
-  uint32_t engineVersion;
-  uint32_t apiVersion;
-};
-struct InstanceCreateInfo {
-  int32_t sType;
-  const void* pNext;
-  uint32_t flags;
-  const ApplicationInfo* pApplicationInfo;
-  uint32_t enabledLayerCount;
-  const char* const* ppEnabledLayerNames;
-  uint32_t enabledExtensionCount;
-  const char* const* ppEnabledExtensionNames;
-};
-using GetInstanceProcAddr = VoidFunction (*)(Instance, const char*);
-using CreateInstance = Result (*)(const InstanceCreateInfo*, const void*, Instance*);
-using DestroyInstance = void (*)(Instance, const void*);
-using EnumeratePhysicalDevices = Result (*)(Instance, uint32_t*, PhysicalDevice*);
-using GetPhysicalDeviceProperties = void (*)(PhysicalDevice, void*);
-}  // namespace vk
-
 fs::path ExeDir() { return rex::filesystem::GetExecutablePath().parent_path(); }
 fs::path TexconvExe() { return ExeDir() / "tools" / "texconv" / "texconv.exe"; }
 fs::path EsrganDir() { return ExeDir() / "tools" / "realesrgan"; }
@@ -134,54 +98,10 @@ plan::Content Classify(const fs::path& file, const plan::DumpName& dump) {
   return plan::ClassifyTexture(dump.format, plan::DdsMip0(bytes, dump));
 }
 
-template <typename Fn>
-Fn VulkanProc(vk::GetInstanceProcAddr get, vk::Instance instance, const char* name) {
-  return reinterpret_cast<Fn>(get(instance, name));
-}
-
-std::string VulkanDeviceName(vk::GetPhysicalDeviceProperties get_properties, vk::PhysicalDevice device) {
-  // The real VkPhysicalDeviceProperties is 824 bytes; the spare room covers a driver writing a newer layout.
-  alignas(8) uint8_t properties[1024] = {};
-  get_properties(device, properties);
-  const char* name = reinterpret_cast<const char*>(properties + vk::kDeviceNameOffset);
-  return std::string(name, strnlen(name, vk::kDeviceNameSize));
-}
-
-std::vector<std::string> VulkanDeviceNames(vk::GetInstanceProcAddr get, vk::Instance instance) {
-  const auto enumerate = VulkanProc<vk::EnumeratePhysicalDevices>(get, instance, "vkEnumeratePhysicalDevices");
-  const auto properties = VulkanProc<vk::GetPhysicalDeviceProperties>(get, instance, "vkGetPhysicalDeviceProperties");
-  if (!enumerate || !properties) return {};
-  uint32_t count = 0;
-  if (enumerate(instance, &count, nullptr) < 0 || count == 0) return {};
-  std::vector<vk::PhysicalDevice> devices(count);
-  if (enumerate(instance, &count, devices.data()) < 0) return {};
-  devices.resize(count);
-  std::vector<std::string> names;
-  for (const auto device : devices) names.push_back(VulkanDeviceName(properties, device));
-  return names;
-}
-
-std::vector<std::string> VulkanDeviceNames(vk::GetInstanceProcAddr get) {
-  const auto create = VulkanProc<vk::CreateInstance>(get, nullptr, "vkCreateInstance");
-  if (!create) return {};
-  const vk::ApplicationInfo app{vk::kStructureTypeApplicationInfo, nullptr, "gow2", 0, nullptr, 0, vk::kApiVersion10};
-  const vk::InstanceCreateInfo info{vk::kStructureTypeInstanceCreateInfo, nullptr, 0, &app, 0, nullptr, 0, nullptr};
-  vk::Instance instance = nullptr;
-  if (create(&info, nullptr, &instance) < 0 || !instance) return {};
-  auto names = VulkanDeviceNames(get, instance);
-  if (const auto destroy = VulkanProc<vk::DestroyInstance>(get, instance, "vkDestroyInstance")) destroy(instance, nullptr);
-  return names;
-}
-
 // ncnn numbers its -g devices in this same enumeration order.
 std::vector<std::string> VulkanDeviceNames() {
-  const HMODULE loader = LoadLibraryW(L"vulkan-1.dll");
-  if (!loader) return {};
   std::vector<std::string> names;
-  if (const auto get = reinterpret_cast<vk::GetInstanceProcAddr>(GetProcAddress(loader, "vkGetInstanceProcAddr"))) {
-    names = VulkanDeviceNames(get);
-  }
-  FreeLibrary(loader);
+  for (const VulkanDevice& device : ListVulkanDevices()) names.push_back(device.name);
   return names;
 }
 
