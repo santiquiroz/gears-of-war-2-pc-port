@@ -1570,14 +1570,14 @@ void AddSaves(std::vector<Setting>& out) {
       .kind = Kind::kToggle,
       .apply = Apply::kRestart,
       .platforms = kAllPlatforms,
-      .label_en = "All chapters unlocked",
-      .label_es = "Todos los capítulos desbloqueados",
+      .label_en = "All chapters and Insane unlocked",
+      .label_es = "Todos los capítulos y Locura desbloqueados",
       .help_en =
-          "Every act and chapter can be picked in Campaign, at every difficulty. Your saved "
-          "progress is not changed.",
+          "Every act and chapter can be picked in Campaign, at every difficulty, and Insane can be "
+          "picked without finishing the campaign first. Your saved progress is not changed.",
       .help_es =
-          "Puedes elegir cualquier acto y capítulo en Campaña, en cualquier dificultad. Tu "
-          "progreso guardado no cambia."});
+          "Puedes elegir cualquier acto y capítulo en Campaña, en cualquier dificultad, y jugar en "
+          "Locura sin terminar antes la campaña. Tu progreso guardado no cambia."});
 }
 
 void AddAudio(std::vector<Setting>& out) {

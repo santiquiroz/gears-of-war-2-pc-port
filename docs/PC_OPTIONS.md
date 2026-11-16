@@ -262,7 +262,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Folder path | `gow2_save_dir` | text (advanced) | restart | both |
 | Saves are in | info | the folder this session uses | now | both |
 | Open the saves folder | action | opens File Explorer | now | Windows |
-| All chapters unlocked | `gow2_unlock_all_chapters` | on, off | restart | both |
+| All chapters and Insane unlocked | `gow2_unlock_all_chapters` | on, off | restart | both |
 
 ## Audio
 

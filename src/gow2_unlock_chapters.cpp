@@ -16,7 +16,7 @@
 #include <string>
 
 REXCVAR_DEFINE_BOOL(gow2_unlock_all_chapters, true, "Campaign",
-                    "Every campaign act and chapter can be picked in Campaign > Chapter select and in the co-op lobby. Only the menu checks change; the saved profile is not touched");
+                    "Every campaign act and chapter can be picked in Campaign > Chapter select and in the co-op lobby, and Insane can be picked without finishing the campaign. Only the menu checks change; the saved profile is not touched");
 
 namespace rex::glue {
 namespace {
@@ -55,7 +55,7 @@ bool GuardedApply(ApplyCall* call) {
 
 void LogResult(const GroupResult& result) {
   if (!result.applied) {
-    REXLOG_WARN("SCRIPTPATCH unlockchapters: skipped ({}: {}); chapters stay locked",
+    REXLOG_WARN("SCRIPTPATCH unlockchapters: skipped ({}: {}); chapters and Insane stay locked",
                 result.failed_row, result.reason);
     return;
   }
@@ -79,7 +79,7 @@ void ApplyUnlockChaptersPatch(PPCContext&, uint8_t* base) {
   GroupResult result;
   ApplyCall call{base, &group, &alloc, &result};
   if (!GuardedApply(&call)) {
-    REXLOG_WARN("SCRIPTPATCH unlockchapters: skipped (fault while reading guest objects); chapters stay locked");
+    REXLOG_WARN("SCRIPTPATCH unlockchapters: skipped (fault while reading guest objects); chapters and Insane stay locked");
     return;
   }
   LogResult(result);

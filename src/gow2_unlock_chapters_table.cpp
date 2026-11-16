@@ -1,7 +1,8 @@
 // gow2 - ReXGlue Recompiled Project
 //
 // The unlockchapters rows: every campaign act and chapter can be picked in the
-// chapter-select and co-op lobby menus. Printed by
+// chapter-select and co-op lobby menus, and Insane can be picked without
+// finishing the campaign. Printed by
 // `python -I tools/unlock_chapters_patch.py --cpp`; edit the rows there, not here. Check them
 // against your own decompressed packages with `python -I tools/unlock_chapters_patch.py --check <folder>`.
 
@@ -87,12 +88,35 @@ ScriptRow RowUNL_3() {
   };
 }
 
+// InitializeWidgetReferences -> skip the Insane lock (Insane can be picked without finishing the campaign)
+ScriptRow RowUNL_4() {
+  return {
+      .id = "UNL-4",
+      .function = {"GearGame.GearUISceneFE_Difficulty.InitializeWidgetReferences", "Function"},
+      .script_size = 889,
+      .checks = {
+          {0x009F, {0x06, 0x00, 0x1B}},
+          {0x00B5, {0x01, 0x27, 0x82, 0x82, 0x77}},
+          {0x00EF, {0x1B}},
+          {0x00F8, {0x24, 0x00, 0x16, 0x16, 0x16, 0x0F}},
+          {0x0127, {0x19}},
+      },
+      .operands = {
+          {0x00AE, {"Engine.UIScreenObject.GetBestPlayerIndex", "Function"}},
+          {0x00BB, {"GearGame.GearUISceneFE_Difficulty.InitializeWidgetReferences.PC", "ObjectProperty"}},
+      },
+      .byte_edits = {
+          {0x00B4, 0x07, 0x06},
+      },
+  };
+}
+
 }  // namespace
 
 PatchGroup UnlockChaptersGroup() {
   return {
       .name = "unlockchapters",
-      .scripts = {RowUNL_1(), RowUNL_2(), RowUNL_3()},
+      .scripts = {RowUNL_1(), RowUNL_2(), RowUNL_3(), RowUNL_4()},
       .defaults = {},
   };
 }

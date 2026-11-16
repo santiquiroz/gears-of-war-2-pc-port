@@ -79,6 +79,7 @@ def test_plan_applies_two_byte_changes():
         "UNL-1 GearGame.GearProfileSettings.HasActBeenUnlockedForAccess: 2 write(s)",
         "UNL-2 GearGame.GearUISceneFE_SelectChapter.CanAccessChapter: 2 write(s)",
         "UNL-3 GearGame.GearUISceneFELobby_Campaign.ShouldDisableElementChapter: 2 write(s)",
+        "UNL-4 GearGame.GearUISceneFE_Difficulty.InitializeWidgetReferences: 1 write(s)",
     ]
 
 
@@ -94,6 +95,7 @@ def test_already_applied():
         "UNL-1 GearGame.GearProfileSettings.HasActBeenUnlockedForAccess: already applied",
         "UNL-2 GearGame.GearUISceneFE_SelectChapter.CanAccessChapter: already applied",
         "UNL-3 GearGame.GearUISceneFELobby_Campaign.ShouldDisableElementChapter: already applied",
+        "UNL-4 GearGame.GearUISceneFE_Difficulty.InitializeWidgetReferences: already applied",
     ]
 
 
@@ -134,8 +136,20 @@ def test_function_found_twice():
         sp.plan_group(model, list(ucp.ROWS), 4)
 
 
-def test_want_first_covers_every_row():
-    assert set(ucp.WANT_FIRST) == {row.id for row in ucp.ROWS}
+def test_want_covers_every_row():
+    assert set(ucp.WANT) == {row.id for row in ucp.ROWS}
+
+
+def test_unl_4_single_byte_edit():
+    model, scripts = make_model()
+    plan = sp.plan_group(model, list(ucp.ROWS), 4)
+    out = sp.apply_plan(model, plan)
+    row, handle, before = scripts["UNL-4"]
+    after = out[handle]
+    assert after[0xB4] == 0x06
+    for i in range(row.script_size):
+        if i != 0xB4:
+            assert after[i] == before[i]
 
 
 def test_render_cpp_matches_file():
