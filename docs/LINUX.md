@@ -76,6 +76,15 @@ storage or to a card formatted by SteamOS.
   200` in `gow2.toml` makes it sleep between checks: on a phone that freed about half a core for
   about 7 % fewer frames per GPU clock. It is off by default and not measured on a Steam Deck; try it
   if battery life matters more than the last frames.
+- Since 0.4.5 the game picks the GPU on Linux like on Windows: the first discrete GPU, else the
+  integrated one (Legion Go, Steam Deck). An integrated GPU gets `resolution_scale` 1 and a discrete
+  one 2 unless `gow2.toml` sets it; `gow2_gpu` picks another GPU by part of its name or its position.
+  The log names the pick as `gow2 vulkan_device_name -> '...'`. Under Proton an integrated GPU now
+  counts as integrated: before 0.4.5 vkd3d-proton made it look dedicated and the game picked
+  `resolution_scale` 2.
+- The Riftworm interior (act 5) no longer loses the GPU device on Vulkan (SDK patch 0091). Under
+  Proton, Vulkan (`gpu_backend = vulkan`) is the recommended backend for that chapter: D3D12 through
+  vkd3d-proton was also reported to lose the device there and was not tested here.
 
 ## Build
 

@@ -48,7 +48,7 @@ Leer en español: [README.es.md](README.es.md)
 - [ ] Full campaign play-through
 - [x] System Link campaign co-op for up to four players (`gow2_coop_players`, off by default): four copies on one PC (loopback), and a PC with an Android phone on one LAN for two players, verified 2026-10-14 and 2026-10-15; Stage 2 (chapter changes, deaths, leave/rejoin, checkpoints, cinematics) verified with four copies on one PC on 2026-10-16; a phone and a PC on 0.2.0 joined one System Link lobby on 2026-10-16; 8 and 10 players are experimental (0.3.0, eight copies joined on one PC)
 - [x] Internet play, experimental (`net_peers`, `net_public_address`, `net_allow_peers`): a phone on mobile data joined a PC-hosted campaign through ports opened by UPnP, verified 2026-10-15; a PC friend outside the network has not been tried yet
-- [x] Co-op friendly fire and Go to player 1 (0.4.2, campaign co-op): players can hurt each other only while every player turns on PC Options > Multiplayer > Friendly fire (co-op), and only between human players; Go to player 1 (same menu) moves a stuck guest next to player 1 ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md#friendly-fire-and-go-to-player-1)). Every player needs 0.4.2
+- [x] Co-op friendly fire and Go to player 1 (0.4.2, campaign co-op): players can hurt each other only while every player turns on PC Options > Multiplayer > Friendly fire (co-op), and only between human players; Go to player 1 (same menu) moves a stuck guest next to player 1 ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md#friendly-fire-and-go-to-player-1)). Every player needs 0.4.2. Since 0.4.5 the same menu holds a key (F6) and a controller combo for Go to player 1, and every campaign chapter is unlocked by default (Saves > All chapters unlocked)
 - [x] In-game options menu (PC Options; Device Options on Android) ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md)): verified on a PC and on a Galaxy S25 Ultra on 2026-10-16
 - [x] Game quality options: Graphics > Game quality with Low/Medium/High/Custom presets and 24 of the game's own engine settings (shadows, lights, bloom, motion blur, depth of field, ambient occlusion, flares, distortion, decals, fog, foliage, level of detail); all 76 keys in [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)
 - [x] Update checker on PC and Android (GitHub Releases, at most twice a day, `gow2_update_check`)
@@ -100,6 +100,8 @@ A native Linux build for Steam Deck, Legion Go with SteamOS and desktop distribu
 2. Run `./gow2.sh`. On SteamOS, add `gow2.sh` to Steam as a non-Steam game (in Browse, set File type to All Files) and leave Proton off. If Steam says "Unsupported file type", the files lost their executable permission, usually because they were extracted on Windows: open a terminal in the game folder and run `chmod +x gow2 gow2.sh`.
 
 Since 0.4.2 it needs an x86-64-v3 CPU: Steam Deck, Legion Go, Intel from 2013 (Haswell) on and every AMD Ryzen; `gow2.sh` says so on an older CPU. The RenderDoc "Capturing Vulkan" overlay SteamOS showed with 0.4.1 is off since 0.4.2.
+
+Since 0.4.5 the game picks the GPU on Linux like on Windows (first discrete, else integrated; `gow2_gpu` overrides it), and the Riftworm interior (act 5) no longer loses the GPU device on Vulkan. Under Proton, Vulkan is the recommended backend for that chapter.
 
 It runs on Vulkan, so the Direct3D 12 features (FSR and DLSS upscaling, frame generation, HDR10, texture packs) are not available. Details, save locations and building it yourself: [docs/LINUX.md](docs/LINUX.md).
 

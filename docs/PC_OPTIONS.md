@@ -236,6 +236,9 @@ next start. Menu prompts update after a restart.
 | Co-op players | `gow2_coop_players` | 2, 3, 4, 8, 10 (8 and 10 experimental) | restart | both |
 | Friendly fire (co-op) | `gow2_friendly_fire` | on, off | now | both |
 | Go to player 1 | action | | now | both |
+| Key: go to player 1 | `bind_coop_go_to_player1` | a key, F6 by default | now | both |
+| Controller: go to player 1 | `gow2_coop_go_to_player1_pad` | off, Back + D-pad up, Back + D-pad down, both stick clicks (LS + RS) | now | both |
+| Players 3+ dying ends the game | `gow2_coop_extra_players_game_over` | on, off | restart | both |
 | Co-op check code | info | the combined hash | now | both |
 | Join a host (name or IP) | `net_peers` | text | restart | both |
 | Host over the internet | opens the page below | | now | Windows |
@@ -259,6 +262,7 @@ allowed (`net_allow_peers`: text), Close ports when the game exits
 | Folder path | `gow2_save_dir` | text (advanced) | restart | both |
 | Saves are in | info | the folder this session uses | now | both |
 | Open the saves folder | action | opens File Explorer | now | Windows |
+| All chapters unlocked | `gow2_unlock_all_chapters` | on, off | restart | both |
 
 ## Audio
 
