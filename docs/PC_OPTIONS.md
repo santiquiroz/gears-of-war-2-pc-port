@@ -105,7 +105,7 @@ Defaults keep the original game and crossplay working.
 | Graphics card | `gow2_gpu` | automatic, detected GPUs | restart | Windows |
 | VSync | `vsync` | on, off | now | both |
 | Unlock frame rate | `gow2_unlock_fps` | on, off | now | both |
-| Frame rate limit | `gow2_fps_cap` | off, 30 ... 240 | now | both |
+| Frame rate limit | `gow2_fps_cap` | off, VRR, 30 ... 240 | now | both |
 | Frame counter | `gow2_show_fps` | off, on (game fps and frame time; top-left, top-center on Android) | now | both |
 | Keep 16:9 shape | `present_letterbox` | on (black bars), off (fill: crop up to 10 % top and bottom, stretch the rest) | now | Android |
 | Display refresh hint | `present_android_frame_rate` | phone default, 30 ... 120 | restart | Android |
@@ -157,6 +157,7 @@ not validate the new quality controls or their visual/performance effects.
 | Row | Key | Values | Applies | Platforms |
 |---|---|---|---|---|
 | Quality preset | menu action over the 24 keys below | Low, Medium, High (retail), Custom | restart | both |
+| Render scale | `gow2_render_scale` | 100 % (native), 85 %, 75 %, 50 % (75 % on phones) | restart | both |
 | Object shadows | `gow2_gfx_light_environment_shadows` | auto, on, off | restart | both |
 | Dynamic shadows | `gow2_gfx_dynamic_shadows` | auto, on, off | restart | both |
 | Dynamic lights | `gow2_gfx_dynamic_lights` | auto, on, off | restart | both |
@@ -187,7 +188,7 @@ Object shadows only. High explicitly enables Object shadows on Android. The
 advanced Engine settings row (`gow2_system_settings`, empty by default) applies
 last, so existing raw `Key=Value;OtherKey=Value` pairs override quality rows and
 presets. Clear conflicting raw pairs to give control to the menu. Quality cvars
-are strings in TOML, including numbers (e.g. `gow2_gfx_detail_mode = "1"`).
+are strings in TOML, including numbers (e.g. `gow2_gfx_detail_mode = "1"`). Render scale stands outside the preset and the Custom detection, and raw `ScreenPercentage=...` still wins over it.
 
 See [SYSTEM_SETTINGS.md](SYSTEM_SETTINGS.md) for the complete 76-key retail
 inventory, every preset value, scope of verification, and the bundle size rule.

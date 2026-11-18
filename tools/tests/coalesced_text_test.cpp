@@ -184,6 +184,21 @@ void TestGraphicsQuality() {
     values["gow2_gfx_motion_blur"] = "auto";
     Expect(quality::DetectPreset(read) == "custom", "individual edit switches preset to Custom");
   }
+  std::unordered_map<std::string, std::string> scale;
+  const auto read_scale = [&](std::string_view id) {
+    const auto found = scale.find(std::string(id));
+    return found == scale.end() ? std::string("auto") : found->second;
+  };
+  scale["gow2_render_scale"] = "75";
+  Expect(quality::Compose(false, read_scale, "") == quality::Pairs{{"ScreenPercentage", "75"}},
+         "render scale 75 writes ScreenPercentage");
+  scale["gow2_render_scale"] = "100";
+  Expect(quality::Compose(false, read_scale, "").empty(),
+         "render scale 100 keeps the retail percentage");
+  scale["gow2_render_scale"] = "75";
+  Expect(quality::Compose(false, read_scale, "ScreenPercentage=60") ==
+             quality::Pairs{{"ScreenPercentage", "60"}},
+         "raw ScreenPercentage overrides the render scale row");
 }
 
 void TestBundleSizeFallback() {

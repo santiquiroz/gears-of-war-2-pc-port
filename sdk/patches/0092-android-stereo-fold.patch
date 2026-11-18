@@ -1,0 +1,23 @@
+diff --git a/src/audio/sdl/sdl_audio_driver.cpp b/src/audio/sdl/sdl_audio_driver.cpp
+index 20a2cd8..988baa1 100644
+--- a/src/audio/sdl/sdl_audio_driver.cpp
++++ b/src/audio/sdl/sdl_audio_driver.cpp
+@@ -22,6 +22,7 @@
+ #include <rex/dbg.h>
+ #include <rex/logging.h>
+ #include <rex/perf/counter.h>
++#include <rex/platform.h>
+ #include <SDL3/SDL.h>
+ 
+ REXCVAR_DEFINE_BOOL(audio_mute, false, "Audio", "Mute audio output");
+@@ -75,7 +76,9 @@ bool SDLAudioDriver::Initialize() {
+ 
+   // A 1-channel device gets the stereo fold too, then SDL collapses to mono.
+   // Handing it a 6ch stream instead would use SDL's own downmix.
+-  if (obtained_spec.channels <= 2) {
++  // Android's default device accepts 6 channels and leaves the fold to the platform, which on
++  // some phones drops the center channel, so the dialogue placed there is barely audible.
++  if (obtained_spec.channels <= 2 || REX_PLATFORM_ANDROID) {
+     SDL_DestroyAudioStream(sdl_stream_);
+     sdl_stream_ = nullptr;
+     desired_spec.channels = 2;

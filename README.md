@@ -160,8 +160,9 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 - `gow2_texture_pack` — Windows: the texture pack folder under `texture_packs` next to the exe, `textures` for the old `textures` folder, `off`, or empty to follow `texture_replace`; needs a restart.
 - `gow2_texture_build_scale`, `gow2_texture_build_quality` — Windows: Build texture pack's scale (`2` or `4`) and format (`disc` keeps each texture's own, `bc7`).
 - `present_letterbox` — Android: `false` fills a wider screen (cropped up to 10 % at the top and bottom, stretched sideways for the rest).
-- `gow2_unlock_fps` — lifts the game's 30 fps cap.
-- `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit).
+- `gow2_unlock_fps` — lifts the game's 30 fps cap (on by default on Android).
+- `gow2_fps_cap` — frame rate limit while unlocked (0 = no limit; 45 by default on Android, snapped to the nearest rate that divides the screen refresh).
+- `gow2_render_scale` — 3D render scale in percent (100, 85, 75 or 50; 75 by default on Android, 100 elsewhere; needs a restart).
 - `gow2_show_fps` — shows the game's frames per second and frame time in a corner.
 - `gow2_audio_volume` — master volume in percent.
 - `gow2_black_shading_fix` — correct character lighting.

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string_view>
 
 int g_checks = 0;
@@ -135,8 +136,29 @@ void TestEffectiveCap() {
   Expect(rex::glue::EffectiveFpsCap(false, -1, 57) == 30, "locked FPS ignores the VRR cap");
 }
 
+void TestSnapCapToRefresh() {
+  using rex::glue::SnapCapToRefresh;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  Expect(SnapCapToRefresh(45, 120.00001) == 40, "45 fps snaps to 40 at 120 Hz");
+  Expect(SnapCapToRefresh(45, 90.0) == 45, "45 fps already divides 90 Hz");
+  Expect(SnapCapToRefresh(45, 60.0) == 30, "45 fps snaps to 30 at 60 Hz");
+  Expect(SnapCapToRefresh(40, 120.0) == 40, "40 fps already divides 120 Hz");
+  Expect(SnapCapToRefresh(30, 120.0) == 30, "30 fps already divides 120 Hz");
+  Expect(SnapCapToRefresh(60, 120.0) == 60, "60 fps already divides 120 Hz");
+  Expect(SnapCapToRefresh(45, 144.0) == 36, "45 fps snaps to 36 at 144 Hz");
+  Expect(SnapCapToRefresh(45, 59.94) == 30, "45 fps snaps to 30 at 59.94 Hz");
+  Expect(SnapCapToRefresh(120, 120.0) == 120, "cap at the refresh stays");
+  Expect(SnapCapToRefresh(200, 120.0) == 200, "cap above the refresh stays");
+  Expect(SnapCapToRefresh(0, 120.0) == 0, "no cap stays uncapped");
+  Expect(SnapCapToRefresh(-1, 120.0) == -1, "negative cap stays");
+  Expect(SnapCapToRefresh(45, 0.0) == 45, "unknown refresh keeps the cap");
+  Expect(SnapCapToRefresh(45, nan) == 45, "NaN refresh keeps the cap");
+  Expect(SnapCapToRefresh(45, 10.0) == 45, "tiny refresh keeps the cap");
+}
+
 int main() {
   TestEffectiveCap();
+  TestSnapCapToRefresh();
   TestFirstFrame();
   TestSteadyFrames();
   TestSlightlyLateFrame();

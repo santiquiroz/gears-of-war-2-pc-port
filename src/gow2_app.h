@@ -454,6 +454,14 @@ class Gow2App : public rex::ReXApp {
     AddTouchControls(config);
     // A windowed SDL window keeps the status bar on screen (issue #40); fullscreen hides the system bars.
     SetLaunchDefault("fullscreen", "true");
+    // Uncapped, the GPU runs at 99 % until the phone throttles it to a third of its clock; a 45 fps cap
+    // keeps headroom, and the player can still pick 30, 60 or Off.
+    SetLaunchDefault("gow2_unlock_fps", "true");
+    SetLaunchDefault("gow2_fps_cap", "45");
+    // One pass instead of FSR 1's EASU + RCAS.
+    SetLaunchDefault("present_effect", "sgsr");
+    // Rendering the scene at 75 % cuts GPU work per frame by 14 % on an S25 Ultra.
+    SetLaunchDefault("gow2_render_scale", "75");
     const bool unlock_fps = rex::cvar::Query<bool>("gow2_unlock_fps");
     if (unlock_fps) SetLaunchDefault("present_android_frame_rate", "0");
     // Each occlusion query ends the render pass twice; off cut GPU work 6-12 % with no visible change.

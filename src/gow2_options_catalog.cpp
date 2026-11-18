@@ -105,10 +105,10 @@ void AddDisplay(std::vector<Setting>& out) {
       .label_es = "Desbloquear FPS",
       .help_en =
           "Lifts the game's 30 fps cap (community patch). Turn VSync off to go above your display's "
-          "refresh rate.",
+          "refresh rate. On phones it is on by default, with a 45 fps limit.",
       .help_es =
           "Quita el tope de 30 FPS del juego (parche de la comunidad). Apaga la sincronización "
-          "vertical para pasar la frecuencia del monitor."});
+          "vertical para pasar la frecuencia del monitor. En teléfonos viene activado, con límite de 45 FPS."});
   out.push_back(Setting{
       .id = "gow2_fps_cap",
       .tab = Tab::kDisplay,
@@ -117,12 +117,13 @@ void AddDisplay(std::vector<Setting>& out) {
       .platforms = kAllPlatforms,
       .label_en = "Frame rate limit",
       .label_es = "Límite de FPS",
-      .help_en = "Requires Unlock frame rate. Limits game frames; VSync and performance can lower FPS. The VRR option stays below the monitor refresh to keep G-Sync/FreeSync active.",
-      .help_es = "Requiere Desbloquear FPS. Limita los cuadros del juego; VSync y el rendimiento pueden bajar los FPS. La opción VRR queda por debajo de la frecuencia para mantener G-Sync/FreeSync activos.",
+      .help_en = "Requires Unlock frame rate. Limits game frames; VSync and performance can lower FPS. The VRR option stays below the monitor refresh to keep G-Sync/FreeSync active. Phones default to 45, lowered to the nearest rate that divides the screen refresh (40 at 120 Hz, 45 at 90 Hz) so every frame lasts the same.",
+      .help_es = "Requiere Desbloquear FPS. Limita los cuadros del juego; VSync y el rendimiento pueden bajar los FPS. La opción VRR queda por debajo de la frecuencia para mantener G-Sync/FreeSync activos. En teléfonos el valor por defecto es 45, bajado a la tasa más cercana que divide la frecuencia de la pantalla (40 a 120 Hz, 45 a 90 Hz) para que todos los frames duren lo mismo.",
       .choices = {
           C("0", "Off", "Sin límite"),
           C("-1", "Monitor refresh - 3 (VRR)", "Frecuencia del monitor - 3 (VRR)"),
           V("30"),
+          V("45"),
           V("60"),
           V("75"),
           V("90"),
@@ -594,6 +595,12 @@ void AddGraphicsQuality(std::vector<Setting>& out) {
       .help_es = "Ajusta la calidad en conjunto; los cambios individuales muestran Personalizado. Requiere reiniciar. Los ajustes del motor tienen prioridad.",
       .choices = {C("low", "Low", "Bajo"), C("medium", "Medium", "Medio"),
                   C("high", "High (retail)", "Alto (original)"), C("custom", "Custom", "Personalizado")}});
+  out.push_back(Setting{.id = "gow2_render_scale", .tab = Tab::kGraphics,
+      .kind = Kind::kChoice, .apply = Apply::kRestart,
+      .label_en = "Render scale", .label_es = "Escala de render",
+      .help_en = "Draws the 3D scene below the screen resolution and scales it up: lower is faster and softer. Phones default to 75 %. Restart required.",
+      .help_es = "Dibuja la escena 3D por debajo de la resolución de pantalla y la reescala: más bajo es más rápido y más blando. En teléfonos el valor por defecto es 75 %. Requiere reiniciar.",
+      .choices = {C("100", "100 % (native)", "100 % (nativa)"), C("85", "85 %", "85 %"), C("75", "75 %", "75 %"), C("50", "50 %", "50 %")}});
   for (const auto& setting : graphics_quality::Settings()) {
     for (const auto& label : kQualityLabels) {
       if (label.key != setting.key) continue;

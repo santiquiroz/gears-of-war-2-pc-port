@@ -81,7 +81,7 @@ int MonitorRefreshRate(const void* native_handle) {
 }
 #endif
 
-int DisplayRefreshCap() {
+double DisplayRefreshHz() {
   SDL_DisplayID display = 0;
 #ifdef _WIN32
   auto* runtime = rex::Runtime::instance();
@@ -105,13 +105,16 @@ int DisplayRefreshCap() {
   }
   if (display == 0) display = SDL_GetPrimaryDisplay();
   const SDL_DisplayMode* mode = display == 0 ? nullptr : SDL_GetCurrentDisplayMode(display);
-  const int cap = mode ? CapFromRefreshRate(mode->refresh_rate) : 0;
+  if (mode && CapFromRefreshRate(mode->refresh_rate) != 0) return mode->refresh_rate;
 #ifdef _WIN32
   // The first engine ticks can run before SDL video is up; Windows always knows the rate.
-  if (cap == 0) return CapFromRefreshRate(static_cast<float>(MonitorRefreshRate(native_handle)));
+  return static_cast<double>(MonitorRefreshRate(native_handle));
+#else
+  return 0.0;
 #endif
-  return cap;
 }
+
+int DisplayRefreshCap() { return CapFromRefreshRate(DisplayRefreshHz()); }
 
 bool FrameGenerationEnabled() {
   return rex::cvar::Query<std::string>("gow2_frame_generation") == "fsr3" &&
@@ -123,6 +126,19 @@ int64_t SteadyNowNanos() {
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
+
+#if defined(__ANDROID__)
+int SnapCapToDisplay(int cap, double* refresh_hz) {
+  static double display_hz = 0.0;
+  static int64_t next_hz_query = 0;
+  if (cap > 0 && SteadyNowNanos() >= next_hz_query) {
+    next_hz_query = SteadyNowNanos() + kRefreshRetryNanos;
+    display_hz = DisplayRefreshHz();
+  }
+  *refresh_hz = display_hz;
+  return SnapCapToRefresh(cap, display_hz);
+}
+#endif
 
 void PreciseSleepNanos(int64_t nanos) {
   if (nanos <= 0) return;
@@ -161,7 +177,12 @@ void FpsCapTick(const PPCContext& ctx, uint8_t* base) {
     }
   }
   const bool unlocked = rex::cvar::Query<bool>("gow2_unlock_fps");
-  const int cap = EffectiveFpsCap(unlocked, selected_cap, refresh_cap, frame_generation);
+  int cap = EffectiveFpsCap(unlocked, selected_cap, refresh_cap, frame_generation);
+#if defined(__ANDROID__)
+  const int requested = cap;
+  double refresh_hz = 0.0;
+  if (unlocked) cap = SnapCapToDisplay(cap, &refresh_hz);
+#endif
   if (cap <= 0) {
     if (logged_cap != 0) {
       pacer.SleepNanos(0, 0);
@@ -174,6 +195,10 @@ void FpsCapTick(const PPCContext& ctx, uint8_t* base) {
     logged_cap = cap;
     if (unlocked && selected_cap == -1 && frame_generation)
       REXLOG_INFO("FPSCAP limit {} fps (frame generation)", cap);
+#if defined(__ANDROID__)
+    else if (cap != requested)
+      REXLOG_INFO("FPSCAP limit {} fps ({} snapped to the {:.0f} Hz display)", cap, requested, refresh_hz);
+#endif
     else
       REXLOG_INFO("FPSCAP limit {} fps", cap);
   }

@@ -313,7 +313,7 @@ inside the runtime would be a second copy without that state.
 
 ## Upscaling and display
 
-Android now defaults `present_effect` to `"fsr"` (previously only `"bilinear"`). The choices are
+Android now defaults `present_effect` to `"sgsr"` (previously `"fsr"`). The choices are
 `"bilinear"`, `"cas"`, `"fsr"` (AMD FSR 1) and `"sgsr"` (Snapdragon Game Super Resolution 1).
 FSR 2 and FSR 3 are not available on Android. Set a choice in `gow2.toml` beside the logs, then
 relaunch, for example:
@@ -336,17 +336,19 @@ on Android too; their defaults are unchanged from elsewhere.
 The runtime still renders the game at 1280x720. These upscalers change the presented image, not
 the GPU work of the game. On the phone, FSR 1 and SGSR 1 drew correctly on the Adreno 830 and were
 sharper than bilinear (SGSR a little crisper); their cost was within run-to-run noise (one run
-each). `present_effect` stays `fsr` ([ANDROID_EXPERIMENTS.md](../docs/ANDROID_EXPERIMENTS.md), P7).
+each). `present_effect` defaults to `sgsr` ([ANDROID_EXPERIMENTS.md](../docs/ANDROID_EXPERIMENTS.md), P7).
 
 Android defaults `vulkan_allow_present_mode_immediate`, `vulkan_allow_present_mode_mailbox` and
 `vulkan_allow_present_mode_fifo_relaxed` to false, selecting plain FIFO (the October 15 logs used
 MAILBOX). With FIFO the presenter paints on the UI thread, never on the GPU command thread.
-`present_android_frame_rate` defaults to 30: the window asks Android 11+ for this rate through
+`present_android_frame_rate` defaults to 0 while unlocked (no request), 30 when locked: the window asks Android 11+ for this rate through
 `ANativeWindow_setFrameRate`; P8/C3 confirmed the panel left 120 Hz for 30 Hz with FIFO and the
 30 Hz request. It is a request, not a forced refresh rate. 0 makes no request. If `gow2_unlock_fps` is
-on and `gow2.toml` does not set the rate, the port uses 0 for that launch (`DISPLAY frame rate hint`
+on (the default) and `gow2.toml` does not set the rate, the port uses 0 for that launch (`DISPLAY frame rate hint`
 in the log). The runtime also logs `VulkanPresenter: ANativeWindow_setFrameRate(30 Hz) returned 0`
 when that call succeeds. These changes are Android-only; Windows behaviour is unchanged.
+
+Phones also default `gow2_render_scale` to 75 % (the game's `ScreenPercentage`, scaled back up by the final filter) and snap the frame rate cap to the nearest rate that divides the panel refresh (45 becomes 40 at 120 Hz), so every frame lasts the same number of vblanks.
 
 ## Controls
 

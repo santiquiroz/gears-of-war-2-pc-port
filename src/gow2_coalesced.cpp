@@ -150,6 +150,11 @@ REXCVAR_DEFINE_STRING(gow2_gfx_decal_cull_distance_scale, "auto", "graphics",
                       "Game quality: auto keeps the platform default; changed at next start.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart)
     .allowed({"auto", "0.4", "0.7", "1.0"});
+REXCVAR_DEFINE_STRING(gow2_render_scale, "100", "graphics",
+                      "3D render scale in percent (the game's ScreenPercentage); the image is scaled up "
+                      "to the screen. Changed at next start.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart)
+    .allowed({"100", "85", "75", "50"});
 
 REXCVAR_DEFINE_BOOL(gow2_pc_options_entry, true, "UI",
                     "The game's Options > Storage Location button opens the port's PC Options "

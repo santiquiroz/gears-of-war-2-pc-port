@@ -17,6 +17,14 @@ inline int CapFromRefreshRate(double refresh_hz) {
   return static_cast<int>(std::floor(refresh_hz)) - 3;
 }
 
+inline int SnapCapToRefresh(int cap, double refresh_hz) {
+  if (cap <= 0 || !std::isfinite(refresh_hz) || refresh_hz < 20.0) return cap;
+  const int refresh = static_cast<int>(std::lround(refresh_hz));
+  if (cap >= refresh) return cap;
+  const int vblanks = (refresh + cap - 1) / cap;
+  return refresh / vblanks;
+}
+
 inline constexpr int EffectiveFpsCap(bool unlocked, int unlocked_cap, int refresh_cap = 0,
                                      bool frame_generation = false) {
   if (!unlocked) return kLockedFps;

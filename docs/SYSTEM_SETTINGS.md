@@ -124,6 +124,8 @@ keeps the rest retail. Object shadows uses
 `gow2_gfx_light_environment_shadows = "auto" | "on" | "off"`, shared with the
 Android launcher.
 
+`ScreenPercentage` (retail `100.000000`) has its own menu row outside the preset, Render scale (`gow2_render_scale` = `"100"` | `"85"` | `"75"` | `"50"`, `"100"` by default, `"75"` on phones): `"100"` keeps retail, and raw `ScreenPercentage=...` still wins.
+
 **Quality preset** sets all 24 controls to Low, Medium or High (retail). Low
 reduces shadows and optional effects; Medium restores some effects and uses
 intermediate detail. These are intended quality/performance tradeoffs, not

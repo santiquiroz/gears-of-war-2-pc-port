@@ -235,7 +235,7 @@ int CountPage(options::Page page) {
 
 void TestCounts() {
   Expect(CountTab(options::Tab::kDisplay) == 15, "display has 15 rows including the aspect ratio, HDR and its brightness settings, the menu size, keep 16:9 shape and the frame counter");
-  Expect(CountTab(options::Tab::kGraphics) == 54, "graphics has 54 rows including frame generation, keep original menus, the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, 24 settings, texture pack, its folder and the pack builder");
+  Expect(CountTab(options::Tab::kGraphics) == 55, "graphics has 55 rows including frame generation, keep original menus, the graphics API, renderer, draw source, anti-aliasing, quality heading, preset, render scale, 24 settings, texture pack, its folder and the pack builder");
   Expect(CountTab(options::Tab::kControls) == 12, "controls has 12 rows (controller buttons page added)");
   Expect(CountTab(options::Tab::kTouch) == 6, "touch has 6 rows");
   Expect(CountTab(options::Tab::kMultiplayer) == 17, "multiplayer has 17 rows including friendly fire, Go to player 1 and its key and controller rows, and players 3+ dying ends the game");
@@ -311,6 +311,30 @@ void TestGraphicsQualityRows() {
   const auto* raw = options::FindSetting("gow2_system_settings");
   Expect(raw && raw->advanced && raw->platforms == options::kAllPlatforms,
          "raw engine settings remain advanced on both platforms");
+}
+
+void TestRenderScaleRow() {
+  const auto* row = options::FindSetting("gow2_render_scale");
+  Expect(row != nullptr, "render scale row exists");
+  if (!row) return;
+  Expect(row->tab == options::Tab::kGraphics && row->kind == options::Kind::kChoice &&
+             row->apply == options::Apply::kRestart && row->platforms == options::kAllPlatforms,
+         "render scale is a Graphics restart choice on both platforms");
+  Expect(row->label_en == "Render scale" && row->label_es == "Escala de render",
+         "render scale labels");
+  Expect(row->choices.size() == 4 && row->choices[0].value == "100" &&
+             row->choices[1].value == "85" && row->choices[2].value == "75" &&
+             row->choices[3].value == "50",
+         "render scale offers 100, 85, 75 and 50");
+  const auto& catalog = options::Catalog();
+  const auto at = [&](std::string_view id) {
+    for (size_t i = 0; i < catalog.size(); ++i) {
+      if (catalog[i].id == id) return static_cast<int>(i);
+    }
+    return -1;
+  };
+  Expect(at("gow2_render_scale") == at("gow2_gfx_preset") + 1,
+         "render scale comes right after the quality preset");
 }
 
 void TestCoopPlayersRow() {
@@ -604,6 +628,7 @@ int main() {
     TestCoopPlayersRow();
     TestSplitScreenRows();
     TestGraphicsQualityRows();
+    TestRenderScaleRow();
     TestGpuBackendRow();
     TestFrameGenerationRow();
     TestSkipIntroRow();

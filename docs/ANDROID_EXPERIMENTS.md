@@ -415,15 +415,15 @@ The APK from `scripts\build-android.ps1 -LowPriority` at this commit (or later) 
 - **`TEXFMT`** lines (with `vulkan_android_stats_log`): each texture format the first time it is
   loaded, with its host format and load shader. **`TEXFAIL`** lines (always): a texture whose data
   could not be loaded, once per format; that used to fail without a word.
-- **Present effects and display.** Android now has `bilinear`, `cas`, `fsr` (FSR 1, the default)
-  and `sgsr` (Snapdragon GSR 1); FSR 2/3 are not available. The game still renders at 1280x720.
+- **Present effects and display.** Android now has `bilinear`, `cas`, `fsr` (FSR 1)
+  and `sgsr` (Snapdragon GSR 1, the default); FSR 2/3 are not available. The game still renders at 1280x720.
   At 2560x1440 output FSR 1 runs EASU into an intermediate image then RCAS into the swapchain;
   SGSR draws once into the swapchain without an intermediate image or dithering. The other final
   passes dither by default. These filters change image quality, not the game's GPU work (P7).
   The swapchain now defaults to plain FIFO, painting on the UI thread instead of the GPU command
-  thread; the October 15 logs used MAILBOX. Android 11+ receives an
+  thread; the October 15 logs used MAILBOX. When locked, Android 11+ receives an
   `ANativeWindow_setFrameRate` request for 30 Hz; P8/C3 confirmed the panel left 120 Hz for 30 Hz.
-  The request is not a forced rate. 0 makes no request; `gow2_unlock_fps` uses 0 for that launch
+  The request is not a forced rate. 0 makes no request; `gow2_unlock_fps` (on by default) uses 0 for that launch
   unless `gow2.toml` sets `present_android_frame_rate` (`DISPLAY frame rate hint` in the log).
   The call logs `VulkanPresenter: ANativeWindow_setFrameRate(30 Hz) returned 0` on success.
 - **Transfer shader and frame rate lookup.** Patch 0007 addresses the host depth source with its
@@ -457,7 +457,7 @@ The APK from `scripts\build-android.ps1 -LowPriority` at this commit (or later) 
 
   | Switch | Default | Effect |
   |---|---|---|
-  | `present_effect` | "fsr" | `bilinear`, `cas`, `fsr` (FSR 1 EASU then RCAS), `sgsr` (Snapdragon GSR 1, one pass); no FSR 2/3 (restart) |
+  | `present_effect` | "sgsr" | `bilinear`, `cas`, `fsr` (FSR 1 EASU then RCAS), `sgsr` (Snapdragon GSR 1, one pass); no FSR 2/3 (restart) |
   | `present_fsr_sharpness_reduction` | 0.3 | RCAS sharpness reduction in stops (0.2 elsewhere; restart) |
   | `present_dither` | true | Dither the final pass except SGSR (false elsewhere; restart) |
   | `present_cas_additional_sharpness` | 0 | Additional CAS sharpness in [0, 1], same default as elsewhere (restart) |
@@ -465,7 +465,7 @@ The APK from `scripts\build-android.ps1 -LowPriority` at this commit (or later) 
   | `vulkan_allow_present_mode_immediate` | false | Allow IMMEDIATE instead of FIFO |
   | `vulkan_allow_present_mode_mailbox` | false | Allow MAILBOX instead of FIFO |
   | `vulkan_allow_present_mode_fifo_relaxed` | false | Allow FIFO_RELAXED instead of plain FIFO |
-  | `present_android_frame_rate` | 30 | Ask Android 11+ for this window frame rate in Hz; 0 makes no request; launch default 0 with `gow2_unlock_fps` unless configured |
+  | `present_android_frame_rate` | 0 (30 when locked) | Ask Android 11+ for this window frame rate in Hz; 0 makes no request; launch default 0 with `gow2_unlock_fps` (on by default) unless configured |
   | `vulkan_pipeline_cache_file` | true | Load and save the driver's `.vkpc` cache beside shader storage (restart) |
   | `gpu_worker_spin_us` | -1 | -1 keeps roughly 500 SDK yield polls; 0 sleeps immediately; N polls with ISB pauses for N microseconds, then waits in 5 ms sleeps; 50 was measured with no difference |
   | `gow2_gpu_wait_sleep_us` | 0 | Microseconds the render thread sleeps between polls of its wait for ring buffer space, at most 1 ms per wait; 0 spins like the console. 200 took the process from 200 % to 155 % of a core for 1.5 fps less (November 13); replaces `gow2_android_gpu_wait_yield`, whose yield per poll P9 measured with no difference |

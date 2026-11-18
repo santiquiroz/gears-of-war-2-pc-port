@@ -141,6 +141,9 @@ inline Pairs Compose(bool android, const Read& read, std::string_view raw) {
     if (std::find(setting.choices.begin(), setting.choices.end(), value) == setting.choices.end()) continue;
     SetPair(&pairs, setting.key, value);
   }
+  const std::string render_scale = read("gow2_render_scale");
+  if (render_scale == "85" || render_scale == "75" || render_scale == "50")
+    SetPair(&pairs, "ScreenPercentage", render_scale);
   ApplyRaw(&pairs, raw);
   return pairs;
 }
