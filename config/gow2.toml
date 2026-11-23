@@ -160,7 +160,7 @@ keybind_start = "Return,Escape"
 # System Link (LAN and internet co-op) stays off until this is true on every player's copy;
 # gow2_coop_players 3+ turns it on by itself. See docs/NETWORK_PLAY.md.
 # net_link_active = true
-# With gow2_coop_players 3+ only peers with the same co-op hash see each other's campaigns.
+# Only peers on the same release see each other's campaigns; the host's co-op settings apply to all.
 # net_beacon_gate = true
 # Guest ports below 1024 move up by this offset, with the link on or off (the game's UDP 1000
 # becomes 41000); every player needs the same value.
