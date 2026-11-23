@@ -247,10 +247,17 @@ def test_cb1_bad_anchor():
         "+0x01E0 points at 0x00000000")
 
 
+def test_cpp_has_coop_client_group():
+    text = spb.render_cpp()
+    assert "PatchGroup CoopClientGroup()" in text
+    assert '.name = "coop-client"' in text
+
+
 def test_group_composition():
-    assert [r.id for r in spb.coop_body_rows()] == ["CB-3", "CB-4", "CB-5", "CB-1", "CB-2"]
-    assert [r.id for r in spb.coop_body_rows(carmine=True)] == ["CB-3c", "CB-4", "CB-5", "CB-1", "CB-2"]
-    assert [r.id for r in spb.coop_body_rows(marcus_clones=True)] == ["CB-4", "CB-5", "CB-1", "CB-2"]
+    assert [r.id for r in spb.coop_client_rows()] == ["CB-1", "CB-2"]
+    assert [r.id for r in spb.coop_body_rows()] == ["CB-3", "CB-4", "CB-5"]
+    assert [r.id for r in spb.coop_body_rows(carmine=True)] == ["CB-3c", "CB-4", "CB-5"]
+    assert [r.id for r in spb.coop_body_rows(marcus_clones=True)] == ["CB-4", "CB-5"]
     assert [r.id for r in spb.coop_ride_rows()] == ["CR-1", "CR-2", "CR-3"]
 
 

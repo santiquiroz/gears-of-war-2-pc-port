@@ -427,4 +427,172 @@ std::vector<std::pair<float, float>> FallbackOffsets() {
   return offsets;
 }
 
+constexpr int kMaxTankCount = 6;
+
+bool PcMissing(const std::vector<LeashPc>& pcs, uint32_t pc) {
+  for (const LeashPc& entry : pcs) {
+    if (entry.pc == pc) return false;
+  }
+  return true;
+}
+
+bool TankCandidate(const LeashPc& extra) {
+  return IsExtra(extra) && extra.health > 0 && !extra.cinematic;
+}
+
+bool RetryWaiting(TankState* state, uint32_t pc) {
+  auto it = state->retry_seconds.find(pc);
+  if (it == state->retry_seconds.end() || it->second <= 0) return false;
+  if (--it->second <= 0) state->retry_seconds.erase(it);
+  return true;
+}
+
+TankOrder MakeTankRemove(uint32_t pc, uint32_t vehicle) {
+  TankOrder order;
+  order.action = TankAction::kRemove;
+  order.extra_pc = pc;
+  order.vehicle = vehicle;
+  return order;
+}
+
+TankOrder MakeTankSpawn(const LeashPc& extra, const LeashPc& driver, float distance) {
+  TankOrder order;
+  order.action = TankAction::kSpawn;
+  order.extra_pc = extra.pc;
+  order.hero_pc = driver.pc;
+  order.distance = distance;
+  return order;
+}
+
+TankOrder MakeTankRespawn(const LeashPc& extra, const LeashPc& driver, uint32_t vehicle,
+                          float distance) {
+  TankOrder order;
+  order.action = TankAction::kRespawn;
+  order.extra_pc = extra.pc;
+  order.vehicle = vehicle;
+  order.hero_pc = driver.pc;
+  order.distance = distance;
+  return order;
+}
+
+void PlanGoneTanks(const std::vector<LeashPc>& pcs, TankState* state,
+                   std::vector<TankOrder>* orders) {
+  for (const auto& [pc, vehicle] : state->tanks) {
+    if (PcMissing(pcs, pc)) orders->push_back(MakeTankRemove(pc, vehicle));
+  }
+}
+
+void DropGoneTankCounters(const std::vector<LeashPc>& pcs, TankState* state) {
+  for (auto it = state->far_seconds.begin(); it != state->far_seconds.end();) {
+    if (PcMissing(pcs, it->first)) {
+      it = state->far_seconds.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  for (auto it = state->retry_seconds.begin(); it != state->retry_seconds.end();) {
+    if (PcMissing(pcs, it->first)) {
+      it = state->retry_seconds.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+void RemovePresentTanks(const std::vector<LeashPc>& pcs, TankState* state,
+                        std::vector<TankOrder>* orders) {
+  for (const auto& [pc, vehicle] : state->tanks) {
+    if (!PcMissing(pcs, pc)) orders->push_back(MakeTankRemove(pc, vehicle));
+  }
+}
+
+bool DrivesTank(const LeashPc& extra, uint32_t vehicle) {
+  return extra.pawn != 0 && extra.pawn == vehicle;
+}
+
+void CountTankFarSecond(const LeashPc& extra, const LeashPc& driver, uint32_t vehicle,
+                        float distance, const LeashConfig& config, TankState* state,
+                        std::vector<TankOrder>* orders) {
+  int& far = state->far_seconds[extra.pc];
+  if (++far < config.seconds) return;
+  far = 0;
+  orders->push_back(MakeTankRespawn(extra, driver, vehicle, distance));
+}
+
+void PlanDrivingExtra(const LeashPc& extra, const LeashPc& driver, uint32_t vehicle,
+                      const LeashConfig& config, TankState* state,
+                      std::vector<TankOrder>* orders) {
+  const float distance = Distance(extra, driver.x, driver.y, driver.z);
+  if (distance <= config.distance) {
+    state->far_seconds[extra.pc] = 0;
+    return;
+  }
+  CountTankFarSecond(extra, driver, vehicle, distance, config, state, orders);
+}
+
+void PlanTankedExtra(const LeashPc& extra, const LeashPc& driver, uint32_t vehicle,
+                     const LeashConfig& config, TankState* state,
+                     std::vector<TankOrder>* orders) {
+  if (DrivesTank(extra, vehicle)) {
+    PlanDrivingExtra(extra, driver, vehicle, config, state, orders);
+    return;
+  }
+  if (extra.pawn == 0 || extra.riding) return;
+  state->far_seconds[extra.pc] = 0;
+  orders->push_back(
+      MakeTankRespawn(extra, driver, vehicle, Distance(extra, driver.x, driver.y, driver.z)));
+}
+
+bool TakeTankSlot(size_t* used) {
+  if (*used >= size_t(kMaxTankCount)) return false;
+  ++*used;
+  return true;
+}
+
+void PlanUntankedExtra(const LeashPc& extra, const LeashPc& driver, size_t* tanks_used,
+                       std::vector<TankOrder>* orders) {
+  if (!IsExtraOnFoot(extra)) return;
+  if (!TakeTankSlot(tanks_used)) return;
+  orders->push_back(MakeTankSpawn(extra, driver, Distance(extra, driver.x, driver.y, driver.z)));
+}
+
+const LeashPc* FindTankDriver(const std::vector<LeashPc>& pcs) {
+  for (const LeashPc& pc : pcs) {
+    if (IsHeroClass(pc.dpc) && pc.pawn_class == kTankClass) return &pc;
+  }
+  return nullptr;
+}
+
+void NoteTankFailure(uint32_t extra_pc, TankState* state) {
+  if (state == nullptr) return;
+  state->retry_seconds[extra_pc] = kTankRetrySeconds;
+}
+
+std::vector<TankOrder> PlanTanks(const std::vector<LeashPc>& pcs, const LeashConfig& config,
+                                 TankState* state) {
+  std::vector<TankOrder> orders;
+  if (state == nullptr) return orders;
+  PlanGoneTanks(pcs, state, &orders);
+  DropGoneTankCounters(pcs, state);
+  const LeashPc* driver = FindTankDriver(pcs);
+  if (driver == nullptr) {
+    RemovePresentTanks(pcs, state, &orders);
+    state->far_seconds.clear();
+    return orders;
+  }
+  if (driver->cinematic) return orders;
+  size_t tanks_used = state->tanks.size();
+  for (const LeashPc& extra : pcs) {
+    if (!TankCandidate(extra)) continue;
+    if (RetryWaiting(state, extra.pc)) continue;
+    const auto tank = state->tanks.find(extra.pc);
+    if (tank == state->tanks.end()) {
+      PlanUntankedExtra(extra, *driver, &tanks_used, &orders);
+      continue;
+    }
+    PlanTankedExtra(extra, *driver, tank->second, config, state, &orders);
+  }
+  return orders;
+}
+
 }  // namespace rex::glue::coop_leash

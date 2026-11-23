@@ -317,7 +317,7 @@ below use `gow2.example.com`.
 
 ### PC
 Use the same release as the host, v0.1.2. It contains the Stage 2 co-op work and the codegen fix
-d074c0d. With 3 or more players the beacon gate hides campaigns whose co-op hash differs; with 2 players there is still no check, and a v0.1.1 peer is expected to crash about 0.5 s after the chapter 2 -> 3 map commit even in two-player co-op [I]. For three or four players add `--gow2_coop_players=4` (every player sets the same value).
+d074c0d. Since v0.4.8 the beacon gate hides campaigns from another release, two-player games included. For three or four players the host adds `--gow2_coop_players=4`; friends follow the host's settings.
 ```
 gow2.exe --net_link_active=true --net_peers=gow2.example.com --user_name=<name>
 gow2.exe --net_link_active=true --net_peers=gow2.example.com --user_name=<name> --gow2_coop_players=4

@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -85,5 +86,29 @@ std::vector<PullOrder> PlanPulls(const std::vector<LeashPc>& pcs, const LeashCon
                                  LeashState* state);
 GodOrders PlanGodMode(const std::vector<LeashPc>& pcs, std::set<uint32_t>* granted);
 std::vector<std::pair<float, float>> FallbackOffsets();
+
+constexpr std::string_view kTankClass = "Vehicle_Centaur";
+constexpr int kTankRetrySeconds = 5;
+
+struct TankState {
+  std::map<uint32_t, uint32_t> tanks;
+  std::map<uint32_t, int> far_seconds;
+  std::map<uint32_t, int> retry_seconds;
+};
+
+enum class TankAction { kSpawn, kRespawn, kRemove, kForget };
+
+struct TankOrder {
+  TankAction action = TankAction::kSpawn;
+  uint32_t extra_pc = 0;
+  uint32_t vehicle = 0;
+  uint32_t hero_pc = 0;
+  float distance = 0;
+};
+
+const LeashPc* FindTankDriver(const std::vector<LeashPc>& pcs);
+std::vector<TankOrder> PlanTanks(const std::vector<LeashPc>& pcs, const LeashConfig& config,
+                                 TankState* state);
+void NoteTankFailure(uint32_t extra_pc, TankState* state);
 
 }  // namespace rex::glue::coop_leash

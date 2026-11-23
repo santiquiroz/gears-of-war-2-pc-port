@@ -13,15 +13,21 @@
 namespace {
 
 using rex::glue::coop_leash::FallbackOffsets;
+using rex::glue::coop_leash::FindTankDriver;
 using rex::glue::coop_leash::GodOrders;
 using rex::glue::coop_leash::LeashConfig;
 using rex::glue::coop_leash::LeashPc;
 using rex::glue::coop_leash::LeashState;
+using rex::glue::coop_leash::NoteTankFailure;
 using rex::glue::coop_leash::PickAnchor;
 using rex::glue::coop_leash::PlanGodMode;
 using rex::glue::coop_leash::PlanPulls;
+using rex::glue::coop_leash::PlanTanks;
 using rex::glue::coop_leash::PullOrder;
 using rex::glue::coop_leash::PullReason;
+using rex::glue::coop_leash::TankAction;
+using rex::glue::coop_leash::TankOrder;
+using rex::glue::coop_leash::TankState;
 
 int g_checks = 0;
 int g_failures = 0;
@@ -604,6 +610,137 @@ void TestGodTurretGrantsNothing() {
   Check(granted.empty(), "a hero on a turret tracks nothing");
 }
 
+void TestTankDriverAndExtraOnFoot() {
+  const std::vector<LeashPc> pcs{MakeMarcusInCentaur(0), MakeExtra(5000)};
+  Check(FindTankDriver(pcs) != nullptr, "Marcus in a Centaur is the tank driver");
+  Check(FindTankDriver(pcs)->pc == kMarcusPc, "the driver is Marcus");
+  TankState state;
+  const LeashConfig config;
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 1, "a driver plus an extra on foot gives one tank order");
+  if (orders.size() != 1) return;
+  Check(orders[0].action == TankAction::kSpawn, "the order spawns a tank");
+  Check(orders[0].extra_pc == kExtraPc, "the spawn names the extra");
+  Check(orders[0].hero_pc == kMarcusPc, "the spawn names Marcus");
+  Check(orders[0].vehicle == 0, "a spawn names no vehicle");
+}
+
+void TestTankDrivingClose() {
+  LeashPc extra = MakeVehicleExtra(100);
+  TankState state;
+  state.tanks[kExtraPc] = kExtraPawn;
+  const std::vector<LeashPc> pcs{MakeMarcusInCentaur(0), extra};
+  const LeashConfig config;
+  Check(PlanTanks(pcs, config, &state).empty(), "an extra driving his own tank close gets nothing");
+  Check(state.far_seconds[kExtraPc] == 0, "a close driver keeps a zero far counter");
+}
+
+void TestTankFarRespawns() {
+  LeashPc extra = MakeVehicleExtra(5000);
+  TankState state;
+  state.tanks[kExtraPc] = kExtraPawn;
+  const std::vector<LeashPc> pcs{MakeMarcusInCentaur(0), extra};
+  const LeashConfig config;
+  for (int i = 0; i < config.seconds - 1; ++i) {
+    Check(PlanTanks(pcs, config, &state).empty(), "a far driver gets nothing before the seconds");
+  }
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 1, "a far driver gets one order after the seconds");
+  if (orders.size() != 1) return;
+  Check(orders[0].action == TankAction::kRespawn, "the order respawns the tank");
+  Check(orders[0].extra_pc == kExtraPc, "the respawn names the extra");
+  Check(orders[0].vehicle == kExtraPawn, "the respawn names the old vehicle");
+  Check(orders[0].hero_pc == kMarcusPc, "the respawn names Marcus");
+  Check(state.far_seconds[kExtraPc] == 0, "the far counter resets after the respawn");
+}
+
+void TestTankOnFootWithTankRespawns() {
+  TankState state;
+  state.tanks[kExtraPc] = 777;
+  const std::vector<LeashPc> pcs{MakeMarcusInCentaur(0), MakeExtra(1000)};
+  const LeashConfig config;
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 1, "an extra on foot with a tank in state gets one order");
+  if (orders.size() != 1) return;
+  Check(orders[0].action == TankAction::kRespawn, "the order respawns the stale tank");
+  Check(orders[0].vehicle == 777, "the respawn names the stale vehicle");
+}
+
+void TestTankNoDriverRemoves() {
+  TankState state;
+  state.tanks[kExtraPc] = kExtraPawn;
+  state.tanks[kFootPc] = kFootPawn;
+  const std::vector<LeashPc> pcs{MakeMarcus(0), MakeExtra(1000), MakeFootExtra(1200)};
+  const LeashConfig config;
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 2, "no driver removes every tank");
+  for (const TankOrder& order : orders) {
+    Check(order.action == TankAction::kRemove, "the order removes the tank");
+  }
+  Check(state.far_seconds.empty(), "no driver clears the tank far counters");
+}
+
+void TestTankDriverCinematic() {
+  LeashPc driver = MakeMarcusInCentaur(0);
+  driver.cinematic = true;
+  TankState state;
+  const std::vector<LeashPc> pcs{driver, MakeExtra(5000)};
+  const LeashConfig config;
+  Check(PlanTanks(pcs, config, &state).empty(), "a cinematic driver waits out the cinematic");
+}
+
+void TestTankPcGoneRemoves() {
+  TankState state;
+  state.tanks[kExtraPc] = 777;
+  const std::vector<LeashPc> pcs{MakeMarcusInCentaur(0)};
+  const LeashConfig config;
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 1, "a pc that left gives one order");
+  if (orders.size() != 1) return;
+  Check(orders[0].action == TankAction::kRemove, "the order removes the abandoned tank");
+  Check(orders[0].extra_pc == kExtraPc, "the remove names the gone pc");
+  Check(orders[0].vehicle == 777, "the remove names the abandoned vehicle");
+}
+
+void TestTankRetryBlocksSpawn() {
+  TankState state;
+  NoteTankFailure(kExtraPc, &state);
+  const std::vector<LeashPc> pcs{MakeMarcusInCentaur(0), MakeExtra(5000)};
+  const LeashConfig config;
+  for (int i = 0; i < 5; ++i) {
+    Check(PlanTanks(pcs, config, &state).empty(), "a failed spawn backs off");
+  }
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 1, "the backoff ends with a new spawn");
+  if (orders.size() != 1) return;
+  Check(orders[0].action == TankAction::kSpawn, "the order spawns after the backoff");
+}
+
+void TestTankCapOfSix() {
+  const std::vector<LeashPc> driver{MakeMarcusInCentaur(0)};
+  TankState state;
+  std::vector<LeashPc> pcs{driver[0]};
+  for (int i = 0; i < 6; ++i) {
+    const uint32_t pc = uint32_t(100 + i);
+    const uint32_t pawn = uint32_t(1000 + i);
+    LeashPc extra = MakeExtraAt(pc, pawn, 0);
+    extra.pawn_class = "Vehicle_Centaur";
+    extra.riding = true;
+    pcs.push_back(extra);
+    state.tanks[pc] = pawn;
+  }
+  pcs.push_back(MakeExtraAt(200, 2000, 0));
+  const LeashConfig config;
+  Check(FindTankDriver(pcs) != nullptr, "six tanks still have their driver");
+  Check(PlanTanks(pcs, config, &state).empty(), "a seventh extra gets no tank");
+  state.tanks.erase(100);
+  const std::vector<TankOrder> orders = PlanTanks(pcs, config, &state);
+  Check(orders.size() == 1, "a free slot spawns the waiting extra");
+  if (orders.size() != 1) return;
+  Check(orders[0].action == TankAction::kSpawn, "the order spawns the seventh tank");
+  Check(orders[0].extra_pc == 200, "the spawn names the waiting extra");
+}
+
 void TestFallbackOffsets() {
   const std::vector<std::pair<float, float>> offsets = FallbackOffsets();
   Check(offsets.size() == 24, "FallbackOffsets has 24 entries");
@@ -647,6 +784,15 @@ int main() {
   TestGodVehicleAndDeadNotGranted();
   TestGodDisappearedPruned();
   TestGodTurretGrantsNothing();
+  TestTankDriverAndExtraOnFoot();
+  TestTankDrivingClose();
+  TestTankFarRespawns();
+  TestTankOnFootWithTankRespawns();
+  TestTankNoDriverRemoves();
+  TestTankDriverCinematic();
+  TestTankPcGoneRemoves();
+  TestTankRetryBlocksSpawn();
+  TestTankCapOfSix();
   TestFallbackOffsets();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

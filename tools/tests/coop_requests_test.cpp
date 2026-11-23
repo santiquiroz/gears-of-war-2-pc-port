@@ -118,7 +118,7 @@ void TestTeleport() {
   Check(CheckTeleport(c) == TeleportVerdict::kRiding, "requester rides");
   c = Eligible();
   c.player1.riding = true;
-  Check(CheckTeleport(c) == TeleportVerdict::kPlayer1Riding, "player 1 rides");
+  Check(CheckTeleport(c) == TeleportVerdict::kOk, "player 1 rides");
   c = Eligible();
   c.player1.cinematic = true;
   Check(CheckTeleport(c) == TeleportVerdict::kCinematic, "cinematic");
@@ -130,6 +130,29 @@ void TestTeleport() {
   Check(CheckTeleport(c) == TeleportVerdict::kTooSoon, "rate limit");
   c.seconds_since_last = 10.0;
   Check(CheckTeleport(c) == TeleportVerdict::kOk, "10 s later");
+}
+
+void TestTeleportTanks() {
+  TeleportCheck c = Eligible();
+  c.player1.riding = true;
+  Check(CheckTeleport(c) == TeleportVerdict::kOk, "player 1 riding still teleports");
+  c = Eligible();
+  c.requester.riding = true;
+  c.requester_in_own_tank = true;
+  Check(CheckTeleport(c) == TeleportVerdict::kRespawnTank, "requester in own tank respawns it");
+  c = Eligible();
+  c.requester.riding = true;
+  c.requester_in_own_tank = false;
+  Check(CheckTeleport(c) == TeleportVerdict::kRiding, "requester riding a turret");
+  c = Eligible();
+  c.player1.riding = true;
+  c.seconds_since_last = 9.9;
+  Check(CheckTeleport(c) == TeleportVerdict::kTooSoon, "cooldown wins over a player 1 ride");
+  c = Eligible();
+  c.requester.riding = true;
+  c.requester_in_own_tank = true;
+  c.seconds_since_last = 9.9;
+  Check(CheckTeleport(c) == TeleportVerdict::kTooSoon, "cooldown wins over a tank respawn");
 }
 
 void TestPickPlayer1() {
@@ -152,6 +175,7 @@ int main() {
   TestFriendlyFire();
   TestShouldSendVote();
   TestTeleport();
+  TestTeleportTanks();
   TestPickPlayer1();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

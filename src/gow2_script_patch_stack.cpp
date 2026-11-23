@@ -13,6 +13,10 @@ std::string FormatGroupHash(uint64_t set_hash) {
   return std::string(out);
 }
 
+std::string WireText(std::string_view coop_client_state) {
+  return std::string("wire=2 coop-client=") + std::string(coop_client_state);
+}
+
 std::string StackText(int players, const std::vector<StackEntry>& entries) {
   std::string text = "players=" + std::to_string(players);
   for (const StackEntry& entry : entries) {

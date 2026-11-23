@@ -44,6 +44,7 @@ set(GOW2_SOURCES
     src/gow2_coop_leash_plan.cpp
     src/gow2_coop_leash.cpp
     src/gow2_coop_pull.cpp
+    src/gow2_coop_tanks.cpp
     src/gow2_coop_requests_plan.cpp
     src/gow2_coop_requests.cpp
     src/gow2_cine_hint_plan.cpp

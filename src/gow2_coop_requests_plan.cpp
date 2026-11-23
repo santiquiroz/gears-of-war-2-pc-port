@@ -66,10 +66,11 @@ TeleportVerdict CheckTeleport(const TeleportCheck& check) {
       {check.requester_is_player1, TeleportVerdict::kIsPlayer1},
       {!check.requester.pawn_alive, TeleportVerdict::kNoPawn},
       {!check.player1.pawn_alive, TeleportVerdict::kPlayer1NoPawn},
-      {check.requester.riding, TeleportVerdict::kRiding},
-      {check.player1.riding, TeleportVerdict::kPlayer1Riding},
+      {check.requester.riding && !check.requester_in_own_tank, TeleportVerdict::kRiding},
       {check.requester.cinematic || check.player1.cinematic, TeleportVerdict::kCinematic},
       {IsTooSoon(check.seconds_since_last), TeleportVerdict::kTooSoon},
+      {check.requester.riding && check.requester_in_own_tank,
+       TeleportVerdict::kRespawnTank},
   }};
   for (const auto& [failed, verdict] : rules) {
     if (failed) return verdict;
@@ -86,7 +87,7 @@ std::string_view TeleportVerdictText(TeleportVerdict verdict) {
     case TeleportVerdict::kNoPawn: return "no live pawn";
     case TeleportVerdict::kPlayer1NoPawn: return "player 1 has no live pawn";
     case TeleportVerdict::kRiding: return "rides a vehicle or turret";
-    case TeleportVerdict::kPlayer1Riding: return "player 1 rides a vehicle or turret";
+    case TeleportVerdict::kRespawnTank: return "own tank respawn";
     case TeleportVerdict::kCinematic: return "cinematic";
     case TeleportVerdict::kTooSoon: return "less than 10 s since the last one";
   }

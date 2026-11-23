@@ -973,6 +973,38 @@ bool EndsWith(std::string_view line, std::string_view suffix) {
   return line.size() >= suffix.size() && line.substr(line.size() - suffix.size()) == suffix;
 }
 
+void TestCoopClientGroupApplies() {
+  PatchGroup group = CoopClientGroup();
+  FakeGuest guest = BuildForGroup(group);
+  GuestTables tables = guest.tables();
+  GuestAlloc alloc = [&guest](uint32_t size) { return guest.Alloc(size); };
+  GroupResult result = ApplyGroup(guest.base(), tables, group, 0, alloc);
+  Expect(result.applied, "coop-client applies");
+  Expect(group.name == "coop-client", "coop-client name");
+  Expect(result.lines.size() == 2u, "coop-client 2 lines");
+  bool ordered = result.lines.size() == 2u && result.lines[0].rfind("CB-1 ", 0) == 0 &&
+                 result.lines[1].rfind("CB-2 ", 0) == 0;
+  Expect(ordered, "coop-client lines in order");
+  uint32_t mesh = guest.Path("GearGame.Default__GearPawn_COGGear.GearPawnMesh", "SkeletalMeshComponent");
+  Expect(guest.U32(mesh + 480u) == guest.Path("COG_Dom.Game.COG_Dom_Game_CamSkel", "SkeletalMesh"),
+         "coop-client mesh SkeletalMesh");
+  Expect(guest.U32(mesh + 508u) == guest.Path("COG_Dom.COG_Dom_CamSkel_Physics", "PhysicsAsset"),
+         "coop-client mesh PhysicsAsset");
+}
+
+void TestCoopClientHashIgnoresPlayers() {
+  // The hook always hashes coop-client with 0 players, so every peer publishes this value.
+  Expect(GroupHash(CoopClientGroup(), 0) == 0x922e9cba37f9c51full, "coop-client hash pinned");
+}
+
+void TestWireText() {
+  Expect(WireText("922e9cba37f9c51f") == "wire=2 coop-client=922e9cba37f9c51f", "wire text applied");
+  Expect(WireText("skipped") == "wire=2 coop-client=skipped", "wire text skipped");
+  Expect(StackHash(WireText("skipped")) == StackHash("wire=2 coop-client=skipped"),
+         "wire hash matches stack hash");
+  Expect(StackHash(WireText("skipped")) != 0u, "wire hash nonzero");
+}
+
 void TestCoopBodyGroupApplies() {
   PatchGroup group = CoopBodyGroup(false, false);
   FakeGuest guest = BuildForGroup(group);
@@ -980,10 +1012,9 @@ void TestCoopBodyGroupApplies() {
   GuestAlloc alloc = [&guest](uint32_t size) { return guest.Alloc(size); };
   GroupResult result = ApplyGroup(guest.base(), tables, group, 4, alloc);
   Expect(result.applied, "coop-body applies");
-  Expect(result.lines.size() == 5u, "coop-body 5 lines");
-  bool ordered = result.lines.size() == 5u && result.lines[0].rfind("CB-3 ", 0) == 0 &&
-                 result.lines[1].rfind("CB-4 ", 0) == 0 && result.lines[2].rfind("CB-5 ", 0) == 0 &&
-                 result.lines[3].rfind("CB-1 ", 0) == 0 && result.lines[4].rfind("CB-2 ", 0) == 0;
+  Expect(result.lines.size() == 3u, "coop-body 3 lines");
+  bool ordered = result.lines.size() == 3u && result.lines[0].rfind("CB-3 ", 0) == 0 &&
+                 result.lines[1].rfind("CB-4 ", 0) == 0 && result.lines[2].rfind("CB-5 ", 0) == 0;
   Expect(ordered, "coop-body lines in order");
   Expect(result.lines.size() > 1u && EndsWith(result.lines[1], "script grown to 658 bytes"),
          "coop-body CB-4 grown to 658");
@@ -1005,11 +1036,6 @@ void TestCoopBodyGroupApplies() {
   uint32_t restart = guest.Path("GearGame.GearGame.RestartPlayer", "Function");
   Expect(guest.U32(restart + 88u) == 658u && guest.U32(restart + 92u) == 658u,
          "coop-body RestartPlayer Num==Max==658");
-  uint32_t mesh = guest.Path("GearGame.Default__GearPawn_COGGear.GearPawnMesh", "SkeletalMeshComponent");
-  Expect(guest.U32(mesh + 480u) == guest.Path("COG_Dom.Game.COG_Dom_Game_CamSkel", "SkeletalMesh"),
-         "coop-body mesh SkeletalMesh");
-  Expect(guest.U32(mesh + 508u) == guest.Path("COG_Dom.COG_Dom_CamSkel_Physics", "PhysicsAsset"),
-         "coop-body mesh PhysicsAsset");
 }
 
 void CheckGrownGroupApplies(const PatchGroup& group, std::string_view grown) {
@@ -1043,7 +1069,7 @@ void TestCoopBodyGroupSecondApplyIsAlreadyApplied() {
   uint32_t top = guest.Top();
   GroupResult second = ApplyGroup(guest.base(), tables, group, 4, alloc);
   Expect(second.applied, "coop-body second applies");
-  bool all = second.lines.size() == 5u;
+  bool all = second.lines.size() == 3u;
   for (const std::string& line : second.lines) {
     if (!EndsWithApplied(line)) {
       all = false;
@@ -1076,7 +1102,7 @@ void TestCoopBodyMarcusClonesSkipsClassRow() {
   GuestAlloc alloc = [&guest](uint32_t size) { return guest.Alloc(size); };
   GroupResult result = ApplyGroup(guest.base(), tables, group, 4, alloc);
   Expect(result.applied, "coop-body marcus clones applies");
-  Expect(result.lines.size() == 4u, "coop-body marcus clones 4 lines");
+  Expect(result.lines.size() == 2u, "coop-body marcus clones 2 lines");
   Expect(!result.lines.empty() && result.lines[0].rfind("CB-4 ", 0) == 0,
          "coop-body marcus clones first line CB-4");
 }
@@ -1113,7 +1139,7 @@ void TestCoopBodyAfterStage1OnOneGuest() {
   Expect(stage1.lines.size() == 6u, "stage1 then coop-body stage1 6 lines");
   GroupResult body = ApplyGroup(guest.base(), tables, CoopBodyGroup(false, false), 4, alloc);
   Expect(body.applied, "stage1 then coop-body body applies");
-  Expect(body.lines.size() == 5u, "stage1 then coop-body body 5 lines");
+  Expect(body.lines.size() == 3u, "stage1 then coop-body body 3 lines");
   uint32_t suggest = guest.Path("GearGame.GearGameSP_Base.SuggestPawnClassFor", "Function");
   Expect(guest.U32(suggest + 88u) == 318u, "stage1 then coop-body Suggest Num 318");
   uint32_t data = guest.U32(suggest + 84u);
@@ -1137,7 +1163,7 @@ void TestCoopBodyCarmineAfterStage1OnOneGuest() {
   Expect(stage1.lines.size() == 6u, "stage1 then carmine stage1 6 lines");
   GroupResult body = ApplyGroup(guest.base(), tables, CoopBodyGroup(true, false), 4, alloc);
   Expect(body.applied, "stage1 then carmine body applies");
-  Expect(body.lines.size() == 5u, "stage1 then carmine body 5 lines");
+  Expect(body.lines.size() == 3u, "stage1 then carmine body 3 lines");
   uint32_t suggest = guest.Path("GearGame.GearGameSP_Base.SuggestPawnClassFor", "Function");
   Expect(guest.U8(guest.U32(suggest + 84u) + 0x84u) == 0x07, "stage1 then carmine +0x84 keeps Ben branch");
 }
@@ -1242,20 +1268,22 @@ void TestStackCombinedDiffersOnOneState() {
 void TestStackCombinedAtLargeCounts() {
   Expect(GroupHash(CoopStage1Group(false), 8) == 0x60bb547961baa4f7ull, "stage1 hash at 8");
   Expect(GroupHash(CoopStage1Group(false), 10) == 0xe5a7b50e83bd01d9ull, "stage1 hash at 10");
-  Expect(GroupHash(CoopBodyGroup(false, false), 8) == 0x86cb94f58e6c76d2ull, "body hash at 8");
-  Expect(GroupHash(CoopBodyGroup(false, false), 10) == 0xd754a3c737744215ull, "body hash at 10");
+  Expect(GroupHash(CoopBodyGroup(false, false), 8) == 0x4507d85fecbe5eb3ull, "body hash at 8");
+  Expect(GroupHash(CoopBodyGroup(false, false), 10) == 0xcd8717d68fb20b0cull, "body hash at 10");
   Expect(GroupHash(CoopRideGroup(), 8) == 0x9bf0050eec22acdcull, "ride hash at 8");
   Expect(GroupHash(CoopRideGroup(), 10) == 0x6e31696ad129342bull, "ride hash at 10");
   std::vector<StackEntry> eight = {
+      {"coop-client", "922e9cba37f9c51f"},
       {"coop", "60bb547961baa4f7"},      {"survival", "2ce334f51ab690d1"},
-      {"split-revive", "off"},           {"coop-body", "86cb94f58e6c76d2"},
+      {"split-revive", "off"},           {"coop-body", "4507d85fecbe5eb3"},
       {"coop-ride", "9bf0050eec22acdc"}, {"coop-scenes", "803cef5fa03d88f8"}};
   std::vector<StackEntry> ten = {
+      {"coop-client", "922e9cba37f9c51f"},
       {"coop", "e5a7b50e83bd01d9"},      {"survival", "eded09c52ff086aa"},
-      {"split-revive", "off"},           {"coop-body", "d754a3c737744215"},
+      {"split-revive", "off"},           {"coop-body", "cd8717d68fb20b0c"},
       {"coop-ride", "6e31696ad129342b"}, {"coop-scenes", "83634267c1bfe3bd"}};
-  Expect(EndsWith(StackLine(8, eight), " combined=b2cb03575c3f3175"), "combined at 8");
-  Expect(EndsWith(StackLine(10, ten), " combined=97bc5d0d82d8e6e2"), "combined at 10");
+  Expect(EndsWith(StackLine(8, eight), " combined=0a7d6f512c804139"), "combined at 8");
+  Expect(EndsWith(StackLine(10, ten), " combined=492ab97343880493"), "combined at 10");
 }
 
 }  // namespace
@@ -1289,6 +1317,9 @@ int main() {
   TestStage1HashUnchanged();
   TestObjectFieldsChangeHash();
   TestObjectFieldLinesComeLast();
+  TestCoopClientGroupApplies();
+  TestCoopClientHashIgnoresPlayers();
+  TestWireText();
   TestCoopBodyGroupApplies();
   TestCoopBodyGroupSecondApplyIsAlreadyApplied();
   TestCoopRequestGroupsApply();

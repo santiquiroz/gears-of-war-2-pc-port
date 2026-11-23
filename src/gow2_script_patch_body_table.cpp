@@ -481,12 +481,15 @@ ScriptRow RowCR_3() {
 
 }  // namespace
 
+PatchGroup CoopClientGroup() {
+  return {.name = "coop-client", .object_fields = {RowCB_1(), RowCB_2()}};
+}
+
 PatchGroup CoopBodyGroup(bool carmine, bool marcus_clones) {
   PatchGroup group{.name = "coop-body"};
   if (!marcus_clones) group.scripts.push_back(carmine ? RowCB_3c() : RowCB_3());
   group.scripts.push_back(RowCB_4());
   group.scripts.push_back(RowCB_5());
-  group.object_fields = {RowCB_1(), RowCB_2()};
   return group;
 }
 

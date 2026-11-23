@@ -17,6 +17,7 @@
 #include "gow2_coop_leash_plan.h"
 #include "gow2_coop_pull.h"
 #include "gow2_coop_requests_plan.h"
+#include "gow2_coop_tanks.h"
 #include "gow2_dev_commands.h"
 #include "gow2_dev_guest_calls.h"
 #include "gow2_dev_host_verbs.h"
@@ -184,6 +185,7 @@ TeleportCheck BuildCheck(const TeleportScene& scene, const coop_leash::LeashPc& 
   check.campaign_host = campaign_host;
   check.player1_found = scene.player1.has_value();
   check.requester = ToTeleportPc(requester);
+  check.requester_in_own_tank = coop_tanks::DrivesOwnTank(requester.pc, requester.pawn);
   check.seconds_since_last = seconds_since_last;
   if (!check.player1_found) return check;
   const coop_leash::LeashPc& player1 = scene.pcs[*scene.player1];
@@ -191,6 +193,10 @@ TeleportCheck BuildCheck(const TeleportScene& scene, const coop_leash::LeashPc& 
   check.player1 = ToTeleportPc(player1);
   return check;
 }
+
+constexpr float kTankWideRings[] = {900.0f, 1300.0f};
+constexpr int kTankWideDirs[8][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0},
+                                     {-1, -1}, {1, 1},  {-1, 1}, {1, -1}};
 
 bool TryFallbackPlace(const PPCContext& ctx, uint8_t* base, const coop_leash::LeashPc& mover,
                       const coop_leash::LeashPc& player1) {
@@ -200,6 +206,16 @@ bool TryFallbackPlace(const PPCContext& ctx, uint8_t* base, const coop_leash::Le
     if (coop_pull::PlaceAt(ctx, base, place_fn, mover.pc, mover.pawn, player1.x + dx,
                            player1.y + dy, player1.z + coop_leash::kFallbackRaiseZ)) {
       return true;
+    }
+  }
+  if (!player1.riding) return false;
+  for (float ring : kTankWideRings) {
+    for (const auto& dir : kTankWideDirs) {
+      if (coop_pull::PlaceAt(ctx, base, place_fn, mover.pc, mover.pawn,
+                             player1.x + float(dir[0]) * ring, player1.y + float(dir[1]) * ring,
+                             player1.z + coop_leash::kFallbackRaiseZ)) {
+        return true;
+      }
     }
   }
   return false;
@@ -232,6 +248,16 @@ void HandleTeleport(const PPCContext& ctx, uint8_t* base, const std::vector<Huma
   const TeleportCheck check =
       BuildCheck(*scene, *requester, campaign_host, SecondsSinceTeleport(*state, requester_pc, now));
   const TeleportVerdict verdict = CheckTeleport(check);
+  if (verdict == TeleportVerdict::kRespawnTank) {
+    state->last_teleport[requester_pc] = now;
+    const std::string name = coop_pull::PcName(base, requester_pc);
+    if (coop_tanks::RespawnNear(ctx, base, *requester, scene->pcs[*scene->player1])) {
+      REXLOG_INFO("COOPTP {} -> player 1 (own tank respawned)", name);
+    } else {
+      REXLOG_WARN("COOPTP {} -> player 1 (own tank respawn failed)", name);
+    }
+    return;
+  }
   if (verdict != TeleportVerdict::kOk) {
     REXLOG_INFO("COOPTP rejected {}: {}", coop_pull::PcName(base, requester_pc),
                 TeleportVerdictText(verdict));

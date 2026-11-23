@@ -50,6 +50,7 @@ struct TeleportCheck {
   bool campaign_host = false;
   bool player1_found = false;
   bool requester_is_player1 = false;
+  bool requester_in_own_tank = false;
   TeleportPc requester;
   TeleportPc player1;
   std::optional<double> seconds_since_last;
@@ -63,7 +64,7 @@ enum class TeleportVerdict {
   kNoPawn,
   kPlayer1NoPawn,
   kRiding,
-  kPlayer1Riding,
+  kRespawnTank,
   kCinematic,
   kTooSoon,
 };

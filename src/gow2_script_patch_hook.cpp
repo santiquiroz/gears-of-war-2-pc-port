@@ -252,9 +252,18 @@ void ApplyRegisteredGroups(uint8_t* base, const script_patch::GuestAlloc& alloc,
 
 constexpr std::string_view kBodyFallback = "players 3+ keep the Stage 1 behaviour";
 constexpr std::string_view kRideFallback = "vehicles stay retail";
+constexpr std::string_view kClientFallback = "players 3+ are invisible here";
+// The coop-client rows touch no player-count byte, so the group is hashed with 0 players:
+// every peer hashes the same, whatever its own gow2_coop_players.
+constexpr int kClientHashPlayers = 0;
 
 void ApplyCoopBody(uint8_t* base, int players, const script_patch::GuestAlloc& alloc,
-                   std::vector<script_patch::StackEntry>& stack) {
+                   bool client_applied, std::vector<script_patch::StackEntry>& stack) {
+  if (!client_applied) {
+    REXLOG_INFO("SCRIPTPATCH coop-body: off (coop-client was not applied)");
+    RecordOff(stack, "coop-body");
+    return;
+  }
   if (!REXCVAR_GET(gow2_coop_body)) {
     REXLOG_INFO("SCRIPTPATCH coop-body: off (gow2_coop_body=false)");
     RecordOff(stack, "coop-body");
@@ -266,7 +275,7 @@ void ApplyCoopBody(uint8_t* base, int players, const script_patch::GuestAlloc& a
   ApplyAndLogGroup(base, body, players, alloc, kBodyFallback, stack);
 }
 
-void ApplyCoopFollowUps(uint8_t* base, bool coop_applied, int players,
+void ApplyCoopFollowUps(uint8_t* base, bool coop_applied, bool client_applied, int players,
                         const script_patch::GuestAlloc& alloc,
                         std::vector<script_patch::StackEntry>& stack) {
   if (!coop_applied) {
@@ -276,7 +285,7 @@ void ApplyCoopFollowUps(uint8_t* base, bool coop_applied, int players,
     RecordOff(stack, "coop-ride");
     return;
   }
-  ApplyCoopBody(base, players, alloc, stack);
+  ApplyCoopBody(base, players, alloc, client_applied, stack);
   if (!REXCVAR_GET(gow2_coop_vehicle_ride)) {
     REXLOG_INFO("SCRIPTPATCH coop-ride: off (gow2_coop_vehicle_ride=false)");
     RecordOff(stack, "coop-ride");
@@ -286,6 +295,8 @@ void ApplyCoopFollowUps(uint8_t* base, bool coop_applied, int players,
 }
 
 // The game links the prebuilt SDK and swaps in the patched runtime, so the cvar is the only way in.
+// The published hash only covers what clients run (the coop-client template for players 3+):
+// host-only settings and the player count stay out on purpose, so clients follow the host.
 void PublishCoopHashToSystemLink(uint64_t combined) {
   if (rex::cvar::SetFlagByName("net_coop_hash", std::to_string(combined))) return;
   REXLOG_WARN("SCRIPTPATCH stack: this runtime has no net_coop_hash (SDK patch 0012), so System "
@@ -307,6 +318,21 @@ void ApplyRequestGroups(const script_patch::GuestAlloc& alloc, uint8_t* base, in
   g_coop_ff_applied.store(ff.applied, std::memory_order_release);
 }
 
+GroupResult ApplyCoopClient(uint8_t* base, const script_patch::GuestAlloc& alloc,
+                           std::vector<script_patch::StackEntry>& stack) {
+  return ApplyAndLogGroup(base, script_patch::CoopClientGroup(), kClientHashPlayers, alloc,
+                          kClientFallback, stack);
+}
+
+void PublishWireHash(const GroupResult& client) {
+  const std::string state = StateForResult(client);
+  const std::string wire = script_patch::WireText(state);
+  const uint64_t hash = script_patch::StackHash(wire);
+  g_coop_stack_hash.store(hash, std::memory_order_release);
+  REXLOG_INFO("SCRIPTPATCH wire: {} hash={}", wire, script_patch::FormatGroupHash(hash));
+  PublishCoopHashToSystemLink(hash);
+}
+
 void ApplyStartupScriptPatches(PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("SCRIPTPATCH startup script packages loaded");
   StartCoopCensus(base);
@@ -314,27 +340,26 @@ void ApplyStartupScriptPatches(PPCContext& ctx, uint8_t* base) {
   const int players = REXCVAR_GET(gow2_coop_players);
   ApplyRequestGroups([&ctx, base](uint32_t size) { return GuestMalloc(ctx, base, size); }, base,
                      players);
+  const script_patch::GuestAlloc alloc = [&ctx, base](uint32_t size) {
+    return GuestMalloc(ctx, base, size);
+  };
+  std::vector<script_patch::StackEntry> stack;
+  const GroupResult client = ApplyCoopClient(base, alloc, stack);
+  PublishWireHash(client);
   if (players < kFirstCoopCount || players > kLastCoopCount) {
     REXLOG_INFO("SCRIPTPATCH coop: off (gow2_coop_players={})", players);
     return;
   }
   PatchGroup group = script_patch::CoopStage1Group(REXCVAR_GET(gow2_coop_marcus_clones));
   if (REXCVAR_GET(gow2_coop_patch_fail_test)) CorruptFirstExpectedByte(&group);
-  const script_patch::GuestAlloc alloc = [&ctx, base](uint32_t size) {
-    return GuestMalloc(ctx, base, size);
-  };
-  std::vector<script_patch::StackEntry> stack;
   const GroupResult coop =
       ApplyAndLogGroup(base, group, players, alloc, "the game stays retail", stack);
   const bool coop_applied = coop.applied;
   ApplySurvivalGroups(base, alloc, coop_applied, players, stack);
-  ApplyCoopFollowUps(base, coop_applied, players, alloc, stack);
+  ApplyCoopFollowUps(base, coop_applied, client.applied, players, alloc, stack);
   ApplyRegisteredGroups(base, alloc, coop_applied, players, stack);
   REXLOG_INFO("SCRIPTPATCH stack: {}", script_patch::StackLine(players, stack));
-  const uint64_t hash = script_patch::StackHash(script_patch::StackText(players, stack));
-  g_coop_stack_hash.store(hash, std::memory_order_release);
   g_coop_stage1_applied.store(coop_applied, std::memory_order_release);
-  PublishCoopHashToSystemLink(hash);
 }
 
 }  // namespace

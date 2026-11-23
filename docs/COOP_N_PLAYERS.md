@@ -766,6 +766,14 @@ Each item gives the evidence and then a candidate fix. Script changes are sized 
    - Next (P2, design only): seat extras in a free Reaver seat 1 with `TryToDrive` when
      `Driver != None` and `AnySeatAvailable()`. Eject them with `DriverLeave(true)` on the hero
      exit.
+   - Own Centaur (`gow2_coop_tanks`, 0.4.8). While a hero drives a Centaur, every player 3+ on
+     foot gets his own Centaur next to the hero's (`COOPTANK <pc>: own Vehicle_Centaur next to
+     <hero> (<forward>,<right>)`), driven via `TryToDrive`; a blocked spot tries the next offset
+     and a total failure backs off for 5 s (`COOPTANK <pc>: no room for a Vehicle_Centaur next to
+     <hero>`). When the section ends, the hero gets out, or a driver strays too far, the extra is
+     moved next to the nearest hero (`COOPTANK <pc>: out of his Vehicle_Centaur (<reason>)` with
+     `no hero drives a tank`, `left the game` or `respawn`). Cinematics keep the tanks; only the
+     Centaur is handed out; Dom keeps the gun seat in Marcus's tank.
 9. **Loadout and look.** [V]
    - `SeqEvent_ChapterPoint` gives `MarcusInventory` only to Marcus pawns.
    - 25 `GiveInventory` links target heroes only.

@@ -367,9 +367,13 @@ ROWS = {
 ROW_ORDER = ("CB-1", "CB-2", "CB-3", "CB-3c", "CB-4", "CB-5", "CR-1", "CR-2", "CR-3")
 
 
+def coop_client_rows():
+    return [ROWS["CB-1"], ROWS["CB-2"]]
+
+
 def coop_body_rows(carmine=False, marcus_clones=False):
     first = [] if marcus_clones else [ROWS["CB-3c" if carmine else "CB-3"]]
-    return first + [ROWS["CB-4"], ROWS["CB-5"], ROWS["CB-1"], ROWS["CB-2"]]
+    return first + [ROWS["CB-4"], ROWS["CB-5"]]
 
 
 def coop_ride_rows():
@@ -429,12 +433,15 @@ def render_cpp():
     lines.extend([
         "}  // namespace",
         "",
+        "PatchGroup CoopClientGroup() {",
+        '  return {.name = "coop-client", .object_fields = {RowCB_1(), RowCB_2()}};',
+        "}",
+        "",
         "PatchGroup CoopBodyGroup(bool carmine, bool marcus_clones) {",
         '  PatchGroup group{.name = "coop-body"};',
         "  if (!marcus_clones) group.scripts.push_back(carmine ? RowCB_3c() : RowCB_3());",
         "  group.scripts.push_back(RowCB_4());",
         "  group.scripts.push_back(RowCB_5());",
-        "  group.object_fields = {RowCB_1(), RowCB_2()};",
         "  return group;",
         "}",
         "",
@@ -617,11 +624,11 @@ def _check_field_row(model, row):
     return ok
 
 
-GROUP_TITLES = ("coop-body", "coop-body (gow2_coop_extra_carmine)", "coop-ride")
+GROUP_TITLES = ("coop-client", "coop-body", "coop-body (gow2_coop_extra_carmine)", "coop-ride")
 
 
 def _group_row_sets():
-    return [coop_body_rows(), coop_body_rows(carmine=True), coop_ride_rows()]
+    return [coop_client_rows(), coop_body_rows(), coop_body_rows(carmine=True), coop_ride_rows()]
 
 
 def check_package(pkg_dir, players):

@@ -14,6 +14,7 @@
 
 #include "gow2_coop_leash_plan.h"
 #include "gow2_coop_pull.h"
+#include "gow2_coop_tanks.h"
 #include "gow2_dev_commands.h"
 #include "gow2_dev_guest_calls.h"
 #include "gow2_engine_tick.h"
@@ -77,6 +78,11 @@ void InitSettings(LeashSettings* settings) {
               "moved next to the nearest one",
               settings->distance, settings->seconds, coop_leash::kFellBelowHeroes,
               coop_leash::kHeroFallSeconds);
+  if (coop_tanks::Enabled()) {
+    REXLOG_INFO("COOPTANK on: players 3+ get their own Centaur in the tank sections");
+  } else {
+    REXLOG_INFO("COOPTANK off");
+  }
 }
 
 bool TakeSnapshotTurn() {
@@ -304,6 +310,7 @@ void LeashTick(const PPCContext& ctx, uint8_t* base) {
   for (const coop_leash::PullOrder& order : orders) {
     PullExtra(ctx, base, order, FellDepth(*snapshot, order));
   }
+  if (coop_tanks::Enabled()) coop_tanks::Tick(ctx, base, *snapshot, config);
   const coop_leash::GodOrders god = coop_leash::PlanGodMode(*snapshot, &state.god_granted);
   ApplyGodOrders(base, *snapshot, god);
 }

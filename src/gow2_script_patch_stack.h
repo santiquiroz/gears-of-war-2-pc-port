@@ -18,6 +18,10 @@ struct StackEntry {
 
 std::string FormatGroupHash(uint64_t set_hash);
 
+// Wire text: what every peer, host or client, runs. Only the coop-client state goes on the
+// wire; host-only settings and the player count stay out on purpose.
+std::string WireText(std::string_view coop_client_state);
+
 std::string StackText(int players, const std::vector<StackEntry>& entries);
 
 uint64_t StackHash(std::string_view text);

@@ -9,7 +9,11 @@
 
 namespace rex::glue::script_patch {
 
-// "coop-body": a body (CB-1, CB-2), the class (CB-3, or CB-3c with carmine), the loadout (CB-4)
+// rows CB-1, CB-2: players 3+ look like Dom; run on every peer, clients spawn
+// those pawns from this template
+PatchGroup CoopClientGroup();
+
+// "coop-body": the class (CB-3, or CB-3c with carmine), the loadout (CB-4)
 // and the spawn without Right Trigger (CB-5) of players 3+. marcus_clones drops CB-3 and CB-3c.
 PatchGroup CoopBodyGroup(bool carmine, bool marcus_clones);
 

@@ -5,22 +5,22 @@ network or over the internet.
 
 ## What you need
 
-- Every player runs the same release, v0.1.2. It contains the Stage 2 co-op work and the codegen fix d074c0d. Matching `gow2_coop_players` is not enough.
-- With `gow2_coop_players` 3 or more, v0.1.2 adds a beacon gate (`net_beacon_gate`, default true): every peer announces its co-op hash with each System Link search and answer, and campaigns whose hash differs stay hidden (the friend sees NO CAMPAIGNS FOUND). With 2 players there is still no check: a v0.1.1 peer finds and joins a v0.1.2 host without any warning, but it lacks d074c0d and is expected to crash about 0.5 s after the chapter 2 -> 3 map commit ("[FATAL] Call to invalid or unregistered function at guest address 0x82ADBEF0"), even in two-player co-op [I].
+- Every player runs the same release, v0.1.2. It contains the Stage 2 co-op work and the codegen fix d074c0d. `gow2_coop_players` and the co-op settings do not need to match: the host's settings apply to everyone.
+- With `gow2_coop_players` 3 or more, v0.1.2 adds a beacon gate (`net_beacon_gate`, default true): every peer announces its co-op hash with each System Link search and answer, and campaigns whose hash differs stay hidden (the friend sees NO CAMPAIGNS FOUND). Since v0.4.8 every peer announces the hash whatever `gow2_coop_players` says, two-player games included. Before v0.4.8, with 2 players there was no check: a v0.1.1 peer finds and joins a v0.1.2 host without any warning, but it lacks d074c0d and is expected to crash about 0.5 s after the chapter 2 -> 3 map commit ("[FATAL] Call to invalid or unregistered function at guest address 0x82ADBEF0"), even in two-player co-op [I].
 - Every player turns System Link on with `net_link_active = true`. It is off
   by default (patch 0010): a solo game shows an unplugged cable and answers
   nobody on the network. `gow2_coop_players` 3 or more turns it on by
   itself; two-player co-op needs the setting.
-- For three or four players, every player (host and each friend) sets the same `gow2_coop_players`, for
-  example 4, and the same co-op settings (the defaults are fine). A v0.1.1 friend, a friend left at
-  `gow2_coop_players=2`, or a friend with a different co-op setting cannot see a 4-player host.
+- For three or four players, the host sets `gow2_coop_players`, for
+  example 4 (the defaults for the rest are fine); friends follow the host's settings.
+  A v0.1.1 friend cannot see a 4-player host, and neither can a friend whose
+  patched packages fail the coop-client rows.
   Without the gate (older builds) a friend left at 2 sees players 3-4 with no body [I].
 - Every player uses the same `net_port_offset`. Leave the default.
 
 ## Four players
 
-Every player, host and each friend, sets `gow2_coop_players=4` and the same
-co-op settings (the defaults are fine). On PC pass `--gow2_coop_players=4`;
+The host sets `gow2_coop_players=4` (the defaults for the rest are fine). On PC pass `--gow2_coop_players=4`;
 on Android put `gow2_coop_players = 4` in `gow2.toml`.
 
 With 3 or more players the beacon gate applies: every peer announces its co-op
@@ -130,7 +130,7 @@ restart.
 | `net_peers` | empty | Comma-separated host[:port] list (IPv4 or DNS names). Every broadcast the game sends also goes to each peer as a unicast copy. |
 | `net_public_address` | empty | host[:port] (IPv4 or DNS name) advertised to other players. Set `net_allow_peers` with it. |
 | `net_allow_peers` | empty | IPv4 addresses, a.b.c.d/n ranges or DNS names that may send to the game; loopback and the local network always may. Empty: with `net_peers` or `net_public_address` set, only the `net_peers` and the local network; with neither, everyone. |
-| `net_beacon_gate` | true | With `gow2_coop_players` 3 or more, only peers with the same co-op hash see each other's campaigns. False turns the hash check off, for diagnosis only. |
+| `net_beacon_gate` | true | Only peers on the same release see each other's campaigns, whatever `gow2_coop_players` says (the hash covers only the coop-client rows every peer runs). False turns the hash check off, for diagnosis only. |
 | `system_link_trace` | false | Set to true to log network activity under `[netlink]`. |
 
 ## PC and phone on the same Wi-Fi
