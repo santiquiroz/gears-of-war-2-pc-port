@@ -1,0 +1,13 @@
+diff --git a/src/graphics/d3d12/gow2_upscale.cpp b/src/graphics/d3d12/gow2_upscale.cpp
+index d49ca8e..051c6ce 100644
+--- a/src/graphics/d3d12/gow2_upscale.cpp
++++ b/src/graphics/d3d12/gow2_upscale.cpp
+@@ -28,8 +28,6 @@ REXCVAR_DEFINE_INT32(gow2_upscale_quality, -1, "gfx",
+                      "Upscaler mode: -1 auto (from the quality level: Low performance, Medium balanced, "
+                      "High quality), 0 performance, 1 balanced, 2 quality, 3 ultra performance, "
+                      "4 ultra quality, 5 native (DLAA)");
+-REXCVAR_DEFINE_DOUBLE(gow2_render_scale, 0.0, "gfx",
+-                      "Scene render scale for the upscaler (0 = from the DLSS quality mode, 1 = native)");
+ REXCVAR_DEFINE_BOOL(gow2_dlss_hdr, false, "gfx", "Tell DLSS the scene colour is HDR/linear");
+ REXCVAR_DEFINE_INT32(gow2_mv_debug, 0, "gfx",
+                      "1 = write the motion vectors into the scene colour instead of the upscaled "

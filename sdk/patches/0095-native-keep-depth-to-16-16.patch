@@ -1,0 +1,77 @@
+diff --git a/include/rex/graphics/pipeline/render_target/native_surfaces.h b/include/rex/graphics/pipeline/render_target/native_surfaces.h
+index a87912d..d0ec0a1 100644
+--- a/include/rex/graphics/pipeline/render_target/native_surfaces.h
++++ b/include/rex/graphics/pipeline/render_target/native_surfaces.h
+@@ -22,13 +22,21 @@ struct SurfaceKind {
+ constexpr uint32_t kColorFormat16_16 = 4;
+ 
+ // Which EDRAM ownership copies survive in the native surfaces mode: depth to depth (the game reads
+-// depth back across the two depth formats at the same EDRAM base), and k_16_16 colour to depth (at
+-// 21:9 the light shafts read a depth surface the game first wrote as a k_16_16 colour target).
++// depth back across the two depth formats at the same EDRAM base), and depth to and from k_16_16
++// colour: the game reads depth through a k_16_16 view of the same EDRAM (the 21:9 light shafts
++// read a depth surface it first wrote as k_16_16, and without depth to k_16_16 the motion blur
++// smears objects that move with the camera, issue #26).
+ inline bool KeepTransfer(const SurfaceKind& source, const SurfaceKind& dest) {
+-  if (!dest.is_depth) {
+-    return false;
++  if (source.is_depth && dest.is_depth) {
++    return true;
++  }
++  if (!source.is_depth && source.format == kColorFormat16_16 && dest.is_depth) {
++    return true;
+   }
+-  return source.is_depth || source.format == kColorFormat16_16;
++  if (source.is_depth && !dest.is_depth && dest.format == kColorFormat16_16) {
++    return true;
++  }
++  return false;
+ }
+ 
+ struct TransferSide {
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index ecb847a..d164bad 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -44,8 +44,9 @@ REXCVAR_DEFINE_BOOL(direct_host_resolve, true, "GPU",
+ 
+ REXCVAR_DEFINE_BOOL(gpu_native_surfaces, false, "GPU",
+                     "Native renderer, phase 2a: render targets are host surfaces; EDRAM ownership "
+-                    "copies between them are dropped (depth to depth kept) and counted; forces "
+-                    "host render targets and draws Direct3D's 4x clears at 1x")
++                    "copies between them are dropped (depth to depth and depth to and from k_16_16 "
++                    "colour kept) and counted; forces host render targets and draws Direct3D's "
++                    "4x clears at 1x")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
+ REXCVAR_DEFINE_BOOL(gpu_native_resolves, false, "GPU",
+diff --git a/tests/unit/graphics/native_surfaces_test.cpp b/tests/unit/graphics/native_surfaces_test.cpp
+index 8300bc4..d61a19d 100644
+--- a/tests/unit/graphics/native_surfaces_test.cpp
++++ b/tests/unit/graphics/native_surfaces_test.cpp
+@@ -11,10 +11,11 @@ TEST_CASE("depth to depth transfers are kept", "[native_surfaces]") {
+   CHECK(ns::KeepTransfer({true, 1, 0}, {true, 0, 2}));
+ }
+ 
+-TEST_CASE("k_16_16 colour to depth transfers are kept", "[native_surfaces]") {
++TEST_CASE("depth and k_16_16 colour transfers are kept both ways", "[native_surfaces]") {
+   CHECK(ns::KeepTransfer({false, 4, 0}, {true, 0, 0}));
+   CHECK(ns::KeepTransfer({false, 4, 0}, {true, 1, 0}));
+-  CHECK_FALSE(ns::KeepTransfer({true, 0, 0}, {false, 4, 0}));
++  CHECK(ns::KeepTransfer({true, 0, 0}, {false, 4, 0}));
++  CHECK(ns::KeepTransfer({true, 1, 0}, {false, 4, 0}));
+   CHECK_FALSE(ns::KeepTransfer({false, 4, 0}, {false, 6, 0}));
+ }
+ 
+@@ -22,6 +23,11 @@ TEST_CASE("transfers involving colour are dropped", "[native_surfaces]") {
+   CHECK_FALSE(ns::KeepTransfer({false, 3, 0}, {true, 0, 0}));
+   CHECK_FALSE(ns::KeepTransfer({true, 1, 0}, {false, 6, 0}));
+   CHECK_FALSE(ns::KeepTransfer({false, 3, 0}, {false, 6, 0}));
++  CHECK_FALSE(ns::KeepTransfer({true, 0, 0}, {false, 3, 0}));
++  CHECK_FALSE(ns::KeepTransfer({true, 0, 0}, {false, 0, 0}));
++  CHECK_FALSE(ns::KeepTransfer({true, 0, 0}, {false, 7, 0}));
++  CHECK_FALSE(ns::KeepTransfer({false, 6, 0}, {true, 0, 0}));
++  CHECK_FALSE(ns::KeepTransfer({false, 4, 0}, {false, 4, 0}));
+ }
+ 
+ TEST_CASE("drop counters report rates and reset", "[native_surfaces]") {

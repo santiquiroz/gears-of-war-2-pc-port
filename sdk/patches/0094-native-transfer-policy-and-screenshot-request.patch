@@ -1,0 +1,347 @@
+diff --git a/include/rex/graphics/pipeline/render_target/cache.h b/include/rex/graphics/pipeline/render_target/cache.h
+index 2934ed6..50033ef 100644
+--- a/include/rex/graphics/pipeline/render_target/cache.h
++++ b/include/rex/graphics/pipeline/render_target/cache.h
+@@ -15,6 +15,7 @@
+ #include <cstdint>
+ #include <functional>
+ #include <map>
++#include <string>
+ #include <unordered_map>
+ #include <utility>
+ #include <vector>
+@@ -733,6 +734,8 @@ class RenderTargetCache {
+ 
+   // gpu_native_surfaces: ownership transfers dropped since the last report.
+   native_surfaces::DropCounters native_surface_drops_;
++  std::string native_keep_transfers_text_;
++  native_surfaces::TransferPolicy native_keep_transfers_policy_;
+   // gpu_native_surfaces: transfers dropped by DropNativeWideTransfers, and resolve dump spans
+   // clamped to xenos::kEdramTileCount tiles (per GetResolveCopyRectanglesToDump call), since the
+   // last report.
+diff --git a/include/rex/graphics/pipeline/render_target/native_surfaces.h b/include/rex/graphics/pipeline/render_target/native_surfaces.h
+index 20f068b..a87912d 100644
+--- a/include/rex/graphics/pipeline/render_target/native_surfaces.h
++++ b/include/rex/graphics/pipeline/render_target/native_surfaces.h
+@@ -5,6 +5,7 @@
+ #include <cstdio>
+ #include <map>
+ #include <string>
++#include <string_view>
+ #include <tuple>
+ #include <utility>
+ #include <vector>
+@@ -30,6 +31,157 @@ inline bool KeepTransfer(const SurfaceKind& source, const SurfaceKind& dest) {
+   return source.is_depth || source.format == kColorFormat16_16;
+ }
+ 
++struct TransferSide {
++  bool any_kind;
++  bool is_depth;
++  bool any_format;
++  uint32_t format;
++};
++
++struct TransferRule {
++  TransferSide source;
++  TransferSide dest;
++};
++
++struct TransferPolicy {
++  bool use_default = true;
++  std::vector<TransferRule> rules;
++};
++
++inline bool TransferSideMatches(const TransferSide& side, const SurfaceKind& kind) {
++  if (side.any_kind) {
++    return true;
++  }
++  return side.is_depth == kind.is_depth &&
++         (side.any_format || side.format == kind.format);
++}
++
++inline bool KeepTransferWithPolicy(const TransferPolicy& policy, const SurfaceKind& source,
++                                   const SurfaceKind& dest) {
++  if (policy.use_default && KeepTransfer(source, dest)) {
++    return true;
++  }
++  for (const TransferRule& rule : policy.rules) {
++    if (TransferSideMatches(rule.source, source) && TransferSideMatches(rule.dest, dest)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++inline bool IsTransferSeparator(char c) {
++  return c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' ||
++         c == '\v';
++}
++
++inline bool ParseTransferSide(std::string_view text, TransferSide& side_out) {
++  if (text == "*") {
++    side_out = TransferSide{true, false, true, 0};
++    return true;
++  }
++  if (text.empty()) {
++    return false;
++  }
++  bool is_depth;
++  char head = text[0];
++  if (head == 'C' || head == 'c') {
++    is_depth = false;
++  } else if (head == 'D' || head == 'd') {
++    is_depth = true;
++  } else {
++    return false;
++  }
++  if (text.size() == 1) {
++    side_out = TransferSide{false, is_depth, true, 0};
++    return true;
++  }
++  uint32_t format = 0;
++  for (size_t i = 1; i < text.size(); ++i) {
++    char c = text[i];
++    if (c < '0' || c > '9') {
++      return false;
++    }
++    format = format * 10 + uint32_t(c - '0');
++    if (format > 63) {
++      return false;
++    }
++  }
++  side_out = TransferSide{false, is_depth, false, format};
++  return true;
++}
++
++inline bool ParseTransferToken(std::string_view token, TransferRule& rule_out) {
++  size_t sep = token.find('>');
++  if (sep == std::string_view::npos) {
++    return false;
++  }
++  if (token.find('>', sep + 1) != std::string_view::npos) {
++    return false;
++  }
++  TransferSide source{false, false, true, 0};
++  TransferSide dest{false, false, true, 0};
++  if (!ParseTransferSide(token.substr(0, sep), source)) {
++    return false;
++  }
++  if (!ParseTransferSide(token.substr(sep + 1), dest)) {
++    return false;
++  }
++  rule_out = TransferRule{source, dest};
++  return true;
++}
++
++inline TransferPolicy ParseTransferPolicy(std::string_view text) {
++  std::vector<std::string_view> tokens;
++  size_t i = 0;
++  while (i < text.size()) {
++    while (i < text.size() && IsTransferSeparator(text[i])) {
++      ++i;
++    }
++    if (i >= text.size()) {
++      break;
++    }
++    size_t start = i;
++    while (i < text.size() && !IsTransferSeparator(text[i])) {
++      ++i;
++    }
++    tokens.push_back(text.substr(start, i - start));
++  }
++  if (tokens.empty()) {
++    return TransferPolicy{};
++  }
++  if (tokens.size() == 1) {
++    if (tokens[0] == "default") {
++      return TransferPolicy{};
++    }
++    if (tokens[0] == "all") {
++      TransferPolicy policy;
++      policy.use_default = false;
++      TransferSide any{true, false, true, 0};
++      policy.rules.push_back(TransferRule{any, any});
++      return policy;
++    }
++    if (tokens[0] == "none") {
++      TransferPolicy policy;
++      policy.use_default = false;
++      return policy;
++    }
++  }
++  TransferPolicy policy;
++  policy.use_default = false;
++  for (std::string_view token : tokens) {
++    if (token == "default") {
++      policy.use_default = true;
++      continue;
++    }
++    TransferRule rule{{false, false, true, 0}, {false, false, true, 0}};
++    if (!ParseTransferToken(token, rule)) {
++      return TransferPolicy{};
++    }
++    policy.rules.push_back(rule);
++  }
++  return policy;
++}
++
+ class DropCounters {
+  public:
+   void Record(const SurfaceKind& source, const SurfaceKind& dest, uint32_t tiles) {
+diff --git a/include/rex/ui/d3d12/d3d12_presenter.h b/include/rex/ui/d3d12/d3d12_presenter.h
+index 0e1e08d..0237990 100644
+--- a/include/rex/ui/d3d12/d3d12_presenter.h
++++ b/include/rex/ui/d3d12/d3d12_presenter.h
+@@ -343,6 +343,7 @@ class D3D12Presenter final : public Presenter {
+   // well as by presenter initialization and shutdown.
+   PaintContext paint_context_;
+   std::atomic<bool> screenshot_requested_ = false;
++  int32_t present_screenshot_request_seen_ = 0;
+ 
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+   void* temporal_upscaler_context_ = nullptr;
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index 00bc2d8..ecb847a 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -61,6 +61,11 @@ REXCVAR_DEFINE_BOOL(gpu_native_hook_example, false, "GPU",
+                     "inserted; needs gpu_native_resolves")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
++REXCVAR_DEFINE_STRING(gpu_native_keep_transfers, "default", "GPU",
++                      "Native surfaces debug: which EDRAM ownership transfers survive. "
++                      "default, all, none, or a list like 'C>D, D3>C6, default' (C/D = "
++                      "colour/depth, optional resource format, * = any)");
++
+ namespace rex::graphics {
+ 
+ namespace {
+@@ -1495,10 +1500,19 @@ void RenderTargetCache::ChangeOwnership(RenderTargetKey dest, uint32_t start_til
+ void RenderTargetCache::DropNativeSurfaceTransfers(std::vector<Transfer>& transfers,
+                                                    const RenderTargetKey& dest_key) {
+   const native_surfaces::SurfaceKind dest_kind = KindOf(dest_key);
++  const std::string& text = REXCVAR_GET(gpu_native_keep_transfers);
++  if (text != native_keep_transfers_text_) {
++    native_keep_transfers_text_ = text;
++    native_keep_transfers_policy_ = native_surfaces::ParseTransferPolicy(text);
++    const native_surfaces::TransferPolicy& policy = native_keep_transfers_policy_;
++    REXGPU_INFO("NATIVESURF keep transfers: '{}'{}", text,
++                policy.use_default && policy.rules.empty() ? " (built-in policy)" : "");
++  }
++  const native_surfaces::TransferPolicy& policy = native_keep_transfers_policy_;
+   auto dropped_begin =
+       std::remove_if(transfers.begin(), transfers.end(), [&](const Transfer& transfer) {
+         const native_surfaces::SurfaceKind source_kind = KindOf(transfer.source->key());
+-        if (native_surfaces::KeepTransfer(source_kind, dest_kind)) {
++        if (native_surfaces::KeepTransferWithPolicy(policy, source_kind, dest_kind)) {
+           return false;
+         }
+         native_surface_drops_.Record(source_kind, dest_kind,
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index 4031978..7e90ddc 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -47,6 +47,9 @@
+ REXCVAR_DEFINE_BOOL(d3d12_allow_variable_refresh_rate_and_tearing, true, "UI/D3D12",
+                     "Allow variable refresh rate and tearing");
+ 
++REXCVAR_DEFINE_INT32(present_screenshot_request, 0, "Display",
++                      "Test hook: each change of this value saves one screenshot, like F12");
++
+ REXCVAR_DECLARE(bool, present_hdr);
+ REXCVAR_DECLARE(int32_t, present_hdr_paper_white_nits);
+ REXCVAR_DECLARE(int32_t, present_hdr_peak_nits);
+@@ -1465,6 +1468,10 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+     back_buffer_clear_needed = false;
+   }
+ 
++  if (REXCVAR_GET(present_screenshot_request) != present_screenshot_request_seen_) {
++    present_screenshot_request_seen_ = REXCVAR_GET(present_screenshot_request);
++    screenshot_requested_.store(true, std::memory_order_release);
++  }
+   if (screenshot_requested_.exchange(false, std::memory_order_acq_rel)) {
+     D3D12_RESOURCE_DESC desc = back_buffer->GetDesc();
+     screenshot_width = uint32_t(desc.Width);
+diff --git a/tests/unit/graphics/native_surfaces_test.cpp b/tests/unit/graphics/native_surfaces_test.cpp
+index e80f24e..8300bc4 100644
+--- a/tests/unit/graphics/native_surfaces_test.cpp
++++ b/tests/unit/graphics/native_surfaces_test.cpp
+@@ -39,3 +39,77 @@ TEST_CASE("drop counters report rates and reset", "[native_surfaces]") {
+   CHECK(counters.empty());
+   CHECK(counters.ReportAndReset(1.0) == "");
+ }
++
++TEST_CASE("empty and default policies match KeepTransfer", "[native_surfaces]") {
++  const ns::TransferPolicy empty = ns::ParseTransferPolicy("");
++  const ns::TransferPolicy def = ns::ParseTransferPolicy("default");
++  CHECK(empty.use_default);
++  CHECK(empty.rules.empty());
++  CHECK(def.use_default);
++  CHECK(def.rules.empty());
++  const std::pair<ns::SurfaceKind, ns::SurfaceKind> pairs[] = {
++      {{true, 0, 0}, {true, 1, 0}},  {{true, 1, 0}, {true, 0, 0}},
++      {{true, 0, 2}, {true, 1, 0}},  {{true, 1, 0}, {true, 0, 2}},
++      {{false, 4, 0}, {true, 0, 0}}, {{false, 4, 0}, {true, 1, 0}},
++      {{true, 0, 0}, {false, 4, 0}}, {{false, 4, 0}, {false, 6, 0}},
++      {{false, 3, 0}, {true, 0, 0}}, {{true, 1, 0}, {false, 6, 0}},
++      {{false, 3, 0}, {false, 6, 0}},
++  };
++  for (const auto& [source, dest] : pairs) {
++    CHECK(ns::KeepTransferWithPolicy(empty, source, dest) == ns::KeepTransfer(source, dest));
++    CHECK(ns::KeepTransferWithPolicy(def, source, dest) == ns::KeepTransfer(source, dest));
++  }
++}
++
++TEST_CASE("all keeps everything and none drops everything", "[native_surfaces]") {
++  const ns::TransferPolicy all = ns::ParseTransferPolicy("all");
++  CHECK_FALSE(all.use_default);
++  CHECK(ns::KeepTransferWithPolicy(all, {false, 3, 0}, {false, 6, 0}));
++  CHECK(ns::KeepTransferWithPolicy(all, {true, 0, 0}, {false, 3, 0}));
++  const ns::TransferPolicy none = ns::ParseTransferPolicy("none");
++  CHECK_FALSE(none.use_default);
++  CHECK(none.rules.empty());
++  CHECK_FALSE(ns::KeepTransferWithPolicy(none, {true, 0, 0}, {true, 1, 0}));
++}
++
++TEST_CASE("colour to depth policy", "[native_surfaces]") {
++  const ns::TransferPolicy policy = ns::ParseTransferPolicy("C>D");
++  CHECK(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {true, 0, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {true, 0, 0}, {false, 3, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {false, 6, 0}));
++}
++
++TEST_CASE("format-specific policy", "[native_surfaces]") {
++  const ns::TransferPolicy policy = ns::ParseTransferPolicy("C3>C0");
++  CHECK(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {false, 0, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {false, 2, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {false, 2, 0}, {false, 0, 0}));
++}
++
++TEST_CASE("rule plus default policy", "[native_surfaces]") {
++  const ns::TransferPolicy policy = ns::ParseTransferPolicy("D>C6, default");
++  CHECK(policy.use_default);
++  CHECK(ns::KeepTransferWithPolicy(policy, {true, 1, 0}, {false, 6, 0}));
++  CHECK(ns::KeepTransferWithPolicy(policy, {true, 0, 0}, {true, 1, 0}));
++  CHECK(ns::KeepTransferWithPolicy(policy, {false, 4, 0}, {true, 0, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {true, 1, 0}, {false, 3, 0}));
++}
++
++TEST_CASE("malformed policies fall back to default", "[native_surfaces]") {
++  for (const char* text : {"C3>", "X>D", "C3>D0x", "C99>D"}) {
++    const ns::TransferPolicy policy = ns::ParseTransferPolicy(text);
++    CHECK(policy.use_default);
++    CHECK(policy.rules.empty());
++    CHECK(ns::KeepTransferWithPolicy(policy, {true, 0, 0}, {true, 1, 0}));
++    CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {false, 6, 0}));
++  }
++}
++
++TEST_CASE("policy parsing ignores whitespace and commas", "[native_surfaces]") {
++  const ns::TransferPolicy policy = ns::ParseTransferPolicy("  C>C ,D>C  ");
++  CHECK_FALSE(policy.use_default);
++  CHECK(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {false, 6, 0}));
++  CHECK(ns::KeepTransferWithPolicy(policy, {true, 0, 0}, {false, 3, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {false, 3, 0}, {true, 0, 0}));
++  CHECK_FALSE(ns::KeepTransferWithPolicy(policy, {true, 0, 0}, {true, 1, 0}));
++}

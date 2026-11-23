@@ -69,7 +69,7 @@ The reference hardcodes Judgment's vertex-shader constant layout. Gears of War 2
 - NGX project ID replaced with a fresh GoW2 GUID
   (`b742a0d0-b3f9-4ebd-baa6-c3066954b994`).
 - New cvars: `gow2_temporal`, `gow2_upscaler` (off/dlss/fsr3/fsr4/auto),
-  `gow2_upscale_quality` (-1 auto, 0/1/2/3/4/5), `gow2_render_scale`,
+  `gow2_upscale_quality` (-1 auto, 0/1/2/3/4/5), `gow2_render_scale` (removed by 0093),
   `gow2_dlss` (legacy bool), `gow2_dlss_hdr`, `gow2_mv_debug`,
   `gow2_jitter_scale`, `gow2_jitter_phases`, `gow2_vp_register`,
   `gow2_campos_register`, `gow2_upscale_typed_copy` (debug: FSR reads the typed
