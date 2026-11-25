@@ -1,4 +1,4 @@
-# Controlled pre-cache comparison вЂ” 2026-11-25
+# Controlled pre-cache comparison  -  2026-11-25
 
 Six completed runs (three disabled, three enabled) found no measurable hitch-rate improvement in this warm-cache, 60 FPS-limited hospital scenario: every measured arm stayed near 60 FPS and recorded zero frames over 33 ms. The enabled path did prepare and reuse textures, at additional startup and CPU-memory cost. This is neutral performance evidence, not proof of a speedup or a reason to enable the feature by default.
 

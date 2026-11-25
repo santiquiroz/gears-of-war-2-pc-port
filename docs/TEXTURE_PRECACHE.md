@@ -17,8 +17,8 @@ gow2_precache_startup_ms = 6000
 | Setting | Default | Bounds | Meaning |
 |---|---:|---|---|
 | `gow2_adaptive_precache` | `false` | Boolean | Enable learned replacement-texture preparation. |
-| `gow2_precache_budget_mb` | `3072` | 64вЂ“3072 MiB | Maximum retained prepared-image payload, separate from VRAM. |
-| `gow2_precache_startup_ms` | `6000` | 100вЂ“10000 ms | Preparation deadline checked between DDS files. |
+| `gow2_precache_budget_mb` | `3072` | 64-3072 MiB | Maximum retained prepared-image payload, separate from VRAM. |
+| `gow2_precache_startup_ms` | `6000` | 100-10000 ms | Preparation deadline checked between DDS files. |
 
 On Windows, the payload budget is also limited to one third of available physical RAM. Preparation is skipped below 1 GiB available. The deadline is not a hard timeout: an individual file read cannot be interrupted, and upload-buffer preparation happens afterward. Memory limits describe prepared payloads, not the process working set, temporary allocations, map overhead, or the existing replacement-image cache.
 
