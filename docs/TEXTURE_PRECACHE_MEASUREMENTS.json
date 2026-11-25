@@ -1,0 +1,157 @@
+{
+  "scope": "managed v0.4.8; transition-inclusive five-second input-frame windows",
+  "summary": [
+    {
+      "world4x": false,
+      "precache": false,
+      "runs": [
+        1,
+        8,
+        9
+      ],
+      "early_over33": [
+        3,
+        4,
+        3
+      ],
+      "early_over50": [
+        3,
+        3,
+        2
+      ],
+      "early_over100": [
+        1,
+        1,
+        1
+      ],
+      "median_early_over33": 3,
+      "median_early_over50": 3,
+      "median_early_over100": 1,
+      "early_sample_seconds": [
+        15.0045,
+        15.0158,
+        15.008
+      ],
+      "median_steady_fps": 59.988,
+      "steady_over33_total": 0,
+      "median_startup_seconds": 8.5587,
+      "median_load_seconds": 0.9754,
+      "median_sampled_private_MiB": 3774.0,
+      "early_over50_per_min": 10.65996273454694
+    },
+    {
+      "world4x": false,
+      "precache": true,
+      "runs": [
+        3,
+        6,
+        11
+      ],
+      "early_over33": [
+        4,
+        3,
+        2
+      ],
+      "early_over50": [
+        1,
+        1,
+        1
+      ],
+      "early_over100": [
+        1,
+        1,
+        1
+      ],
+      "median_early_over33": 3,
+      "median_early_over50": 1,
+      "median_early_over100": 1,
+      "early_sample_seconds": [
+        15.013,
+        15.0245,
+        15.016
+      ],
+      "median_steady_fps": 59.9869,
+      "steady_over33_total": 0,
+      "median_startup_seconds": 8.5578,
+      "median_load_seconds": 0.9747,
+      "median_sampled_private_MiB": 3834.0,
+      "early_over50_per_min": 3.995250091557814
+    },
+    {
+      "world4x": true,
+      "precache": false,
+      "runs": [
+        2,
+        7,
+        10
+      ],
+      "early_over33": [
+        13,
+        8,
+        8
+      ],
+      "early_over50": [
+        12,
+        4,
+        6
+      ],
+      "early_over100": [
+        8,
+        3,
+        3
+      ],
+      "median_early_over33": 8,
+      "median_early_over50": 6,
+      "median_early_over100": 3,
+      "early_sample_seconds": [
+        15.1445,
+        15.0063,
+        15.0229
+      ],
+      "median_steady_fps": 59.9804,
+      "steady_over33_total": 1,
+      "median_startup_seconds": 9.0486,
+      "median_load_seconds": 0.9763,
+      "median_sampled_private_MiB": 6894.0,
+      "early_over50_per_min": 29.220542041054863
+    },
+    {
+      "world4x": true,
+      "precache": true,
+      "runs": [
+        4,
+        5,
+        12
+      ],
+      "early_over33": [
+        7,
+        5,
+        5
+      ],
+      "early_over50": [
+        4,
+        3,
+        4
+      ],
+      "early_over100": [
+        3,
+        2,
+        2
+      ],
+      "median_early_over33": 5,
+      "median_early_over50": 4,
+      "median_early_over100": 2,
+      "early_sample_seconds": [
+        15.0138,
+        15.025,
+        15.0254
+      ],
+      "median_steady_fps": 59.988,
+      "steady_over33_total": 0,
+      "median_startup_seconds": 10.0691,
+      "median_load_seconds": 1.0254,
+      "median_sampled_private_MiB": 8708.0,
+      "early_over50_per_min": 14.645772031901155
+    }
+  ]
+}

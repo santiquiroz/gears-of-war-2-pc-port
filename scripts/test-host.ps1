@@ -207,6 +207,19 @@ function Test-SdkHeaderUnits([string]$outDir) {
     return $ok
 }
 
+function Test-TexturePrecache([string]$outDir) {
+    $sdk = Join-Path $root 'out\sdk-build\rexglue-sdk'
+    if (-not (Test-SdkSourcePrepared $sdk)) {
+        Write-Host '  SDK is missing or older than sdk\patches; run scripts\build-sdk.ps1 first.'
+        return $false
+    }
+    $exe = Join-Path $outDir 'texture_precache_test.exe'
+    $code = Invoke-Native { clang++ -std=c++20 -O1 -fms-runtime-lib=dll -Wall `
+        -I (Join-Path $sdk 'src\graphics\d3d12') tools\tests\texture_precache_test.cpp -o $exe }
+    if ($code -ne 0) { return $false }
+    return Test-Exe $exe
+}
+
 function Test-PythonTools {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) { Write-Host '  skipped: python was not found'; return $true }
@@ -232,6 +245,7 @@ $steps = [ordered]@{
     'Touch model test'           = { Test-TouchModel $outDir }
     'SDK System Link unit tests' = { Test-SdkSystemLink $outDir }
     'SDK header unit tests'      = { Test-SdkHeaderUnits $outDir }
+    'Texture pre-cache tests'    = { Test-TexturePrecache $outDir }
     'Python tests in tools'      = { Test-PythonTools }
 }
 $failed = @()

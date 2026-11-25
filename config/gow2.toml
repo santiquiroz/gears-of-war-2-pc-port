@@ -75,6 +75,11 @@ gow2_dof_upscaling_fix = true      # depth of field without blur artifacts when 
 # The texture cache can hold more on PC than the console's budget.
 texture_cache_memory_limit_soft = 1024
 texture_cache_memory_limit_hard = 2048
+# Optional D3D12 replacement-texture preload; see docs/TEXTURE_PRECACHE.md.
+# Uses extra system RAM, not the GPU texture-cache budget. Restart required.
+# gow2_adaptive_precache = false
+# gow2_precache_budget_mb = 3072
+# gow2_precache_startup_ms = 6000
 # Default is automatic: 8x on a dedicated GPU, 2x on an integrated one. To force a value,
 # uncomment the next line:
 # anisotropic_override = 4
