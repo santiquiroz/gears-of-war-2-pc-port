@@ -184,5 +184,6 @@ keybind_start = "Return,Escape"
 # ([nettraffic] lines; 0 = off).
 # net_traffic_log_sec = 0
 
-# Optional native-key menu Escape-to-B routing; gameplay Escape remains pause.
+# Escape works as B (back) in menus and the pause menu; while a level is played it stays pause.
+# Only with gow2_native_keys. false = Escape is Start everywhere, as before 0.4.9.
 # gow2_menu_escape_back = true
