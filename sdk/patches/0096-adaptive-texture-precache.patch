@@ -1,0 +1,411 @@
+--- a/src/graphics/d3d12/texture_replacement.cpp
++++ b/src/graphics/d3d12/texture_replacement.cpp
+@@ -1,4 +1,8 @@
+ #include "texture_replacement.h"
++#include "gow2_precache_plan.h"
++#include <fstream>
++#include <chrono>
++#include <limits>
+
+ #include <algorithm>
+ #include <cctype>
+@@ -18,6 +22,18 @@
+ #include <rex/math.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_upload_buffer_pool.h>
++
++REXCVAR_DEFINE_BOOL(gow2_adaptive_precache, false, "GPU/Textures",
++                    "Prepare recently used pack textures before play, using local session history.")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_INT32(gow2_precache_budget_mb, 3072, "GPU/Textures",
++                     "Maximum extra CPU memory for prepared textures, separate from VRAM.")
++    .range(64, 3072)
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_INT32(gow2_precache_startup_ms, 6000, "GPU/Textures",
++                     "Startup preparation time budget; checked between DDS files.")
++    .range(100, 10000)
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+ REXCVAR_DEFINE_BOOL(texture_dump, false, "GPU/Textures",
+                     "Write each unique decoded guest texture to the pack dump folder (DDS)");
+@@ -351,10 +367,14 @@
+ void TextureReplacementManager::Initialize(const std::filesystem::path& cache_root,
+                                            uint32_t title_id,
+                                            const ui::d3d12::D3D12Provider& provider) {
++  prepared_images_.clear();
++  precache_hits_ = precache_cold_reads_ = precache_prepared_count_ = precache_pending_bytes_ = 0;
++  precache_last_report_hits_ = precache_last_report_cold_ = 0;
++  precache_enabled_ = false;
+   title_id_ = title_id;
+   if (!upload_pool_) {
+-    upload_pool_ = std::make_unique<ui::d3d12::D3D12UploadBufferPool>(provider,
+-                                                                     kTexpackUploadPageSize);
++    upload_pool_ =
++        std::make_unique<ui::d3d12::D3D12UploadBufferPool>(provider, kTexpackUploadPageSize);
+   }
+   replace_paths_.clear();
+   replace_images_.clear();
+@@ -367,9 +387,33 @@
+   ResolveDirs();
+   ScanReplaceDir();
+   REXLOG_INFO("[texpack] total: {} replacements", replace_paths_.size());
++  PrepareHistoryCache();
++  if (precache_enabled_ && precache_prepared_count_) {
++    const auto begin = std::chrono::steady_clock::now();
++    uint32_t warmed = 0;
++    // No GPU commands reference these buffers: submission zero can be reclaimed immediately.
++    // Commit and touch the first two upload pages here, not on an effect's first draw.
++    for (uint32_t i = 0; i < 2; ++i) {
++      ID3D12Resource* resource = nullptr;
++      size_t offset = 0;
++      uint8_t* bytes = upload_pool_->Request(0, kTexpackUploadPageSize,
++                                             size_t(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT),
++                                             &resource, &offset, nullptr);
++      if (!bytes || !resource)
++        break;
++      std::memset(bytes, 0, kTexpackUploadPageSize);
++      ++warmed;
++    }
++    upload_pool_->Reclaim(0);
++    REXLOG_INFO("GOW2PRECACHE upload buffers ready: {} pages ({} MB), {} ms", warmed, warmed * 64,
++                std::chrono::duration_cast<std::chrono::milliseconds>(
++                    std::chrono::steady_clock::now() - begin)
++                    .count());
++  }
+ }
+
+ void TextureReplacementManager::Reclaim(uint64_t completed_submission) {
++  LogPrecacheStats();
+   if (upload_pool_) {
+     upload_pool_->Reclaim(completed_submission);
+   }
+@@ -899,6 +943,136 @@
+
+ }  // namespace
+
++void TextureReplacementManager::PrepareHistoryCache() {
++  if (!REXCVAR_GET(gow2_adaptive_precache) || !REXCVAR_GET(texture_replace) ||
++      title_id_ != 0x4D53082D || replace_paths_.empty())
++    return;
++  precache_enabled_ = true;
++  const auto begin = std::chrono::steady_clock::now();
++  precache_last_report_ = begin;
++  try {
++    uint64_t budget = uint64_t(REXCVAR_GET(gow2_precache_budget_mb)) << 20;
++#ifdef _WIN32
++    MEMORYSTATUSEX memory{};
++    memory.dwLength = sizeof(memory);
++    if (GlobalMemoryStatusEx(&memory)) {
++      // Leave the game's working set and the OS room to grow. No GPU memory is reserved here.
++      if (memory.ullAvailPhys < (uint64_t(1) << 30)) {
++        REXLOG_INFO("GOW2PRECACHE skipped: less than 1 GB free system memory");
++        return;
++      }
++      budget = precache::BudgetBytes(uint64_t(REXCVAR_GET(gow2_precache_budget_mb)),
++                                     memory.ullAvailPhys);
++    }
++#endif
++    std::error_code ec;
++    const auto logs = rex::filesystem::GetExecutableFolder() / "logs";
++    std::vector<std::pair<std::filesystem::file_time_type, std::filesystem::path>> files;
++    std::filesystem::directory_iterator it(logs, ec), end;
++    for (; !ec && it != end; it.increment(ec)) {
++      if (it->path().extension() != ".log" || it->path().filename().string().rfind("gow2_", 0) != 0)
++        continue;
++      const auto time = it->last_write_time(ec);
++      if (!ec)
++        files.emplace_back(time, it->path());
++    }
++    std::sort(files.begin(), files.end(),
++              [](const auto& a, const auto& b) { return a.first > b.first; });
++    std::vector<std::string> roots;
++    for (const auto& dir : pack_dirs_)
++      roots.push_back(rex::path_to_utf8(dir));
++    std::vector<std::vector<uint64_t>> sessions;
++    const size_t kMaxLogBytes = 2u << 20;
++    uint64_t read_logs_bytes = 0;
++    for (size_t i = 0; i < std::min(files.size(), size_t(12)) && sessions.size() < 3; ++i) {
++      const auto size = std::filesystem::file_size(files[i].second, ec);
++      if (ec || !size || size > kMaxLogBytes || read_logs_bytes + size > (uint64_t(6) << 20))
++        continue;
++      std::ifstream input(files[i].second, std::ios::binary);
++      std::string text(size_t(size), '\0');
++      if (!input.read(text.data(), std::streamsize(size)))
++        continue;
++      read_logs_bytes += size;
++      auto session = precache::ParseHistory(text, roots);
++      if (!session.empty())
++        sessions.push_back(std::move(session));
++    }
++    const auto plan = precache::Prioritize(sessions);
++    size_t missing = 0, rejected = 0;
++    const auto deadline = begin + std::chrono::milliseconds(REXCVAR_GET(gow2_precache_startup_ms));
++    for (uint64_t hash : plan) {
++      if (std::chrono::steady_clock::now() >= deadline)
++        break;
++      const auto found = replace_paths_.find(hash);
++      if (found == replace_paths_.end()) {
++        ++missing;
++        continue;
++      }
++      const auto bytes = std::filesystem::file_size(found->second, ec);
++      if (ec || bytes > (uint64_t(128) << 20) ||
++          !precache::Fits(precache_pending_bytes_, bytes, budget))
++        continue;
++      const auto mtime = std::filesystem::last_write_time(found->second, ec);
++      if (ec)
++        continue;
++      PreparedImage prepared;
++      std::string error;
++      if (!ReadDdsFile(found->second, &prepared.image, &error)) {
++        ++rejected;
++        continue;
++      }
++      const auto after_size = std::filesystem::file_size(found->second, ec);
++      const auto after_time = ec ? std::filesystem::file_time_type{}
++                                 : std::filesystem::last_write_time(found->second, ec);
++      if (ec || bytes != after_size || mtime != after_time) {
++        ++rejected;
++        continue;
++      }
++      uint64_t image_bytes = 0;
++      for (const auto& mip : prepared.image.mips)
++        image_bytes += mip.bytes.size();
++      if (!precache::Fits(precache_pending_bytes_, image_bytes, budget))
++        continue;
++      prepared.file_size = bytes;
++      prepared.mtime = mtime;
++      prepared_images_.emplace(hash, std::move(prepared));
++      precache_pending_bytes_ += image_bytes;
++    }
++    precache_prepared_count_ = prepared_images_.size();
++    REXLOG_INFO(
++        "GOW2PRECACHE ready: {} images, {} MB, {} ms, {} history sessions, {} candidates, {} "
++        "missing, {} rejected",
++        precache_prepared_count_, precache_pending_bytes_ >> 20,
++        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
++                                                              begin)
++            .count(),
++        sessions.size(), plan.size(), missing, rejected);
++  } catch (const std::exception& e) {
++    // Pre-caching is optional. Ordinary on-demand reads and validation remain the fallback.
++    prepared_images_.clear();
++    precache_pending_bytes_ = 0;
++    REXLOG_WARN("GOW2PRECACHE unavailable; normal loading retained: {}", e.what());
++  }
++}
++
++void TextureReplacementManager::LogPrecacheStats() {
++  if (!precache_enabled_)
++    return;
++  const auto now = std::chrono::steady_clock::now();
++  if (now - precache_last_report_ < std::chrono::seconds(10))
++    return;
++  precache_last_report_ = now;
++  if (precache_hits_ == precache_last_report_hits_ &&
++      precache_cold_reads_ == precache_last_report_cold_)
++    return;
++  precache_last_report_hits_ = precache_hits_;
++  precache_last_report_cold_ = precache_cold_reads_;
++  REXLOG_INFO(
++      "GOW2PRECACHE use: {} prepared hits, {} on-demand reads, {} prepared images remaining ({} "
++      "MB)",
++      precache_hits_, precache_cold_reads_, prepared_images_.size(), precache_pending_bytes_ >> 20);
++}
++
+ void TextureReplacementManager::Refuse(uint64_t hash, const std::string& reason) {
+   if (!refused_.insert(hash).second) {
+     return;
+@@ -942,13 +1116,48 @@
+   }
+   ReplacementImage image;
+   std::string error;
+-  if (!ReadDdsFile(found->second, &image, &error)) {
++  const auto read_begin = std::chrono::steady_clock::now();
++  bool prepared = false;
++  if (!variant && precache_enabled_) {
++    auto ready = prepared_images_.find(hash);
++    if (ready != prepared_images_.end()) {
++      std::error_code ec;
++      const auto size = std::filesystem::file_size(found->second, ec);
++      const auto mtime = ec ? std::filesystem::file_time_type{}
++                            : std::filesystem::last_write_time(found->second, ec);
++      if (!ec && size == ready->second.file_size && mtime == ready->second.mtime) {
++        image = std::move(ready->second.image);
++        prepared = true;
++      }
++      uint64_t released = 0;
++      const auto& bytes_image = prepared ? image : ready->second.image;
++      for (const auto& mip : bytes_image.mips)
++        released += mip.bytes.size();
++      precache_pending_bytes_ -= std::min(precache_pending_bytes_, released);
++      prepared_images_.erase(ready);
++    }
++  }
++  if (!prepared && !ReadDdsFile(found->second, &image, &error)) {
+     Refuse(key, "bad DDS (" + error + ")");
+     return false;
++  }
++  if (precache_enabled_ && !prepared && !variant) {
++    const double ms =
++        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - read_begin)
++            .count();
++    static uint32_t slow_reads = 0;
++    if (ms >= 6.0 && slow_reads++ < 80)
++      REXLOG_INFO("GOW2PRECACHE slow demand read: {:016x} {:.2f} ms", hash, ms);
+   }
+   if (!ValidateReplacement(desc, image, max_width_height, unaligned_bc_supported, &error)) {
+     Refuse(key, error);
+     return false;
++  }
++  if (!variant && precache_enabled_) {
++    if (prepared)
++      ++precache_hits_;
++    else
++      ++precache_cold_reads_;
+   }
+   auto inserted = images.emplace(hash, std::move(image));
+   *out_image = &inserted.first->second;
+@@ -993,6 +1202,19 @@
+ bool TextureReplacementManager::UploadReplacement(D3D12CommandProcessor& command_processor,
+                                                   ID3D12Resource* dest,
+                                                   const ReplacementImage& image) {
++  struct UploadTimer {
++    const ReplacementImage& image;
++    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
++    ~UploadTimer() {
++      const double ms =
++          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin)
++              .count();
++      static uint32_t slow_uploads = 0;
++      if (REXCVAR_GET(gow2_adaptive_precache) && ms >= 8.0 && slow_uploads++ < 80)
++        REXLOG_INFO("GOW2PRECACHE slow upload staging: {}x{} {:.2f} ms", image.width, image.height,
++                    ms);
++    }
++  } upload_timer{image};
+   if (!upload_pool_ || !dest || image.mips.empty()) {
+     return false;
+   }
+@@ -1022,10 +1244,7 @@
+     if (!mapping || !upload_buffer) {
+       return false;
+     }
+-    for (uint32_t row = 0; row < rows; ++row) {
+-      std::memcpy(mapping + size_t(row) * aligned_pitch,
+-                  mip.bytes.data() + size_t(row) * mip.row_pitch, mip.row_pitch);
+-    }
++    precache::CopyMipRows(mapping, mip.bytes.data(), mip.row_pitch, aligned_pitch, rows);
+     D3D12_TEXTURE_COPY_LOCATION src = {};
+     src.pResource = upload_buffer;
+     src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+--- a/src/graphics/d3d12/texture_replacement.h
++++ b/src/graphics/d3d12/texture_replacement.h
+@@ -1,6 +1,7 @@
+ #pragma once
+
+ #include <cstdint>
++#include <chrono>
+ #include <filesystem>
+ #include <memory>
+ #include <string>
+@@ -99,12 +100,25 @@
+                          const ReplacementImage& image);
+
+  private:
++  void PrepareHistoryCache();
++  void LogPrecacheStats();
+   void ResolveDirs();
+   void ScanReplaceDir();
+   void ScanDir(const std::filesystem::path& dir,
+                std::unordered_map<uint64_t, std::filesystem::path>* out);
+   void Refuse(uint64_t hash, const std::string& reason);
+
++  struct PreparedImage {
++    ReplacementImage image;
++    uint64_t file_size = 0;
++    std::filesystem::file_time_type mtime{};
++  };
++  std::unordered_map<uint64_t, PreparedImage> prepared_images_;
++  uint64_t precache_hits_ = 0, precache_cold_reads_ = 0;
++  uint64_t precache_prepared_count_ = 0, precache_pending_bytes_ = 0;
++  uint64_t precache_last_report_hits_ = 0, precache_last_report_cold_ = 0;
++  bool precache_enabled_ = false;
++  std::chrono::steady_clock::time_point precache_last_report_{};
+   uint32_t title_id_ = 0;
+   std::filesystem::path pack_dir_;
+   std::filesystem::path dump_dir_;
+--- /dev/null
++++ b/src/graphics/d3d12/gow2_precache_plan.h
+@@ -0,0 +1,72 @@
++// Bounded, history-driven planning for optional replacement-texture preloading.
++#pragma once
++#include <algorithm>
++#include <charconv>
++#include <cstring>
++#include <cstdint>
++#include <string>
++#include <string_view>
++#include <unordered_set>
++#include <vector>
++namespace rex::graphics::d3d12::precache {
++inline bool ParseHash(std::string_view token, uint64_t* hash) {
++  if (!hash || token.size() != 16)
++    return false;
++  const auto r = std::from_chars(token.data(), token.data() + token.size(), *hash, 16);
++  return r.ec == std::errc{} && r.ptr == token.data() + token.size();
++}
++inline std::vector<uint64_t> ParseHistory(std::string_view log,
++                                          const std::vector<std::string>& roots) {
++  bool matches = false;
++  for (const auto& root : roots)
++    if (log.find("[texpack] " + root + ": ") != std::string_view::npos)
++      matches = true;
++  if (!matches)
++    return {};
++  std::vector<uint64_t> hashes;
++  constexpr std::string_view marker = "[texpack] replace ";
++  size_t pos = 0;
++  while (hashes.size() < 8192 && (pos = log.find(marker, pos)) != std::string_view::npos) {
++    pos += marker.size();
++    if (pos + 22 > log.size() || log.substr(pos + 16, 6) != " with ")
++      continue;
++    uint64_t hash = 0;
++    if (ParseHash(log.substr(pos, 16), &hash))
++      hashes.push_back(hash);
++  }
++  return hashes;
++}
++// Most recently visited resources of the latest matching sessions get priority.
++// Repeated requests for one hash never consume the plan's budget twice.
++inline std::vector<uint64_t> Prioritize(const std::vector<std::vector<uint64_t>>& sessions,
++                                        size_t maximum = 4096) {
++  std::vector<uint64_t> out;
++  std::unordered_set<uint64_t> seen;
++  for (const auto& session : sessions) {
++    for (auto it = session.rbegin(); it != session.rend(); ++it) {
++      if (out.size() >= maximum)
++        return out;
++      if (seen.insert(*it).second)
++        out.push_back(*it);
++    }
++  }
++  return out;
++}
++inline uint64_t BudgetBytes(uint64_t configured_mb, uint64_t available_bytes) {
++  if (available_bytes < (uint64_t(1) << 30))
++    return 0;
++  const uint64_t configured = std::min(configured_mb, uint64_t(3072)) << 20;
++  return std::min(configured, available_bytes / 3);
++}
++inline void CopyMipRows(uint8_t* dest, const uint8_t* source, size_t row_pitch,
++                        size_t aligned_pitch, size_t rows) {
++  if (row_pitch == aligned_pitch)
++    std::memcpy(dest, source, row_pitch * rows);
++  else
++    for (size_t row = 0; row < rows; ++row)
++      std::memcpy(dest + row * aligned_pitch, source + row * row_pitch, row_pitch);
++}
++inline bool Fits(uint64_t used, uint64_t bytes, uint64_t budget) {
++  return bytes != 0 && used <= budget && bytes <= budget - used;
++}
++}  // namespace rex::graphics::d3d12::precache
