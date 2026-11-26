@@ -26,6 +26,7 @@
 
 #if defined(__ANDROID__)
 #include <sys/system_properties.h>
+#include "gow2_vulkan_probe.h"
 #endif
 
 #include <rex/cvar.h>
@@ -88,9 +89,17 @@ constexpr uint32_t kDevShaderB = 12696;  // vertex shader object
 
 #if defined(__ANDROID__)
 bool IsMaliGpu() {
-  char value[PROP_VALUE_MAX]{};
-  __system_property_get("ro.hardware.egl", value);
-  return std::string_view(value).find("mali") != std::string_view::npos;
+  char egl[PROP_VALUE_MAX]{};
+  __system_property_get("ro.hardware.egl", egl);
+  char vulkan[PROP_VALUE_MAX]{};
+  __system_property_get("ro.hardware.vulkan", vulkan);
+  const std::string_view props[]{egl, vulkan};
+  for (const auto value : props)
+    if (value.find("mali") != std::string_view::npos) return true;
+  // An Adreno with a custom Turnip driver must not probe: that would also load the system driver.
+  for (const auto value : props)
+    if (value.find("adreno") != std::string_view::npos) return false;
+  return HasArmGpu(ListVulkanDevices());
 }
 #endif
 
@@ -109,6 +118,13 @@ bool Enabled() {
     // auto: off on PC (42 % of the frame, RX 7800 XT 0.3.8: 151 fps on, 263 off) and on Mali (far fewer stutters
     // off, #27); on on other phones (Adreno 825 Turnip, #33: 60 fps on, 23-30 fps and VK_ERROR_DEVICE_LOST off).
     const bool on = mode == "on" || (mode == "auto" && AutoOn());
+#if defined(__ANDROID__)
+    if (mode == "auto") {
+      REXLOG_INFO("NATIVEFRONT game gow2_native_frontend '{}' -> {} (Mali GPU: {})", mode, on ? "on" : "off",
+                  on ? "no" : "yes");
+      return on;
+    }
+#endif
     REXLOG_INFO("NATIVEFRONT game gow2_native_frontend '{}' -> {}", mode, on ? "on" : "off");
     return on;
   }();

@@ -168,7 +168,7 @@ namespace rex::glue {
 
 namespace {
 
-constexpr int kVersion = 10;  // bump when the edit definitions change (invalidates cached copies)
+constexpr int kVersion = 11;  // bump when the edit definitions change (invalidates cached copies)
 
 // Bundle layout: BE u32 file count; per file a name, BE u32 section count; per section a name and
 // BE u32 key count; per key a key and a value. Strings are a BE int32 length, negative = UTF-16LE
@@ -407,6 +407,23 @@ void AddPcOptionsEntry(std::vector<Edit>* e) {
   }
 }
 
+void AddPcSavingMessage(std::vector<Edit>* e) {
+#if defined(__ANDROID__)
+  constexpr bool kAndroid = true;
+#else
+  constexpr bool kAndroid = false;
+#endif
+  static const char* const kLocales[] = {"int", "esn", "esm", "deu", "fra", "ita",
+                                         "pol", "cze", "hun", "rus", "kor", "cht"};
+  // Same order as AddPcOptionsEntry: the unfiltered int fallback first, then each locale overwrites it.
+  e->push_back({Edit::kSet, kUI, "UpdatingStrings", "SavingContent_Message",
+                std::string(PcSavingMessage("int", kAndroid)), "", "", true, false});
+  for (const char* loc : kLocales) {
+    e->push_back({Edit::kSet, kUI, "UpdatingStrings", "SavingContent_Message",
+                  std::string(PcSavingMessage(loc, kAndroid)), "", loc, true, false});
+  }
+}
+
 void AddMouseLook(std::vector<Edit>* e) {
   for (const char* look : {"GBA_LookX", "GBA_LookY", "GBA_LookY_Flip"})
     e->push_back({Edit::kReplaceSub, "Xe-GearInput.ini", "Engine.PlayerInput", "Bindings",
@@ -584,6 +601,8 @@ CoalescedResult PrepareCoalescedOverrides(const std::filesystem::path& game_root
     AddSkipIntroMovies(&edits);
     groups += "skip-intro-movies ";
   }
+  AddPcSavingMessage(&edits);
+  groups += "pc-saving-text ";
   if (edits.empty()) return res;
 
   uint64_t h = Fnv("v" + std::to_string(kVersion));

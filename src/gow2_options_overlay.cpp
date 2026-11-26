@@ -1601,6 +1601,78 @@ ImFont* LoadFont(ImFontAtlas* atlas, const char* path) {
   return atlas->AddFontFromFileTTF(path,24.f,nullptr,ranges);
 }
 
+const char* FirstExistingFont(std::initializer_list<const char*> paths) {
+  for (const char* path : paths) {
+    std::error_code error;
+    if (std::filesystem::exists(path,error)) return path;
+  }
+  return nullptr;
+}
+
+void MergeGlyphs(ImFontAtlas* atlas, const char* path, const ImWchar* ranges, const char* what) {
+  if (!path) {
+    REXLOG_WARN("FONTS no font with {} glyphs for the overlay",what);
+    return;
+  }
+  ImFontConfig config;
+  config.MergeMode = true;
+  config.OversampleH = 1;
+  config.OversampleV = 1;
+  config.PixelSnapH = true;
+  atlas->AddFontFromFileTTF(path,12.f,&config,ranges);
+  REXLOG_INFO("FONTS overlay glyphs {} merged from {}",what,path);
+}
+
+const char* LatinCyrillicFont() {
+#ifdef _WIN32
+  return FirstExistingFont({"C:\\Windows\\Fonts\\segoeui.ttf"});
+#elif defined(__ANDROID__)
+  return FirstExistingFont({"/system/fonts/Roboto-Regular.ttf","/system/fonts/RobotoStatic-Regular.ttf",
+                            "/system/fonts/NotoSans-Regular.ttf"});
+#else
+  return FirstExistingFont({"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf","/usr/share/fonts/TTF/DejaVuSans.ttf",
+                            "/usr/share/fonts/dejavu/DejaVuSans.ttf","/usr/share/fonts/noto/NotoSans-Regular.ttf"});
+#endif
+}
+
+const char* CjkFont(const char* windows_path) {
+#ifdef _WIN32
+  return FirstExistingFont({windows_path});
+#elif defined(__ANDROID__)
+  (void)windows_path;
+  return FirstExistingFont({"/system/fonts/NotoSansCJK-Regular.ttc"});
+#else
+  (void)windows_path;
+  return nullptr;
+#endif
+}
+
+unsigned long GameLanguage() {
+  return std::strtoul(rex::cvar::GetFlagByName("user_language").c_str(),nullptr,10);
+}
+
+// ImGui 1.92 ignores GlyphRanges on merged sources, so the SDK's MS Gothic would supply full-width Cyrillic.
+void ExcludeFromMergedSources(ImFontAtlas* atlas, const ImWchar* ranges) {
+  for (ImFontConfig& source : atlas->Sources)
+    if (source.MergeMode) source.GlyphExcludeRanges = ranges;
+}
+
+}
+
+// The SDK's overlay font (achievement pop-up, achievement list) only has Latin-1 glyphs (#54).
+void MergeOverlayFontGlyphs(ImFontAtlas* atlas) {
+  if (!atlas || atlas->Fonts.Size == 0) return;
+  static constexpr ImWchar kLatinCyrillic[]{0x0100,0x017F,0x0400,0x04FF,0};
+  constexpr unsigned long kKorean = 7, kTraditionalChinese = 8;
+  const char* latin_cyrillic = LatinCyrillicFont();
+  if (latin_cyrillic) ExcludeFromMergedSources(atlas,kLatinCyrillic);
+  MergeGlyphs(atlas,latin_cyrillic,kLatinCyrillic,"Latin Extended-A and Cyrillic");
+  const unsigned long language = GameLanguage();
+  if (language == kKorean)
+    MergeGlyphs(atlas,CjkFont("C:\\Windows\\Fonts\\malgun.ttf"),atlas->GetGlyphRangesKorean(),"Korean");
+  if (language == kTraditionalChinese)
+    MergeGlyphs(atlas,CjkFont("C:\\Windows\\Fonts\\msjh.ttc"),atlas->GetGlyphRangesChineseFull(),
+                "Traditional Chinese");
 }
 
 void AddOptionsFonts(ImFontAtlas* atlas) {

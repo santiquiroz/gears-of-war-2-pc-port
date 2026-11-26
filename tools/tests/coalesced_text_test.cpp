@@ -142,6 +142,29 @@ void TestLocalizedConversion(bool android) {
   }
 }
 
+void TestSavingMessages(bool android) {
+  using rex::glue::PcSavingMessage;
+  static const char* const kLocales[] = {"int", "esn", "esm", "deu", "fra", "ita",
+                                         "pol", "cze", "hun", "rus", "kor", "cht"};
+  // Console-era words that must never survive in the PC/Android text.
+  static const char* const kForbidden[] = {"console", "consola", "Konsole", "konzol", "konsol",
+                                           "\xD0\xBA\xD0\xBE\xD0\xBD\xD1\x81\xD0\xBE\xD0\xBB",
+                                           "\xE6\x9C\xAC\xE9\xAB\x94", "\xE4\xB8\xBB\xE6\xA9\x9F",
+                                           "\xEB\xB3\xB8\xEC\xB2\xB4"};
+  for (const char* loc : kLocales) {
+    const std::string_view text = PcSavingMessage(loc, android);
+    char what[96];
+    std::snprintf(what, sizeof(what), "saving message for %s (android=%d) is not empty", loc, android);
+    Expect(!text.empty(), what);
+    for (const char* word : kForbidden) {
+      std::snprintf(what, sizeof(what), "saving message for %s (android=%d) has no '%s'", loc, android, word);
+      Expect(text.find(word) == std::string_view::npos, what);
+    }
+  }
+  Expect(PcSavingMessage("xyz", android) == PcSavingMessage("int", android),
+         "unknown locale falls back to the int saving message");
+}
+
 void TestGraphicsQuality() {
   namespace quality = rex::glue::graphics_quality;
   std::unordered_map<std::string, std::string> values;
@@ -233,6 +256,12 @@ int main() {
   TestLocales(true);
   TestLocalizedConversion(false);
   TestLocalizedConversion(true);
+  Expect(rex::glue::PcSavingMessage("int", false) == "Saving content. Please don't turn off your PC.",
+         "the int PC saving message matches the exact text");
+  Expect(rex::glue::PcSavingMessage("int", true) == "Saving content. Please don't turn off your device.",
+         "the int Android saving message matches the exact text");
+  TestSavingMessages(false);
+  TestSavingMessages(true);
   std::printf("coalesced_text_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }

@@ -41,6 +41,10 @@ int main() {
   Expect(!rex::glue::VulkanSaysIntegrated({}, "AMD Ryzen Z1 Extreme (RADV PHOENIX)"),
          "VulkanSaysIntegrated is false for an empty device list");
 
+  Expect(!rex::glue::HasArmGpu({}), "HasArmGpu is false for an empty device list");
+  Expect(!rex::glue::HasArmGpu({{"Adreno (TM) 740", 2, 0x5143}}), "HasArmGpu is false for an Adreno GPU");
+  Expect(rex::glue::HasArmGpu({{"Mali-G720 MC7", 2, 0x13B5}}), "HasArmGpu is true for a Mali GPU");
+
   const std::vector<rex::glue::VulkanDevice> mixed = {
       {"llvmpipe", 4}, {"AMD Radeon 780M", 1}, {"NVIDIA GeForce RTX 4060", 2}};
   const rex::glue::GpuChoice auto_discrete = rex::glue::ChooseVulkanGpu(mixed, "auto");

@@ -22,6 +22,7 @@ using VoidFunction = void (*)();
 constexpr int32_t kStructureTypeApplicationInfo = 0;
 constexpr int32_t kStructureTypeInstanceCreateInfo = 1;
 constexpr uint32_t kApiVersion10 = 1u << 22;
+constexpr size_t kVendorIdOffset = 8;
 constexpr size_t kDeviceTypeOffset = 16;
 constexpr size_t kDeviceNameOffset = 20;
 constexpr size_t kDeviceNameSize = 256;
@@ -60,10 +61,12 @@ VulkanDevice VulkanDeviceAt(vk::GetPhysicalDeviceProperties get_properties, vk::
   // The real VkPhysicalDeviceProperties is 824 bytes; the spare room covers a driver writing a newer layout.
   alignas(8) uint8_t properties[1024] = {};
   get_properties(device, properties);
+  uint32_t vendor_id = 0;
+  std::memcpy(&vendor_id, properties + vk::kVendorIdOffset, sizeof(vendor_id));
   int32_t type = 0;
   std::memcpy(&type, properties + vk::kDeviceTypeOffset, sizeof(type));
   const char* name = reinterpret_cast<const char*>(properties + vk::kDeviceNameOffset);
-  return {std::string(name, strnlen(name, vk::kDeviceNameSize)), int(type)};
+  return {std::string(name, strnlen(name, vk::kDeviceNameSize)), int(type), vendor_id};
 }
 
 std::vector<VulkanDevice> VulkanDevices(vk::GetInstanceProcAddr get, vk::Instance instance) {

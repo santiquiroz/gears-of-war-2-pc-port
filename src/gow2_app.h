@@ -718,6 +718,7 @@ class Gow2App : public rex::ReXApp {
 #endif
   }
   void OnConfigureFonts(ImFontAtlas* atlas) override {
+    rex::glue::options::MergeOverlayFontGlyphs(atlas);
     rex::glue::options::AddOptionsFonts(atlas);
   }
 

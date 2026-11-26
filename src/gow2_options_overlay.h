@@ -14,6 +14,7 @@ namespace rex::ui { class ImGuiDialog; class ImGuiDrawer; }
 namespace rex::glue::options {
 enum class OpenSource : uint8_t { kShortcut, kChord, kGear, kGameMenu };
 void AddOptionsFonts(ImFontAtlas* atlas);
+void MergeOverlayFontGlyphs(ImFontAtlas* atlas);
 std::unique_ptr<rex::ui::ImGuiDialog> CreateOptionsOverlay(
     rex::ui::ImGuiDrawer* drawer, const GamePaths& paths, bool touch_controls);
 void TogglePcOptions(OpenSource source);

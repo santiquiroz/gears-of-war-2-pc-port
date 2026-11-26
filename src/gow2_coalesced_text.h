@@ -131,4 +131,47 @@ inline LocalizedPair PcOptionsEntryText(std::string_view locale, bool android) {
   return {"PC Options", "Graphics, controls, network and saves."};
 }
 
+inline std::string_view PcSavingMessage(std::string_view locale, bool android) {
+  if (android) {
+    if (LocaleIs(locale, "esn") || LocaleIs(locale, "esm"))
+      return "Guardando contenido. No apagues tu dispositivo.";
+    if (LocaleIs(locale, "deu"))
+      return "Inhalt wird gespeichert. Bitte schalten Sie Ihr Gerät nicht aus.";
+    if (LocaleIs(locale, "fra"))
+      return "Enregistrement en cours. N'éteignez pas votre appareil.";
+    if (LocaleIs(locale, "ita"))
+      return "Salvataggio del contenuto. Non spegnere il dispositivo.";
+    if (LocaleIs(locale, "pol"))
+      return "Trwa zapisywanie. Nie wyłączaj urządzenia.";
+    if (LocaleIs(locale, "cze"))
+      return "Probíhá ukládání obsahu. Nyní prosím zařízení nevypínejte.";
+    if (LocaleIs(locale, "hun"))
+      return "A tartalom mentése folyamatban van. Ne kapcsolja ki az eszközt.";
+    if (LocaleIs(locale, "rus"))
+      return "Идет сохранение. Не выключайте устройство.";
+    if (LocaleIs(locale, "kor")) return "콘텐츠 저장 중 - 기기를 끄지 마십시오.";
+    if (LocaleIs(locale, "cht")) return "正在儲存內容，請勿關閉裝置電源。";
+    return "Saving content. Please don't turn off your device.";
+  }
+  if (LocaleIs(locale, "esn") || LocaleIs(locale, "esm"))
+    return "Guardando contenido. No apagues tu PC.";
+  if (LocaleIs(locale, "deu"))
+    return "Inhalt wird gespeichert. Bitte schalten Sie Ihren PC nicht aus.";
+  if (LocaleIs(locale, "fra"))
+    return "Enregistrement en cours. N'éteignez pas votre PC.";
+  if (LocaleIs(locale, "ita"))
+    return "Salvataggio del contenuto. Non spegnere il PC.";
+  if (LocaleIs(locale, "pol"))
+    return "Trwa zapisywanie. Nie wyłączaj komputera.";
+  if (LocaleIs(locale, "cze"))
+    return "Probíhá ukládání obsahu. Nyní prosím PC nevypínejte.";
+  if (LocaleIs(locale, "hun"))
+    return "A tartalom mentése folyamatban van. Ne kapcsolja ki a PC-t.";
+  if (LocaleIs(locale, "rus"))
+    return "Идет сохранение. Не выключайте ПК.";
+  if (LocaleIs(locale, "kor")) return "콘텐츠 저장 중 - PC를 끄지 마십시오.";
+  if (LocaleIs(locale, "cht")) return "正在儲存內容，請勿關閉電腦電源。";
+  return "Saving content. Please don't turn off your PC.";
+}
+
 }  // namespace rex::glue
