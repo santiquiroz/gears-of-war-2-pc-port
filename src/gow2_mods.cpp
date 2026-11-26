@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 
 #include "gow2_sha_table.h"
@@ -183,7 +185,91 @@ void ReadMetadata(const fs::path& path, Mod& mod) {
   }
 }
 
+bool ReadNumber(std::string_view text, uint64_t& value) {
+  const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+  return !text.empty() && result.ec == std::errc{} && result.ptr == text.data() + text.size();
+}
+
+bool DecodeHex(std::string_view text, size_t length, uint8_t* bytes) {
+  if (text.size() != length * 2) return false;
+  for (size_t i = 0; i < length; ++i) {
+    uint32_t value = 0;
+    const auto result = std::from_chars(text.data() + i * 2, text.data() + i * 2 + 2, value, 16);
+    if (result.ec != std::errc{} || result.ptr != text.data() + i * 2 + 2) return false;
+    bytes[i] = static_cast<uint8_t>(value);
+  }
+  return true;
+}
+
+std::string HexEncode(const uint8_t* bytes, size_t length) {
+  static constexpr char digits[] = "0123456789abcdef";
+  std::string text(length * 2, '0');
+  for (size_t i = 0; i < length; ++i) {
+    text[i * 2] = digits[bytes[i] >> 4];
+    text[i * 2 + 1] = digits[bytes[i] & 0xf];
+  }
+  return text;
+}
+
+bool ParseHashLine(std::string_view line, std::string& source, CachedHash& cached) {
+  std::array<std::string_view, 5> fields;
+  for (std::string_view& field : fields) {
+    const size_t tab = line.find('\t');
+    if (tab == std::string_view::npos) return false;
+    field = line.substr(0, tab);
+    line.remove_prefix(tab + 1);
+  }
+  if (line.empty() || line.find('\t') != std::string_view::npos) return false;
+  if (!ReadNumber(fields[0], cached.size) || !ReadNumber(fields[1], cached.modified) ||
+      !ReadNumber(fields[2], cached.uncompressed)) return false;
+  std::array<uint8_t, 16> md5;
+  if (!DecodeHex(fields[3], md5.size(), md5.data()) ||
+      !DecodeHex(fields[4], cached.sha1.size(), cached.sha1.data())) return false;
+  cached.md5 = HexEncode(md5.data(), md5.size());
+  source = line;
+  return true;
+}
+
+std::string FormatHashLine(const File& file) {
+  return std::to_string(file.size) + '\t' + std::to_string(file.modified) + '\t' +
+         std::to_string(file.uncompressed) + '\t' + file.md5 + '\t' +
+         HexEncode(file.sha1.data(), file.sha1.size()) + '\t' + file.source + '\n';
+}
+
+bool ReadCachedFile(File& file, const HashCache& cache) {
+  const auto found = cache.find(file.source);
+  if (found == cache.end() || found->second.size != file.size ||
+      found->second.modified != file.modified) return false;
+  file.uncompressed = found->second.uncompressed;
+  file.md5 = found->second.md5;
+  file.sha1 = found->second.sha1;
+  return true;
+}
+
 }  // namespace
+
+HashCache ReadHashCache(const fs::path& file) {
+  HashCache cache;
+  std::string text;
+  if (!ReadWhole(file, text)) return cache;
+  std::istringstream lines(text);
+  std::string line;
+  while (std::getline(lines, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    std::string source;
+    CachedHash cached;
+    if (ParseHashLine(line, source, cached)) cache[std::move(source)] = std::move(cached);
+  }
+  return cache;
+}
+
+bool WriteHashCache(const fs::path& file, const std::vector<File>& files) {
+  std::string text;
+  for (const File& entry : files) {
+    if (!entry.ignored) text += FormatHashLine(entry);
+  }
+  return WriteWhole(file, text);
+}
 
 std::vector<Mod> FindMods(const fs::path& root) {
   std::vector<Mod> mods;
@@ -205,7 +291,7 @@ std::vector<Mod> FindMods(const fs::path& root) {
   return mods;
 }
 
-std::vector<File> FindFiles(const fs::path& root, const std::vector<Mod>& mods) {
+std::vector<File> FindFiles(const fs::path& root, const std::vector<Mod>& mods, const HashCache& cache) {
   std::vector<File> files;
   for (const Mod& mod : mods) {
     const fs::path game_mod = root / FromUtf8(mod.folder) / "GearGame";
@@ -225,10 +311,12 @@ std::vector<File> FindFiles(const fs::path& root, const std::vector<Mod>& mods) 
         if (type_ec) continue;
         const auto modified = it->last_write_time(type_ec);
         if (!type_ec) file.modified = static_cast<uint64_t>(modified.time_since_epoch().count());
-        const fs::path source = it->path();
-        file.md5 = Md5(source);
-        if (file.md5.empty() || !FileSha1(source, &file.sha1)) continue;
-        file.uncompressed = CompressedUncompressedSize(source);
+        if (!ReadCachedFile(file, cache)) {
+          const fs::path source = it->path();
+          file.md5 = Md5(source);
+          if (file.md5.empty() || !FileSha1(source, &file.sha1)) continue;
+          file.uncompressed = CompressedUncompressedSize(source);
+        }
       }
       files.push_back(std::move(file));
     }
@@ -355,14 +443,14 @@ Setup Prepare(const fs::path& game_root, const fs::path& cache_root, const fs::p
   Setup setup;
   const std::vector<Mod> mods = FindMods(mods_root);
   if (mods.empty()) return setup;
-  // ponytail: hashes every mod file at each start; cache by size and mtime if big mods slow it.
-  const std::vector<File> files = FindFiles(mods_root, mods);
+  const fs::path output_dir = cache_root / "mods";
+  const std::vector<File> files = FindFiles(mods_root, mods, ReadHashCache(output_dir / "hashes.tsv"));
   const Plan plan = BuildPlan(mods, files, ReadTocs(game_root, voice_overrides_file));
   setup.log_lines = ModLogLines(mods, files);
   setup.warnings = plan.warnings;
-  const fs::path output_dir = cache_root / "mods";
   std::error_code ec;
   fs::create_directories(output_dir, ec);
+  if (!ec) WriteHashCache(output_dir / "hashes.tsv", files);
   std::string overrides;
   ReadWhole(voice_overrides_file, overrides);
   if (!overrides.empty() && overrides.back() != '\n') overrides += '\n';

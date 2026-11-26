@@ -352,6 +352,163 @@ void TestOverrideLinesOrder() {
   fs::remove_all(root);
 }
 
+void TestHashCacheHit() {
+  fs::path root = fs::temp_directory_path() / "gow2_mods_test_cache_hit";
+  fs::remove_all(root);
+  const fs::path file_path = root / "mymod" / "GearGame" / "data.txt";
+  fs::create_directories(file_path.parent_path());
+  std::ofstream(file_path) << "cached content";
+
+  auto mods = mods::FindMods(root);
+  auto real = mods::FindFiles(root, mods);
+  Expect(real.size() == 1, "one file found");
+  const std::string real_md5 = real[0].md5;
+  Expect(real_md5.size() == 32, "real md5 computed without cache");
+
+  mods::HashCache cache;
+  mods::CachedHash entry;
+  entry.size = real[0].size;
+  entry.modified = real[0].modified;
+  entry.uncompressed = 4242;
+  entry.md5 = "0123456789abcdef0123456789abcdef";
+  cache[real[0].source] = entry;
+
+  auto files = mods::FindFiles(root, mods, cache);
+  Expect(files.size() == 1, "one file found with cache");
+  Expect(files[0].source == real[0].source, "same source path");
+  ExpectEq(files[0].md5, "0123456789abcdef0123456789abcdef", "fake md5 used from cache (no recompute)");
+  Expect(files[0].uncompressed == 4242, "uncompressed size from cache");
+  Expect(files[0].sha1 == entry.sha1, "sha1 from cache");
+
+  fs::remove_all(root);
+}
+
+void TestHashCacheMiss() {
+  fs::path root = fs::temp_directory_path() / "gow2_mods_test_cache_miss";
+  fs::remove_all(root);
+  const fs::path file_path = root / "mymod" / "GearGame" / "data.txt";
+  fs::create_directories(file_path.parent_path());
+  std::ofstream(file_path) << "cached content";
+
+  auto mods = mods::FindMods(root);
+  auto real = mods::FindFiles(root, mods);
+  Expect(real.size() == 1, "one file found");
+  const std::string real_md5 = real[0].md5;
+
+  mods::HashCache cache;
+  mods::CachedHash entry;
+  entry.size = real[0].size + 1;
+  entry.modified = real[0].modified;
+  entry.md5 = "0123456789abcdef0123456789abcdef";
+  cache[real[0].source] = entry;
+  auto files = mods::FindFiles(root, mods, cache);
+  Expect(files.size() == 1, "size mismatch: one file found");
+  ExpectEq(files[0].md5, real_md5, "size mismatch recomputes the real md5");
+
+  entry.size = real[0].size;
+  entry.modified = real[0].modified + 1;
+  cache[real[0].source] = entry;
+  files = mods::FindFiles(root, mods, cache);
+  Expect(files.size() == 1, "mtime mismatch: one file found");
+  ExpectEq(files[0].md5, real_md5, "mtime mismatch recomputes the real md5");
+
+  fs::remove_all(root);
+}
+
+void TestHashCacheRoundTrip() {
+  fs::path root = fs::temp_directory_path() / "gow2_mods_test_cache_roundtrip";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const fs::path file = root / "hashes.tsv";
+
+  mods::File entry;
+  entry.size = 12345;
+  entry.modified = 67890;
+  entry.uncompressed = 11111;
+  entry.md5 = "0123456789abcdef0123456789abcdef";
+  for (size_t i = 0; i < entry.sha1.size(); ++i) entry.sha1[i] = uint8_t(i * 11);
+  entry.source = "C:\\mods\\Ñandú mod\\GearGame\\some file.xxx";
+  std::vector<mods::File> files = {entry};
+
+  Expect(mods::WriteHashCache(file, files), "cache written");
+  auto cache = mods::ReadHashCache(file);
+  Expect(cache.size() == 1, "one entry read back");
+  auto it = cache.find(entry.source);
+  Expect(it != cache.end(), "source with spaces and non-ASCII round-trips as key");
+  if (it != cache.end()) {
+    Expect(it->second.size == 12345, "size round-trips");
+    Expect(it->second.modified == 67890, "modified round-trips");
+    Expect(it->second.uncompressed == 11111, "uncompressed round-trips");
+    ExpectEq(it->second.md5, entry.md5, "md5 round-trips");
+    Expect(it->second.sha1 == entry.sha1, "sha1 round-trips");
+  }
+
+  fs::remove_all(root);
+}
+
+void TestHashCacheSkipsMalformed() {
+  fs::path root = fs::temp_directory_path() / "gow2_mods_test_cache_malformed";
+  fs::remove_all(root);
+  Expect(mods::ReadHashCache(root / "missing.tsv").empty(), "missing file gives empty cache");
+
+  fs::create_directories(root);
+  const fs::path file = root / "hashes.tsv";
+  const std::string valid = "1\t2\t3\t0123456789abcdef0123456789abcdef\t"
+                            "00112233445566778899aabbccddeeff00112233\tC:\\mods\\a\\file.xxx";
+  std::ofstream out(file, std::ios::binary);
+  out << "complete garbage\n";
+  out << "abc\t2\t3\t0123456789abcdef0123456789abcdef\t00112233445566778899aabbccddeeff00112233\tsource\n";
+  out << "1\t2\t3\tnothexnothexnothexnothexnothexno\t00112233445566778899aabbccddeeff00112233\tsource\n";
+  out << "1\t2\t3\t0123456789abcdef0123456789abcdef\tshort\tsource\n";
+  out << "1\t2\t3\t0123456789abcdef0123456789abcdef\n";
+  out << "\n";
+  out << valid << "\n";
+  out.close();
+
+  auto cache = mods::ReadHashCache(file);
+  Expect(cache.size() == 1, "only the valid line is kept");
+  auto it = cache.find("C:\\mods\\a\\file.xxx");
+  Expect(it != cache.end(), "valid entry present under its source key");
+  if (it != cache.end()) {
+    Expect(it->second.size == 1 && it->second.modified == 2 && it->second.uncompressed == 3,
+           "valid entry numbers parsed");
+    Expect(it->second.sha1[0] == 0x00 && it->second.sha1[1] == 0x11 && it->second.sha1[19] == 0x33,
+           "valid entry sha1 decoded");
+  }
+
+  fs::remove_all(root);
+}
+
+void TestPrepareWritesHashCache() {
+  fs::path root = fs::temp_directory_path() / "gow2_mods_test_prepare_cache";
+  fs::remove_all(root);
+  const fs::path game = root / "game";
+  const fs::path cache_root = root / "cache";
+  const fs::path mods_root = root / "mods";
+  const fs::path voice = root / "voice.txt";
+  fs::create_directories(game / "GearGame");
+  fs::create_directories(mods_root / "mymod" / "GearGame" / "CookedXenon");
+  std::ofstream(mods_root / "mymod" / "GearGame" / "CookedXenon" / "SP_A_LOC_int.xxx") << "new content";
+  std::ofstream(voice).close();
+
+  TocFixture fx;
+  for (const auto& toc : fx.Tocs())
+    std::ofstream(game / "GearGame" / toc.name, std::ios::binary) << toc.text;
+
+  auto first = mods::Prepare(game, cache_root, mods_root, voice);
+  Expect(first.active, "first Prepare succeeds");
+  Expect(fs::exists(cache_root / "mods" / "hashes.tsv"), "hash cache written after first Prepare");
+  auto second = mods::Prepare(game, cache_root, mods_root, voice);
+  Expect(second.active, "second Prepare succeeds");
+  Expect(first.hashes.size() == second.hashes.size(), "same number of hashes on second Prepare");
+  for (size_t i = 0; i < first.hashes.size() && i < second.hashes.size(); ++i) {
+    Expect(first.hashes[i].name == second.hashes[i].name, "same hash name on second Prepare");
+    Expect(first.hashes[i].sha1 == second.hashes[i].sha1, "same sha1 on second Prepare");
+  }
+
+  fs::remove_all(root);
+}
+
 int main() {
   TestModOrderAndDisable();
   TestLaterModWins();
@@ -364,6 +521,11 @@ int main() {
   TestModIniOptional();
   TestModIniIgnoresSectionsAndComments();
   TestOverrideLinesOrder();
+  TestHashCacheHit();
+  TestHashCacheMiss();
+  TestHashCacheRoundTrip();
+  TestHashCacheSkipsMalformed();
+  TestPrepareWritesHashCache();
 
   std::printf("mods_test: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

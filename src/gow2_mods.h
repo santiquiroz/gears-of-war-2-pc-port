@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -33,7 +34,17 @@ struct Plan {
 };
 
 std::vector<Mod> FindMods(const std::filesystem::path& root);
-std::vector<File> FindFiles(const std::filesystem::path& root, const std::vector<Mod>& mods);
+
+struct CachedHash {
+  uint64_t size = 0, modified = 0, uncompressed = 0;
+  std::string md5;
+  std::array<uint8_t, 20> sha1{};
+};
+using HashCache = std::map<std::string, CachedHash>;  // key: File::source
+HashCache ReadHashCache(const std::filesystem::path& file);
+bool WriteHashCache(const std::filesystem::path& file, const std::vector<File>& files);
+std::vector<File> FindFiles(const std::filesystem::path& root, const std::vector<Mod>& mods,
+                            const HashCache& cache = {});
 
 Plan BuildPlan(const std::vector<Mod>& mods, const std::vector<File>& files,
                const std::vector<voice_language::TocFile>& tocs);
