@@ -1,0 +1,5 @@
+# D3D12 fence failure handling
+
+GetCompletedValue returns UINT64_MAX when the device is removed; it must not be published as completed work or used to reclaim resources. The out-of-submission Signal/event check previously passed a boolean expression to SUCCEEDED, causing successful HRESULT0 to short-circuit event registration. Check each result independently; accept only WAIT_OBJECT_0 and verify the awaited value was reached. Return bool and propagate failure through frame setup, memexport, occlusion queries and full-queue waits. Device loss uses the existing stock diagnostic/termination path before normal reclamation. No local DRED extension is required.
+
+15 callback-injected tests exercise normal polling/waits, both sentinel reads, queue/event/wait failures, incomplete completion and successful-zero Signal ordering. These are genuine synchronization/failure-handling defects; no proof they caused or fix the original long-play GPU page fault. No replacement-texture, pre-cache or4x-pack dependency. No change to normal quality/settings, TDR registry or drivers.

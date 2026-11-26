@@ -89,6 +89,16 @@ function Invoke-Native([scriptblock]$cmd) {
     return $LASTEXITCODE
 }
 
+function Test-FenceFailures([string]$outDir) {
+    $sdk = Join-Path $root 'out\sdk-build\rexglue-sdk'
+    if (-not (Test-SdkSourcePrepared $sdk)) { return $false }
+    $exe = Join-Path $outDir 'fence_wait_test.exe'
+    $code = Invoke-Native { clang++ -std=c++20 -O1 -fms-runtime-lib=dll -Wall `
+        -I (Join-Path $sdk 'include') tools\tests\fence_wait_test.cpp -o $exe }
+    if ($code -ne 0) { return $false }
+    return Test-Exe $exe
+}
+
 function Test-Exe([string]$exe, [string[]]$ExeArgs) {
     if ($ExeArgs) { $code = Invoke-Native { & $exe @ExeArgs } }
     else { $code = Invoke-Native { & $exe } }
@@ -258,6 +268,7 @@ $steps = [ordered]@{
     'SDK header unit tests'      = { Test-SdkHeaderUnits $outDir }
     'Texture pre-cache tests'    = { Test-TexturePrecache $outDir }
     'Python tests in tools'      = { Test-PythonTools }
+    'GPU fence failure tests'    = { Test-FenceFailures $outDir }
 }
 $failed = @()
 foreach ($name in $steps.Keys) {
