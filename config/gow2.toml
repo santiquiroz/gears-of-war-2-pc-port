@@ -183,3 +183,6 @@ keybind_start = "Return,Escape"
 # Log the UDP bytes and packets sent to and received from each peer every this many seconds
 # ([nettraffic] lines; 0 = off).
 # net_traffic_log_sec = 0
+
+# Optional native-key menu Escape-to-B routing; gameplay Escape remains pause.
+# gow2_menu_escape_back = true

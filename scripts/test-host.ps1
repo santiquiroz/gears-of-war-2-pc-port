@@ -96,6 +96,16 @@ function Test-Exe([string]$exe, [string[]]$ExeArgs) {
     return $code -eq 0
 }
 
+function Test-MenuEscape([string]$outDir) {
+    $sdk = Join-Path $root 'out\sdk-build\rexglue-sdk'
+    if (-not (Test-SdkSourcePrepared $sdk)) { return $false }
+    $exe = Join-Path $outDir 'menu_escape_back_test.exe'
+    $code = Invoke-Native { clang++ -std=c++20 -O1 -fms-runtime-lib=dll -Wall `
+        -I (Join-Path $sdk 'src\input\mnk') tools\tests\menu_escape_back_test.cpp -o $exe }
+    if ($code -ne 0) { return $false }
+    return Test-Exe $exe
+}
+
 function Test-HostTargets([string]$build) {
     if (-not (Test-Path (Join-Path $build 'build.ninja'))) {
         Write-Host "  $build is not configured; run scripts\build.ps1 first."
@@ -242,6 +252,7 @@ New-Item -ItemType Directory -Force $outDir | Out-Null
 
 $steps = [ordered]@{
     'Host test targets'          = { Test-HostTargets (Join-Path $root "out\build\$($Config.ToLower())") }
+    'Menu Escape routing tests' = { Test-MenuEscape $outDir }
     'Touch model test'           = { Test-TouchModel $outDir }
     'SDK System Link unit tests' = { Test-SdkSystemLink $outDir }
     'SDK header unit tests'      = { Test-SdkHeaderUnits $outDir }
