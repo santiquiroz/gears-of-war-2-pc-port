@@ -24,6 +24,7 @@
 
 .PARAMETER Version
   Release version string, e.g. "0.1.1". Used in the zip and top folder name.
+  Default: the first line of the VERSION file in the repo root.
 
 .PARAMETER BuildDir
   Folder with the already-built binaries. Default: out\build\release.
@@ -46,7 +47,6 @@
   .\scripts\package.ps1 -Version "0.1.1"
 #>
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Version,
 
     [string]$BuildDir = 'out\build\release',
@@ -429,6 +429,11 @@ function Write-HashFile([string]$ZipPath, [string]$HashPath) {
 
 # ---- main ---------------------------------------------------------------------------
 $root = Get-RepoRoot
+if (-not $Version) {
+    $versionPath = Join-Path $root 'VERSION'
+    if (-not (Test-Path $versionPath)) { Fail "VERSION file not found: $versionPath. Pass -Version explicitly." }
+    $Version = (Get-Content -Path $versionPath -TotalCount 1).Trim()
+}
 $BuildDir = Resolve-RootedPath $root $BuildDir
 $SdkDir = Resolve-RootedPath $root $SdkDir
 $OutDir = Resolve-RootedPath $root $OutDir

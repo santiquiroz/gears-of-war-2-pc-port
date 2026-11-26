@@ -18,6 +18,12 @@ cmake_path(ABSOLUTE_PATH CMAKE_CURRENT_SOURCE_DIR NORMALIZE OUTPUT_VARIABLE _her
 cmake_path(GET _here PARENT_PATH _android)
 cmake_path(GET _android PARENT_PATH GOW2_ROOT)
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GOW2_ROOT}/VERSION")
+file(STRINGS "${GOW2_ROOT}/VERSION" GOW2_VERSION LIMIT_COUNT 1)
+if(NOT GOW2_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "VERSION must contain an x.y.z port version; got '${GOW2_VERSION}'")
+endif()
+
 set(GOW2_REXSDK_DIR "" CACHE PATH "rexglue-sdk source tree with the Android port")
 set(GOW2_GENERATED_DIR "" CACHE PATH
     "Android copy of generated/default made by tools/prepare_android_sources.py")
@@ -160,7 +166,7 @@ foreach(_windows_only IN LISTS GOW2_WINDOWS_ONLY_SOURCES)
     list(REMOVE_ITEM GOW2_SOURCES "${GOW2_ROOT}/src/${_windows_only}")
 endforeach()
 add_library(gow2 SHARED ${GOW2_SOURCES} gow2_android_glue.cpp gow2_gpu_driver.cpp)
-target_compile_definitions(gow2 PRIVATE GOW2_VERSION="0.4.9")
+target_compile_definitions(gow2 PRIVATE GOW2_VERSION="${GOW2_VERSION}")
 target_include_directories(gow2 PRIVATE
     "${GOW2_GENERATED_INCLUDE_ROOT}"
     "${GOW2_ROOT}/src"

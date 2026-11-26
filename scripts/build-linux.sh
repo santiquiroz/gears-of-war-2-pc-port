@@ -99,15 +99,14 @@ first_codegen() {
 
 configure_and_build() {
   step "Configuring $build with $CXX"
-  # GOW2_VERSION is a cache entry: pass it, or a configured tree keeps the old version.
   # shellcheck disable=SC2046
-  cmake -S "$root" -B "$build" $(common_cmake_args) -DREXSDK_DIR="$sdk" -DGOW2_VERSION="$(game_version)"
+  cmake -S "$root" -B "$build" $(common_cmake_args) -DREXSDK_DIR="$sdk"
   step "Building gow2 (codegen runs first when generated/ is missing or stale)"
   cmake --build "$build" --target gow2
 }
 
 game_version() {
-  sed -n 's/^set(GOW2_VERSION "\([^"]*\)".*/\1/p' "$root/CMakeLists.txt"
+  head -n 1 "$root/VERSION" | tr -d '\r'
 }
 
 make_package() {

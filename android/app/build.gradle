@@ -10,6 +10,14 @@ if (localPropertiesFile.exists()) {
 
 def gameLibraries = providers.gradleProperty('gow2.gameLibraries').getOrElse('false').toBoolean()
 
+def portVersion = rootProject.file('../VERSION').text.trim()
+if (!(portVersion ==~ /[0-9]+\.[0-9]+\.[0-9]+/)) {
+    throw new GradleException("VERSION must contain an x.y.z port version; got '${portVersion}'.")
+}
+def portVersionParts = portVersion.split('\\.').collect { it as int }
+// versionCode only has to grow with each release (0.4.9 -> 4009, above the old hand-written 39).
+def portVersionCode = portVersionParts[0] * 1000000 + portVersionParts[1] * 1000 + portVersionParts[2]
+
 // The placeholder shell builds its own libSDL3.so from SDL's sources.
 def sdl3SourceDir = localProperties.getProperty('gow2.sdl3.dir') ?: providers.gradleProperty('gow2.sdl3.dir').getOrNull()
 if (!gameLibraries && (!sdl3SourceDir || !file("${sdl3SourceDir}/CMakeLists.txt").exists())) {
@@ -32,8 +40,8 @@ android {
         applicationId = 'com.santiquiroz.gow2recomp'
         minSdk = 29
         targetSdk = 36
-        versionCode = 39
-        versionName = '0.4.9'
+        versionCode = portVersionCode
+        versionName = portVersion
         buildConfigField 'boolean', 'GAME_LIBRARIES', gameLibraries.toString()
         ndk {
             abiFilters 'arm64-v8a'
