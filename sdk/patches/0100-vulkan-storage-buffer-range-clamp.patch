@@ -1,0 +1,27 @@
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 08a22cf..e03ffb3 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -40,6 +40,10 @@ REXCVAR_DEFINE_BOOL(vulkan_require_fill_mode_non_solid, !REX_PLATFORM_MAC, "UI/V
+                     "Require fillModeNonSolid support for Vulkan GPU emulation (disable to "
+                     "allow fallback to solid fill for line/point polygon modes)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_UINT32(vulkan_max_storage_buffer_range_mb, 0, "UI/Vulkan",
++                      "Debug: clamp maxStorageBufferRange to this many MB (0 = device value); "
++                      "128 reproduces the split shared memory bindings of Adreno GPUs")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ 
+ namespace rex {
+ namespace ui {
+@@ -626,6 +630,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+   XE_UI_VULKAN_LIMIT(optimalBufferCopyOffsetAlignment)
+   XE_UI_VULKAN_LIMIT(optimalBufferCopyRowPitchAlignment)
+   XE_UI_VULKAN_LIMIT(nonCoherentAtomSize)
++  if (uint32_t clamp_mb = REXCVAR_GET(vulkan_max_storage_buffer_range_mb); clamp_mb && clamp_mb < 4096) {
++    device->properties_.maxStorageBufferRange =
++        std::min(device->properties_.maxStorageBufferRange, clamp_mb << 20);
++    REXLOG_WARN("* maxStorageBufferRange clamped to {}", device->properties_.maxStorageBufferRange);
++  }
+ 
+   if (with_gpu_emulation) {
+     XE_UI_VULKAN_FEATURE(robustBufferAccess)

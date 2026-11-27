@@ -102,6 +102,7 @@ Both SDK builds apply every patch here in file-name order on top of ReXGlue comm
 | `0096-adaptive-texture-precache.patch` | Opt-in bounded history-based D3D12 replacement-texture preload, source revalidation and on-demand fallback. See `docs/TEXTURE_PRECACHE.md`. |
 | `0097-menu-escape-back.patch` | Escape works as B (back) in menus and the pause menu: while the keyboard drives the emulated pad (`mnk_keys`, which the game turns on outside gameplay when `gow2_native_keys` is on), Escape clears Start and presses B; during gameplay the keys go to the game natively and Escape stays pause. Enter is still Start, and a physical controller is not touched. `gow2_menu_escape_back` (default on). Contributed by optimistic-blip (PR #59). Tests in `tools/tests/menu_escape_back_test.cpp`. |
 | `0099-d3d12-fence-failure-handling.patch` | Reject removed-device fence sentinel before reclamation; check Signal/event/wait results and propagate failure to draw/readback callers. |
+| `0100-vulkan-storage-buffer-range-clamp.patch` | Debug cvar `vulkan_max_storage_buffer_range_mb` (0 = off): lowers the device's `maxStorageBufferRange` so a PC GPU takes the four-binding shared memory path that Adreno GPUs (128 MB limit) use. |
 ## Working on a patch
 
 Each patch lives in a git worktree of rexglue-sdk based on `923c1a5` plus the patches before it.
