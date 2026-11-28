@@ -72,6 +72,7 @@ set(GOW2_SOURCES
     src/gow2_options_values_text.cpp
     src/gow2_options_actions.cpp
     src/gow2_host_line.cpp
+    src/gow2_restart_args.cpp
     src/gow2_options_overlay.cpp
     src/gow2_host_ui.cpp
     src/gow2_fps_cap.cpp
@@ -103,7 +104,7 @@ elseif(UNIX AND NOT APPLE)
     # librexruntime.so like Android, so it takes the Android stand-ins (android/gamelibs).
     list(REMOVE_ITEM GOW2_SOURCES src/gow2_xam_input_guard.cpp src/gow2_utf8_guard.cpp
         src/gow2_crash_watch.cpp)
-    list(APPEND GOW2_SOURCES android/gamelibs/gow2_android_glue.cpp)
+    list(APPEND GOW2_SOURCES android/gamelibs/gow2_android_glue.cpp src/gow2_update_check.cpp)
 endif()
 
 add_executable(gow2 WIN32 ${GOW2_SOURCES})
@@ -221,7 +222,7 @@ add_executable(gow2_options_input_test EXCLUDE_FROM_ALL
 add_executable(gow2_options_values_test EXCLUDE_FROM_ALL
     tools/tests/options_values_test.cpp src/gow2_options_values_text.cpp)
 add_executable(gow2_options_actions_test EXCLUDE_FROM_ALL
-    tools/tests/options_actions_test.cpp src/gow2_host_line.cpp)
+    tools/tests/options_actions_test.cpp src/gow2_host_line.cpp src/gow2_restart_args.cpp)
 add_executable(gow2_fps_cap_test EXCLUDE_FROM_ALL tools/tests/fps_cap_test.cpp)
 add_executable(gow2_gpu_pick_test EXCLUDE_FROM_ALL tools/tests/gpu_pick_test.cpp)
 add_executable(gow2_frame_stats_test EXCLUDE_FROM_ALL tools/tests/frame_stats_test.cpp)

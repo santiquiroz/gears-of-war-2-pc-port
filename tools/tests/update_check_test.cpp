@@ -58,6 +58,7 @@ void TestReleaseFieldsAndAssets() {
   Expect(release->html_url.starts_with("https://github.com/"), "release page is extracted");
   Expect(release->name == "Release \"ready\" \\ \xc3\xa9 \xf0\x9f\x9a\x80", "escapes and surrogate pairs decode to UTF-8");
   Expect(release->download_url == "https://example.com/game-win64.zip", "first exact Windows asset suffix is selected");
+  Expect(release->checksum_url.empty(), "missing checksum sibling is empty");
   Expect(!release->prerelease && !release->draft, "release booleans are extracted");
   const auto minimal = ParseRelease(R"({"tag_name":"v1"})");
   Expect(minimal && minimal->download_url.empty(), "release without matching assets remains usable");
@@ -67,6 +68,31 @@ void TestReleaseFieldsAndAssets() {
   Expect(untitled && untitled->name.empty(), "untitled GitHub releases accept null name");
   const auto utf8 = ParseRelease("{\"tag_name\":\"v1\",\"name\":\"\xc3\xa9 \xf0\x9f\x9a\x80\"}");
   Expect(utf8 && utf8->name == "\xc3\xa9 \xf0\x9f\x9a\x80", "raw UTF-8 strings preserve Unicode");
+}
+
+void TestPlatformAssetsAndChecksums() {
+  constexpr std::string_view payload = R"({
+    "tag_name":"v2", "assets":[
+      {"name":"game-linux-x86_64.tar.gz","browser_download_url":"https://example.com/game.tar.gz"},
+      {"name":"game-linux-x86_64.tar.gz.sha256","browser_download_url":"https://example.com/game.tar.gz.sha256"},
+      {"name":"game-win64.zip","browser_download_url":"https://example.com/game.zip"},
+      {"name":"game-win64.zip.sha256","browser_download_url":"https://example.com/game.zip.sha256"}
+    ]
+  })";
+  const auto linux = ParseRelease(payload, "-linux-x86_64.tar.gz");
+  Expect(linux && linux->download_url == "https://example.com/game.tar.gz",
+         "Linux asset suffix selects tarball");
+  Expect(linux && linux->checksum_url == "https://example.com/game.tar.gz.sha256",
+         "Linux asset finds its checksum sibling");
+  const auto windows = ParseRelease(payload, "-win64.zip");
+  Expect(windows && windows->download_url == "https://example.com/game.zip",
+         "Windows asset suffix selects zip");
+  Expect(windows && windows->checksum_url == "https://example.com/game.zip.sha256",
+         "Windows asset finds its checksum sibling");
+  const auto no_checksum = ParseRelease(
+      R"({"tag_name":"v2","assets":[{"name":"game-linux-x86_64.tar.gz","browser_download_url":"download"}]})",
+      "-linux-x86_64.tar.gz");
+  Expect(no_checksum && no_checksum->checksum_url.empty(), "missing selected asset checksum is empty");
 }
 
 void TestMalformedJson() {
@@ -98,7 +124,7 @@ void TestThrottleAndDismissal() {
   Expect(!ShouldCheck(99, 100), "clock rollback does not trigger another automatic request");
   Expect(ShouldCheck(101, 100, true), "manual request bypasses throttle");
   Expect(ShouldCheck(std::numeric_limits<int64_t>::max(), 1), "large clock values do not overflow");
-  Release release{"v2", "https://example.com", "Two", ""};
+  Release release{"v2", "https://example.com", "Two", "", "", false, false};
   Expect(ShouldNotify(release, "v1", ""), "newer undismissed release notifies");
   Expect(!ShouldNotify(release, "v1", "v2"), "skipped release stays silent");
   Expect(ShouldNotify(release, "v1", "v1.5"), "newer release after skipped tag notifies again");
@@ -111,7 +137,9 @@ void TestThrottleAndDismissal() {
 }
 
 void TestCacheRoundTripAndFailedAttempt() {
-  Cache cache{12345, {"v2", "https://example.com/\"quoted\"", "A\nrelease\t\\", "https://example.com/download", false, false}, "v1.5", false};
+  Cache cache{12345, {"v2", "https://example.com/\"quoted\"", "A\nrelease\t\\",
+                     "https://example.com/download", "https://example.com/download.sha256", false, false},
+              "v1.5", false};
   const auto saved = ParseCache(SerializeCache(cache));
   Expect(saved && saved->checked_at == 12345 && !saved->failed, "cache timestamp and successful status round-trip");
   if (!saved) return;
@@ -119,6 +147,7 @@ void TestCacheRoundTripAndFailedAttempt() {
          "cache release strings round-trip with control escapes");
   Expect(saved->release.html_url == cache.release.html_url && saved->release.download_url == cache.release.download_url,
          "cache retains release and asset URLs");
+  Expect(saved->release.checksum_url == cache.release.checksum_url, "cache retains checksum URL");
   Expect(saved->dismissed == "v1.5", "cache remembers dismissed release");
   cache.checked_at = 12346;
   cache.failed = true;
@@ -127,6 +156,9 @@ void TestCacheRoundTripAndFailedAttempt() {
   Expect(failed && !ShouldCheck(12347, failed->checked_at), "failed attempts also throttle next launch");
   const auto empty = ParseCache(SerializeCache(Cache{}));
   Expect(empty && empty->release.tag.empty(), "cache can preserve dismissal and errors without a known release");
+  const auto old_cache = ParseCache(
+      R"({"checked_at":12,"failed":false,"dismissed":"","release":{"tag_name":"v1","html_url":"page","name":"Old","download_url":"download","prerelease":false,"draft":false}})");
+  Expect(old_cache && old_cache->release.checksum_url.empty(), "old cache without checksum remains readable");
   for (const auto invalid : {"{}", "[]", R"({"checked_at":-1,"release":{}})",
       R"({"checked_at":1.5,"release":{}})", R"({"checked_at":9223372036854775808,"release":{}})",
       R"({"checked_at":"123","release":{}})", R"({"checked_at":1,"release":{},"failed":1})",
@@ -140,6 +172,7 @@ void TestCacheRoundTripAndFailedAttempt() {
 int main() {
   TestVersionNumbers();
   TestReleaseFieldsAndAssets();
+  TestPlatformAssetsAndChecksums();
   TestMalformedJson();
   TestThrottleAndDismissal();
   TestCacheRoundTripAndFailedAttempt();

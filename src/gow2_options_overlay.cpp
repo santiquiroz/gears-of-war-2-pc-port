@@ -10,10 +10,12 @@
 #include "gow2_cine_hint_plan.h"
 #include "gow2_input_activity.h"
 #include "gow2_prompt_swap.h"
+#if !defined(__ANDROID__)
+#include "gow2_update_check.h"
+#endif
 #ifdef _WIN32
 #include "gow2_texture_pack_builder.h"
 #include "gow2_texture_pack_plan.h"
-#include "gow2_update_check.h"
 #endif
 
 #include <algorithm>
@@ -298,7 +300,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
  public:
   OptionsOverlay(rex::ui::ImGuiDrawer* drawer, GamePaths paths, bool touch)
       : ImGuiDialog(drawer), values_(std::move(paths)), touch_(touch) {
-#ifdef _WIN32
+#if !defined(__ANDROID__)
     update::Start(values_.paths().user_data_root);
 #endif
     BuildContext(touch_, &context_);
@@ -358,7 +360,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
   void SetPaths(const GamePaths& paths) {
     values_.set_paths(paths);
-#ifdef _WIN32
+#if !defined(__ANDROID__)
     update::Start(paths.user_data_root);
 #endif
   }
@@ -401,7 +403,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       RetirePopups();
       DrawToast(io);
       DrawCineHint(io);
-#ifdef _WIN32
+#if !defined(__ANDROID__)
       DrawUpdateNotice(io, now);
 #endif
       return;
@@ -411,7 +413,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     if (!open_) { RetirePopups(); return; }
     DrawMenu(io);
     DrawToast(io);
-#ifdef _WIN32
+#if !defined(__ANDROID__)
     DrawUpdateNotice(io, now);
 #endif
   }
@@ -486,7 +488,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     return window->GetNativeWindowHandle();
   }
 
-#ifdef _WIN32
+#if !defined(__ANDROID__)
   void OpenDownloadPage() {
     const auto url = update::DownloadPageUrl();
     options_actions::OpenInShell(std::wstring(url.begin(), url.end()), WindowToMinimize());
@@ -531,7 +533,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
   void RunAction(const std::string& id) {
     REXLOG_INFO("PCOPTIONS action {}", id);
-#ifdef _WIN32
+#if !defined(__ANDROID__)
     if (id == "update_download") { OpenDownloadPage(); return; }
     if (id == "update_check_now") { update::CheckNow(); return; }
     if (id == "update_dismiss") {
@@ -539,6 +541,8 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
       update_notice_until_ = 0;
       return;
     }
+#endif
+#ifdef _WIN32
     if (id == "texture_build_start") { StartTextureBuild(); return; }
     if (id == "texture_build_cancel") { texture_pack_builder::Cancel(); return; }
 #endif
@@ -1002,7 +1006,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+width_*.78f);
     ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber),"%s",text.c_str());
     ImGui::PopTextWrapPos();
-#ifdef _WIN32
+#if !defined(__ANDROID__)
     const auto label = context_.ctx.lang == Lang::kEs ? "Reiniciar ahora" : "Restart now";
     ImGui::SetCursorScreenPos({left_+width_*.80f,BottomY(.80f)});
     const bool clicked = DrawButton(label,{width_*.20f,std::max(44.f,.066f*h_)},true);
@@ -1431,7 +1435,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     ImGui::EndChild();
   }
 
-#ifdef _WIN32
+#if !defined(__ANDROID__)
   void DrawUpdateNotice(const ImGuiIO& io, int64_t now) {
     if (!rex::cvar::Query<bool>("gow2_update_check")) {
       update_notice_until_ = 0;
@@ -1565,7 +1569,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
   float left_ = 0;
   std::string toast_;
   int64_t toast_until_ = 0;
-#ifdef _WIN32
+#if !defined(__ANDROID__)
   std::string update_notice_;
   int64_t update_notice_until_ = 0;
 #endif

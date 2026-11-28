@@ -14,10 +14,16 @@
 namespace rex::glue::update {
 
 struct Release {
-  std::string tag, html_url, name, download_url;
+  std::string tag, html_url, name, download_url, checksum_url;
   bool prerelease = false;
   bool draft = false;
 };
+
+#ifdef _WIN32
+inline constexpr std::string_view kAssetSuffix = "-win64.zip";
+#else
+inline constexpr std::string_view kAssetSuffix = "-linux-x86_64.tar.gz";
+#endif
 
 struct Cache {
   int64_t checked_at = 0;
@@ -297,7 +303,7 @@ inline std::string Quote(std::string_view text) {
 
 }  // namespace detail
 
-inline std::optional<Release> ParseRelease(std::string_view input) {
+inline std::optional<Release> ParseRelease(std::string_view input, std::string_view asset_suffix = kAssetSuffix) {
   const auto object = detail::JsonReader(input).Read();
   if (!object) return std::nullopt;
   auto release = detail::ReleaseFields(*object);
@@ -307,12 +313,24 @@ inline std::optional<Release> ParseRelease(std::string_view input) {
     if (object->fields.contains("assets")) return std::nullopt;
     return release;
   }
+  std::string selected_asset;
   for (const auto& asset : assets->items) {
     const auto name = detail::Field(asset, "name", detail::Json::String);
     const auto url = detail::Field(asset, "browser_download_url", detail::Json::String);
-    if (!name || !url || !name->text.ends_with("-win64.zip")) continue;
+    if (!name || !url || !name->text.ends_with(asset_suffix)) continue;
+    selected_asset = name->text;
     release->download_url = url->text;
     break;
+  }
+  if (!selected_asset.empty()) {
+    const std::string checksum_name = selected_asset + ".sha256";
+    for (const auto& asset : assets->items) {
+      const auto name = detail::Field(asset, "name", detail::Json::String);
+      const auto url = detail::Field(asset, "browser_download_url", detail::Json::String);
+      if (!name || !url || name->text != checksum_name) continue;
+      release->checksum_url = url->text;
+      break;
+    }
   }
   return release;
 }
@@ -348,7 +366,7 @@ inline std::string SerializeCache(const Cache& cache) {
          ",\"failed\":" + (cache.failed ? "true" : "false") +
          ",\"dismissed\":" + Quote(cache.dismissed) + ",\"release\":{\"tag_name\":" + Quote(release.tag) +
          ",\"html_url\":" + Quote(release.html_url) + ",\"name\":" + Quote(release.name) +
-         ",\"download_url\":" + Quote(release.download_url) +
+         ",\"download_url\":" + Quote(release.download_url) + ",\"checksum_url\":" + Quote(release.checksum_url) +
          ",\"prerelease\":" + (release.prerelease ? "true" : "false") +
          ",\"draft\":" + (release.draft ? "true" : "false") + "}}";
 }
@@ -366,6 +384,7 @@ inline std::optional<Cache> ParseCache(std::string_view input) {
   if (!fields) return std::nullopt;
   cache.release = *fields;
   if (!detail::StringField(*release, "download_url", cache.release.download_url)) return std::nullopt;
+  if (!detail::StringField(*release, "checksum_url", cache.release.checksum_url)) return std::nullopt;
   if (!detail::StringField(*object, "dismissed", cache.dismissed)) return std::nullopt;
   if (!detail::BoolField(*object, "failed", cache.failed)) return std::nullopt;
   return cache;

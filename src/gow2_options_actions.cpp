@@ -9,13 +9,17 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "gow2_gpu_pick.h"
 #include "gow2_host_line.h"
+#include "gow2_restart_args.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -30,6 +34,22 @@
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
+#elif defined(__linux__) && !defined(__ANDROID__)
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <fcntl.h>
+#include <fstream>
+#include <iterator>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+#endif
+
+#if defined(__linux__) && !defined(__ANDROID__)
+extern char** environ;
 #endif
 
 REXCVAR_DEFINE_INT32(gow2_wait_pid, 0, "UI",
@@ -520,6 +540,146 @@ bool LaunchHostRun(const std::string& mode, const std::vector<std::wstring>& arg
 
 #endif
 
+#if defined(__linux__) && !defined(__ANDROID__)
+
+std::optional<std::string> XdgOpenTargetUtf8(const std::wstring& target) {
+  try {
+    const auto path = std::filesystem::path(target).u8string();
+    return std::string(reinterpret_cast<const char*>(path.data()), path.size());
+  } catch (const std::exception& error) {
+    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", error.what());
+    return std::nullopt;
+  }
+}
+
+int RedirectXdgOpenStreams(posix_spawn_file_actions_t* actions) {
+  int error = posix_spawn_file_actions_addopen(actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+  if (error == 0)
+    error = posix_spawn_file_actions_addopen(actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+  if (error == 0)
+    error = posix_spawn_file_actions_addopen(actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  return error;
+}
+
+int SpawnXdgOpenWithActions(const std::string& target, posix_spawn_file_actions_t* actions,
+                            pid_t* child) {
+  char* args[] = {const_cast<char*>("xdg-open"), const_cast<char*>(target.c_str()), nullptr};
+  return posix_spawnp(child, "xdg-open", actions, nullptr, args, environ);
+}
+
+std::optional<pid_t> SpawnXdgOpen(const std::string& target) {
+  posix_spawn_file_actions_t actions;
+  int error = posix_spawn_file_actions_init(&actions);
+  pid_t child = -1;
+  if (error == 0) {
+    error = RedirectXdgOpenStreams(&actions);
+    if (error == 0) error = SpawnXdgOpenWithActions(target, &actions, &child);
+    posix_spawn_file_actions_destroy(&actions);
+  }
+  if (error != 0) {
+    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", std::strerror(error));
+    return std::nullopt;
+  }
+  return child;
+}
+
+void ReapXdgOpen(pid_t child) {
+  int status = 0;
+  pid_t result;
+  do {
+    result = waitpid(child, &status, 0);
+  } while (result < 0 && errno == EINTR);
+  if (result < 0) {
+    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", std::strerror(errno));
+  } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    REXLOG_INFO("PCOPTIONS xdg-open failed: exit status {}", status);
+  }
+}
+
+void ReapXdgOpenAsync(pid_t child) {
+  std::thread reaper;
+  try {
+    reaper = std::thread(ReapXdgOpen, child);
+  } catch (const std::exception& error) {
+    ReapXdgOpen(child);
+    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", error.what());
+    return;
+  }
+  try {
+    reaper.detach();
+  } catch (const std::exception& error) {
+    reaper.join();
+    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", error.what());
+  }
+}
+
+void OpenInLinuxShell(const std::wstring& target) {
+  const std::optional<std::string> utf8 = XdgOpenTargetUtf8(target);
+  if (!utf8) return;
+  const std::optional<pid_t> child = SpawnXdgOpen(*utf8);
+  if (!child) return;
+  ReapXdgOpenAsync(*child);
+}
+
+std::string ExecutablePath() {
+  std::vector<char> buffer(256);
+  for (;;) {
+    const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size());
+    if (length < 0) return {};
+    if (static_cast<size_t>(length) < buffer.size()) {
+      std::string path(buffer.data(), static_cast<size_t>(length));
+      constexpr std::string_view deleted = " (deleted)";
+      if (path.ends_with(deleted)) path.resize(path.size() - deleted.size());
+      return path;
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+}
+
+std::vector<std::string> ProcessArgs() {
+  std::ifstream file("/proc/self/cmdline", std::ios::binary);
+  if (!file) return {};
+  const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  std::vector<std::string> args;
+  size_t start = 0;
+  while (start < content.size()) {
+    const size_t end = content.find('\0', start);
+    if (end == std::string::npos) {
+      args.emplace_back(content.substr(start));
+      break;
+    }
+    args.emplace_back(content.substr(start, end - start));
+    start = end + 1;
+  }
+  return args;
+}
+
+bool IsZombie(pid_t pid) {
+  std::ifstream file("/proc/" + std::to_string(pid) + "/stat");
+  std::string stat;
+  if (!std::getline(file, stat)) return false;
+  const size_t close = stat.rfind(')');
+  if (close == std::string::npos) return false;
+  const size_t state = stat.find_first_not_of(' ', close + 1);
+  return state != std::string::npos && stat[state] == 'Z';
+}
+
+bool ProcessGone(pid_t pid) {
+  if (kill(pid, 0) < 0 && errno == ESRCH) return true;
+  return IsZombie(pid);
+}
+
+std::string JoinedArgs(const std::vector<std::string>& args) {
+  std::string joined;
+  for (const std::string& arg : args) {
+    if (!joined.empty()) joined += ' ';
+    joined += arg;
+  }
+  return joined;
+}
+
+#endif
+
 }  // namespace
 
 std::vector<NamedValue> ListMonitors() {
@@ -607,6 +767,9 @@ void OpenInShell(std::wstring target, void* window_to_minimize) {
   std::thread([target = std::move(target), window_to_minimize] {
     OpenInShellOnWorker(target, window_to_minimize);
   }).detach();
+#elif defined(__linux__) && !defined(__ANDROID__)
+  (void)window_to_minimize;
+  OpenInLinuxShell(target);
 #else
   (void)target;
   (void)window_to_minimize;
@@ -639,6 +802,19 @@ bool RestartGame() {
   CloseHandle(child.hProcess);
   CloseHandle(child.hThread);
   return true;
+#elif defined(__linux__) && !defined(__ANDROID__)
+  const std::string exe = ExecutablePath();
+  if (exe.empty()) return false;
+  std::vector<std::string> args = ProcessArgs();
+  if (args.empty()) return false;
+  args = restart_args::RestartArgs(std::move(args), static_cast<int>(getpid()));
+  REXLOG_INFO("PCOPTIONS restarting: {} {}", exe, JoinedArgs(args));
+  std::vector<char*> argv;
+  argv.reserve(args.size() + 1);
+  for (std::string& arg : args) argv.push_back(arg.data());
+  argv.push_back(nullptr);
+  pid_t child = -1;
+  return posix_spawn(&child, exe.c_str(), nullptr, nullptr, argv.data(), environ) == 0;
 #else
   return false;
 #endif
@@ -655,6 +831,22 @@ void WaitForPreviousInstance() {
   const ULONGLONG waited = GetTickCount64() - start;
   CloseHandle(process);
   REXLOG_INFO("PCOPTIONS waited {} ms for the previous instance {}", waited, pid);
+#elif defined(__linux__) && !defined(__ANDROID__)
+  const int32_t previous_pid = REXCVAR_GET(gow2_wait_pid);
+  if (previous_pid <= 0 || previous_pid == getpid()) return;
+  const pid_t pid = static_cast<pid_t>(previous_pid);
+  const auto started = std::chrono::steady_clock::now();
+  const auto deadline = started + std::chrono::seconds(20);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (ProcessGone(pid)) break;
+    const auto remaining = deadline - std::chrono::steady_clock::now();
+    if (remaining <= std::chrono::steady_clock::duration::zero()) break;
+    std::this_thread::sleep_for(std::min(std::chrono::milliseconds(50),
+                                        std::chrono::duration_cast<std::chrono::milliseconds>(remaining)));
+  }
+  const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - started).count();
+  REXLOG_INFO("PCOPTIONS waited {} ms for the previous instance {}", waited, previous_pid);
 #endif
 }
 

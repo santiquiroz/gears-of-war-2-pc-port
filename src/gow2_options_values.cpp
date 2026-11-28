@@ -25,9 +25,11 @@
 #include <windows.h>
 #include "gow2_texture_pack_builder.h"
 #include "gow2_texture_pack_plan.h"
-#include "gow2_update_check.h"
 #elif defined(__ANDROID__)
 #include <sys/system_properties.h>
+#endif
+#if !defined(__ANDROID__)
+#include "gow2_update_check.h"
 #endif
 
 #ifndef GOW2_VERSION
@@ -215,7 +217,7 @@ std::string HostStatus() {
   return HostResultText(*last);
 }
 
-#ifdef _WIN32
+#if !defined(__ANDROID__)
 std::string UpdateStatus() {
   const auto snapshot = update::GetSnapshot();
   if (update::IsNewer(snapshot.release.tag, update::CurrentVersion()))
@@ -224,7 +226,9 @@ std::string UpdateStatus() {
   if (!snapshot.checked) return Localized("Not checked yet", "Sin comprobar todavía");
   return Localized("Up to date (v", "Al día (v") + update::CurrentVersion() + ")";
 }
+#endif
 
+#ifdef _WIN32
 std::string TextureBuildInfo() {
   const auto scale = texture_pack_plan::BuildScale(rex::cvar::Query<int32_t>("gow2_texture_build_scale"));
   const bool bc7 = rex::cvar::Query<std::string>("gow2_texture_build_quality") == "bc7";
@@ -382,9 +386,11 @@ std::string CvarValues::Get(std::string_view id) const {
   if (id == "coop_check") return CoopCheck();
   if (id == "host_status") return HostStatus();
 #ifdef _WIN32
-  if (id == "update_status") return UpdateStatus();
   if (id == "texture_build_info") return TextureBuildInfo();
   if (id == "texture_build_status") return TextureBuildStatus();
+#endif
+#if !defined(__ANDROID__)
+  if (id == "update_status") return UpdateStatus();
 #endif
   if (id == "save_dir_effective") return Utf8Path(paths_.user_data_root);
   if (id == "config_path") return Utf8Path(paths_.config_path);
