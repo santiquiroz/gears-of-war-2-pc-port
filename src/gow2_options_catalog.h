@@ -31,7 +31,13 @@ enum class Kind : uint8_t {
 
 enum class Apply : uint8_t { kNow, kNextLevel, kRestart };
 
-enum PlatformMask : uint8_t { kWindows = 1, kAndroid = 2, kAllPlatforms = 3 };
+enum PlatformMask : uint8_t {
+  kWindows = 1,
+  kAndroid = 2,
+  kLinux = 4,
+  kDesktop = kWindows | kLinux,
+  kAllPlatforms = kWindows | kAndroid | kLinux
+};
 
 // What the running game offers; rows that need something missing are hidden.
 enum class Need : uint8_t {

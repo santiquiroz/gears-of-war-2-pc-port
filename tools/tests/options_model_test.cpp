@@ -224,6 +224,28 @@ void TestUpscalerVisibility() {
   Expect(IsVisible(*dlss, values, context), "DLSS upscaler visible with DLSS");
 }
 
+void TestLinuxCatalogVisibility() {
+  FakeValues values;
+  Context context;
+  context.platform = kLinux;
+  context.touch = true;
+  context.fidelityfx = true;
+  values.current["window_mode"] = "windowed";
+
+  for (const auto id : {"window_mode", "window_size", "restart_game", "update_download",
+                        "present_effect_android"}) {
+    const auto* setting = FindSetting(id);
+    Expect(setting != nullptr, std::string("Linux-visible row exists: ") + id);
+    if (setting) Expect(IsVisible(*setting, values, context), std::string("visible on Linux: ") + id);
+  }
+  for (const auto id : {"gpu_backend", "present_effect", "upscaler", "gow2_touch",
+                        "present_android_frame_rate"}) {
+    const auto* setting = FindSetting(id);
+    Expect(setting != nullptr, std::string("Linux-hidden row exists: ") + id);
+    if (setting) Expect(!IsVisible(*setting, values, context), std::string("hidden on Linux: ") + id);
+  }
+}
+
 void TestTabAndPageFiltering() {
   Fixture f;
   const auto tabs = VisibleTabs(f.catalog, f.values, f.context);
@@ -796,6 +818,7 @@ int main() {
   TestVisibility();
   TestDisabledRows();
   TestUpscalerVisibility();
+  TestLinuxCatalogVisibility();
   TestTabAndPageFiltering();
   TestStepping();
   TestFormatting();
