@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 #include "gow2_update_check.h"
+#include "gow2_process.h"
 
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
-#elif defined(__linux__)
-#include <cerrno>
-#include <cstring>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #endif
 
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
-#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,10 +24,6 @@
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
-
-#if defined(__linux__) && !defined(__ANDROID__)
-extern char** environ;
-#endif
 
 REXCVAR_DEFINE_BOOL(gow2_update_check, true, "UI", "Check GitHub for a new PC release at most twice a day");
 
@@ -109,144 +99,19 @@ std::string FetchLatestJson() {
   return ReadResponse(request.get());
 }
 #elif defined(__linux__)
-class CurlPipe {
- public:
-  CurlPipe() {
-    if (pipe(descriptors_) != 0)
-      throw std::runtime_error("cannot create curl pipe: " + std::string(std::strerror(errno)));
-  }
-
-  ~CurlPipe() {
-    CloseRead();
-    CloseWrite();
-  }
-
-  int ReadEnd() const { return descriptors_[0]; }
-  int WriteEnd() const { return descriptors_[1]; }
-
-  void CloseRead() { CloseDescriptor(&descriptors_[0]); }
-  void CloseWrite() { CloseDescriptor(&descriptors_[1]); }
-
- private:
-  static void CloseDescriptor(int* descriptor) {
-    if (*descriptor < 0) return;
-    close(*descriptor);
-    *descriptor = -1;
-  }
-
-  int descriptors_[2] = {-1, -1};
-};
-
-int ConfigureCurlFileActions(posix_spawn_file_actions_t* actions, const CurlPipe& output_pipe) {
-  int error = posix_spawn_file_actions_addclose(actions, output_pipe.ReadEnd());
-  if (error == 0) error = posix_spawn_file_actions_adddup2(actions, output_pipe.WriteEnd(), STDOUT_FILENO);
-  if (error == 0) error = posix_spawn_file_actions_addclose(actions, output_pipe.WriteEnd());
-  return error;
-}
-
-class CurlFileActions {
- public:
-  explicit CurlFileActions(const CurlPipe& output_pipe) {
-    int error = posix_spawn_file_actions_init(&actions_);
-    if (error != 0) throw ConfigurationError(error);
-    initialized_ = true;
-    error = ConfigureCurlFileActions(&actions_, output_pipe);
-    if (error == 0) return;
-    posix_spawn_file_actions_destroy(&actions_);
-    initialized_ = false;
-    throw ConfigurationError(error);
-  }
-
-  ~CurlFileActions() {
-    if (initialized_) posix_spawn_file_actions_destroy(&actions_);
-  }
-
-  posix_spawn_file_actions_t* Get() { return &actions_; }
-
- private:
-  static std::runtime_error ConfigurationError(int error) {
-    return std::runtime_error("cannot configure curl pipe: " + std::string(std::strerror(error)));
-  }
-
-  posix_spawn_file_actions_t actions_{};
-  bool initialized_ = false;
-};
-
-std::vector<std::string> CurlArguments() {
-  return {"curl", "-fsS", "--proto", "=https", "--max-time", "8", "--max-filesize", "2097152",
-          "-H", "Accept: application/vnd.github+json", "-A", "gow2-recomp/" + CurrentVersion(),
-          "https://api.github.com/repos/santiquiroz/gears-of-war-2-pc-port/releases/latest"};
-}
-
-pid_t SpawnCurl(CurlFileActions* actions, const std::vector<std::string>& arguments) {
-  std::vector<char*> argv;
-  argv.reserve(arguments.size() + 1);
-  for (const std::string& argument : arguments) argv.push_back(const_cast<char*>(argument.c_str()));
-  argv.push_back(nullptr);
-  pid_t child = -1;
-  const int error = posix_spawnp(&child, "curl", actions->Get(), nullptr, argv.data(), environ);
-  if (error != 0) throw std::runtime_error("curl not found");
-  return child;
-}
-
-struct CurlReadResult {
-  std::string response;
-  std::string error;
-  bool too_large = false;
-};
-
-CurlReadResult ReadCurlResponse(int output_fd) {
-  CurlReadResult result;
-  std::array<char, 8192> buffer;
-  for (;;) {
-    const size_t remaining = kMaxResponse + 1 - result.response.size();
-    const size_t amount = std::min(buffer.size(), remaining);
-    const ssize_t count = read(output_fd, buffer.data(), amount);
-    if (count == 0) break;
-    if (count < 0) {
-      if (errno == EINTR) continue;
-      result.error = std::strerror(errno);
-      break;
-    }
-    result.response.append(buffer.data(), static_cast<size_t>(count));
-    if (result.response.size() > kMaxResponse) {
-      result.too_large = true;
-      break;
-    }
-  }
-  return result;
-}
-
-int WaitForCurl(pid_t child) {
-  int status = 0;
-  pid_t waited;
-  do {
-    waited = waitpid(child, &status, 0);
-  } while (waited < 0 && errno == EINTR);
-  if (waited < 0) throw std::runtime_error("waitpid failed: " + std::string(std::strerror(errno)));
-  return status;
-}
-
-void RequireSuccessfulCurlExit(int status) {
-  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return;
-  const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-  throw std::runtime_error("curl exited " + std::to_string(exit_code));
-}
-
 std::string FetchLatestJson() {
-  CurlPipe output_pipe;
-  CurlFileActions actions(output_pipe);
-  const std::vector<std::string> arguments = CurlArguments();
-  const pid_t child = SpawnCurl(&actions, arguments);
-  output_pipe.CloseWrite();
-  const CurlReadResult result = ReadCurlResponse(output_pipe.ReadEnd());
-  output_pipe.CloseRead();
-  const int status = WaitForCurl(child);
-  if (result.too_large) throw std::runtime_error("response too large");
+  const process::Result result = process::Run(
+      {"curl", "-fsS", "--proto", "=https", "--max-time", "8", "--max-filesize", "2097152", "-H",
+       "Accept: application/vnd.github+json", "-A", "gow2-recomp/" + CurrentVersion(),
+       "https://api.github.com/repos/santiquiroz/gears-of-war-2-pc-port/releases/latest"},
+      kMaxResponse + 1);
+  if (!result.started) throw std::runtime_error("curl not found");
+  if (result.output_truncated || result.output.size() > kMaxResponse)
+    throw std::runtime_error("response too large");
   if (!result.error.empty())
     throw std::runtime_error("curl response read failed: " + result.error);
-  RequireSuccessfulCurlExit(status);
-  return result.response;
+  if (result.exit_code != 0) throw std::runtime_error("curl exited " + std::to_string(result.exit_code));
+  return result.output;
 }
 #endif
 

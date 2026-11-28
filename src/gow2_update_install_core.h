@@ -19,11 +19,15 @@ struct Replacement {
   std::filesystem::path staged;
   std::filesystem::path target;
   std::filesystem::path backup;
-  std::string plan_error;
 };
 
-std::vector<Replacement> PlanApply(const std::filesystem::path& payload_root,
-                                   const std::filesystem::path& install_dir);
+struct Plan {
+  std::vector<Replacement> items;
+  std::string error;
+};
+
+Plan PlanApply(const std::filesystem::path& payload_root,
+               const std::filesystem::path& install_dir);
 
 struct ApplyResult {
   bool ok = false;
@@ -31,7 +35,7 @@ struct ApplyResult {
   std::vector<std::filesystem::path> backups;
 };
 
-ApplyResult ApplyPlan(const std::vector<Replacement>& plan);
+ApplyResult ApplyPlan(const Plan& plan);
 
 bool WriteCleanupList(const std::filesystem::path& list_file,
                       const std::vector<std::filesystem::path>& backups);

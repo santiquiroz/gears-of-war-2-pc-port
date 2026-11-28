@@ -19,6 +19,7 @@
 
 #include "gow2_gpu_pick.h"
 #include "gow2_host_line.h"
+#include "gow2_process.h"
 #include "gow2_restart_args.h"
 
 #ifdef _WIN32
@@ -37,13 +38,10 @@
 #elif defined(__linux__) && !defined(__ANDROID__)
 #include <cerrno>
 #include <chrono>
-#include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <iterator>
 #include <signal.h>
 #include <spawn.h>
-#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #endif
@@ -552,73 +550,11 @@ std::optional<std::string> XdgOpenTargetUtf8(const std::wstring& target) {
   }
 }
 
-int RedirectXdgOpenStreams(posix_spawn_file_actions_t* actions) {
-  int error = posix_spawn_file_actions_addopen(actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-  if (error == 0)
-    error = posix_spawn_file_actions_addopen(actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
-  if (error == 0)
-    error = posix_spawn_file_actions_addopen(actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-  return error;
-}
-
-int SpawnXdgOpenWithActions(const std::string& target, posix_spawn_file_actions_t* actions,
-                            pid_t* child) {
-  char* args[] = {const_cast<char*>("xdg-open"), const_cast<char*>(target.c_str()), nullptr};
-  return posix_spawnp(child, "xdg-open", actions, nullptr, args, environ);
-}
-
-std::optional<pid_t> SpawnXdgOpen(const std::string& target) {
-  posix_spawn_file_actions_t actions;
-  int error = posix_spawn_file_actions_init(&actions);
-  pid_t child = -1;
-  if (error == 0) {
-    error = RedirectXdgOpenStreams(&actions);
-    if (error == 0) error = SpawnXdgOpenWithActions(target, &actions, &child);
-    posix_spawn_file_actions_destroy(&actions);
-  }
-  if (error != 0) {
-    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", std::strerror(error));
-    return std::nullopt;
-  }
-  return child;
-}
-
-void ReapXdgOpen(pid_t child) {
-  int status = 0;
-  pid_t result;
-  do {
-    result = waitpid(child, &status, 0);
-  } while (result < 0 && errno == EINTR);
-  if (result < 0) {
-    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", std::strerror(errno));
-  } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-    REXLOG_INFO("PCOPTIONS xdg-open failed: exit status {}", status);
-  }
-}
-
-void ReapXdgOpenAsync(pid_t child) {
-  std::thread reaper;
-  try {
-    reaper = std::thread(ReapXdgOpen, child);
-  } catch (const std::exception& error) {
-    ReapXdgOpen(child);
-    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", error.what());
-    return;
-  }
-  try {
-    reaper.detach();
-  } catch (const std::exception& error) {
-    reaper.join();
-    REXLOG_INFO("PCOPTIONS xdg-open failed: {}", error.what());
-  }
-}
-
 void OpenInLinuxShell(const std::wstring& target) {
   const std::optional<std::string> utf8 = XdgOpenTargetUtf8(target);
   if (!utf8) return;
-  const std::optional<pid_t> child = SpawnXdgOpen(*utf8);
-  if (!child) return;
-  ReapXdgOpenAsync(*child);
+  if (!process::StartDetached({"xdg-open", *utf8}))
+    REXLOG_INFO("PCOPTIONS xdg-open failed");
 }
 
 std::string ExecutablePath() {

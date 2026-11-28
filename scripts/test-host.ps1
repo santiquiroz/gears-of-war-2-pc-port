@@ -9,6 +9,7 @@
      gow2_options_model_test, gow2_options_input_test, gow2_options_values_test,
      gow2_options_actions_test, gow2_fps_cap_test, gow2_audio_volume_test,
      gow2_coalesced_text_test, gow2_keycaps_test, gow2_gpu_pick_test, gow2_frame_stats_test, gow2_update_check_test,
+     gow2_process_test,
      gow2_sha256_test, gow2_update_install_core_test, gow2_prompt_device_test, gow2_disc_install_test,
      gow2_key_names_test, gow2_voice_language_test, gow2_xex_identity_test, gow2_launcher_test,
      gow2_texture_packs_test and gow2_texture_pack_plan_test in
@@ -131,6 +132,7 @@ function Test-HostTargets([string]$build) {
         'gow2_options_input_test', 'gow2_options_values_test', 'gow2_options_actions_test',
         'gow2_fps_cap_test', 'gow2_audio_volume_test', 'gow2_coalesced_text_test', 'gow2_keycaps_test',
         'gow2_gpu_pick_test', 'gow2_widescreen_math_test', 'gow2_frame_stats_test', 'gow2_update_check_test',
+        'gow2_process_test',
         'gow2_sha256_test', 'gow2_update_install_core_test',
         'gow2_native_renderer_math_test', 'gow2_native_frontend_test', 'gow2_prompt_device_test',
         'gow2_disc_install_test', 'gow2_key_names_test', 'gow2_voice_language_test',

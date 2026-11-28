@@ -48,7 +48,9 @@ void TestReleaseFieldsAndAssets() {
     "assets":[
       {"name":"source.zip","browser_download_url":"wrong"},
       {"name":"game-win64.zip.sig","browser_download_url":"wrong"},
-      {"name":"game-win64.zip","nested":{"browser_download_url":"decoy"},"browser_download_url":"https:\/\/example.com\/game-win64.zip"},
+      {"name":"game-win64.zip","size":4294967296,
+       "nested":{"browser_download_url":"decoy"},
+       "browser_download_url":"https:\/\/example.com\/game-win64.zip"},
       {"name":"later-win64.zip","browser_download_url":"later"}
     ], "unused":[null,true,false,-1.25e+2,{"quoted":"} [ \""}]
   })");
@@ -58,6 +60,7 @@ void TestReleaseFieldsAndAssets() {
   Expect(release->html_url.starts_with("https://github.com/"), "release page is extracted");
   Expect(release->name == "Release \"ready\" \\ \xc3\xa9 \xf0\x9f\x9a\x80", "escapes and surrogate pairs decode to UTF-8");
   Expect(release->download_url == "https://example.com/game-win64.zip", "first exact Windows asset suffix is selected");
+  Expect(release->download_size == 4294967296, "64-bit selected asset size is extracted");
   Expect(release->checksum_url.empty(), "missing checksum sibling is empty");
   Expect(!release->prerelease && !release->draft, "release booleans are extracted");
   const auto minimal = ParseRelease(R"({"tag_name":"v1"})");
@@ -73,7 +76,8 @@ void TestReleaseFieldsAndAssets() {
 void TestPlatformAssetsAndChecksums() {
   constexpr std::string_view payload = R"({
     "tag_name":"v2", "assets":[
-      {"name":"game-linux-x86_64.tar.gz","browser_download_url":"https://example.com/game.tar.gz"},
+      {"name":"game-linux-x86_64.tar.gz","size":123456,
+       "browser_download_url":"https://example.com/game.tar.gz"},
       {"name":"game-linux-x86_64.tar.gz.sha256","browser_download_url":"https://example.com/game.tar.gz.sha256"},
       {"name":"game-win64.zip","browser_download_url":"https://example.com/game.zip"},
       {"name":"game-win64.zip.sha256","browser_download_url":"https://example.com/game.zip.sha256"}
@@ -84,6 +88,7 @@ void TestPlatformAssetsAndChecksums() {
          "Linux asset suffix selects tarball");
   Expect(linux && linux->checksum_url == "https://example.com/game.tar.gz.sha256",
          "Linux asset finds its checksum sibling");
+  Expect(linux && linux->download_size == 123456, "Linux selected asset size is extracted");
   const auto windows = ParseRelease(payload, "-win64.zip");
   Expect(windows && windows->download_url == "https://example.com/game.zip",
          "Windows asset suffix selects zip");
@@ -93,6 +98,7 @@ void TestPlatformAssetsAndChecksums() {
       R"({"tag_name":"v2","assets":[{"name":"game-linux-x86_64.tar.gz","browser_download_url":"download"}]})",
       "-linux-x86_64.tar.gz");
   Expect(no_checksum && no_checksum->checksum_url.empty(), "missing selected asset checksum is empty");
+  Expect(no_checksum && no_checksum->download_size == 0, "missing selected asset size defaults to zero");
 }
 
 void TestMalformedJson() {
@@ -138,7 +144,8 @@ void TestThrottleAndDismissal() {
 
 void TestCacheRoundTripAndFailedAttempt() {
   Cache cache{12345, {"v2", "https://example.com/\"quoted\"", "A\nrelease\t\\",
-                     "https://example.com/download", "https://example.com/download.sha256", false, false},
+                     "https://example.com/download", "https://example.com/download.sha256",
+                     false, false, std::numeric_limits<std::uint64_t>::max()},
               "v1.5", false};
   const auto saved = ParseCache(SerializeCache(cache));
   Expect(saved && saved->checked_at == 12345 && !saved->failed, "cache timestamp and successful status round-trip");
@@ -148,6 +155,8 @@ void TestCacheRoundTripAndFailedAttempt() {
   Expect(saved->release.html_url == cache.release.html_url && saved->release.download_url == cache.release.download_url,
          "cache retains release and asset URLs");
   Expect(saved->release.checksum_url == cache.release.checksum_url, "cache retains checksum URL");
+  Expect(saved->release.download_size == std::numeric_limits<std::uint64_t>::max(),
+         "cache retains the full 64-bit download size");
   Expect(saved->dismissed == "v1.5", "cache remembers dismissed release");
   cache.checked_at = 12346;
   cache.failed = true;
@@ -159,10 +168,13 @@ void TestCacheRoundTripAndFailedAttempt() {
   const auto old_cache = ParseCache(
       R"({"checked_at":12,"failed":false,"dismissed":"","release":{"tag_name":"v1","html_url":"page","name":"Old","download_url":"download","prerelease":false,"draft":false}})");
   Expect(old_cache && old_cache->release.checksum_url.empty(), "old cache without checksum remains readable");
+  Expect(old_cache && old_cache->release.download_size == 0, "old cache without download size defaults to zero");
   for (const auto invalid : {"{}", "[]", R"({"checked_at":-1,"release":{}})",
       R"({"checked_at":1.5,"release":{}})", R"({"checked_at":9223372036854775808,"release":{}})",
       R"({"checked_at":"123","release":{}})", R"({"checked_at":1,"release":{},"failed":1})",
-      R"({"checked_at":1,"release":{"tag_name":null}})"}) {
+      R"({"checked_at":1,"release":{"tag_name":null}})",
+      R"({"checked_at":1,"release":{"tag_name":"v1","download_size":18446744073709551616}})",
+      R"({"checked_at":1,"release":{"tag_name":"v1","download_size":"12"}})"}) {
     Expect(!ParseCache(invalid), "corrupt cache is rejected");
   }
 }

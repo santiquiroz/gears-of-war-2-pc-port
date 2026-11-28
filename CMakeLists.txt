@@ -20,6 +20,7 @@ set(GOW2_SOURCES
     src/gow2_sha_table.cpp
     src/gow2_sha256.cpp
     src/gow2_update_install_core.cpp
+    src/gow2_process.cpp
     src/gow2_gpu_pick.cpp
     src/gow2_vulkan_probe.cpp
     src/gow2_native_frontend.cpp
@@ -230,6 +231,9 @@ add_executable(gow2_fps_cap_test EXCLUDE_FROM_ALL tools/tests/fps_cap_test.cpp)
 add_executable(gow2_gpu_pick_test EXCLUDE_FROM_ALL tools/tests/gpu_pick_test.cpp)
 add_executable(gow2_frame_stats_test EXCLUDE_FROM_ALL tools/tests/frame_stats_test.cpp)
 add_executable(gow2_update_check_test EXCLUDE_FROM_ALL tools/tests/update_check_test.cpp)
+add_executable(gow2_process_test EXCLUDE_FROM_ALL
+    tools/tests/process_test.cpp src/gow2_process.cpp)
+target_include_directories(gow2_process_test PRIVATE src)
 add_executable(gow2_sha256_test EXCLUDE_FROM_ALL tools/tests/sha256_test.cpp src/gow2_sha256.cpp)
 add_executable(gow2_update_install_core_test EXCLUDE_FROM_ALL
     tools/tests/update_install_core_test.cpp src/gow2_update_install_core.cpp)

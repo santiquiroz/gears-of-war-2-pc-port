@@ -87,20 +87,23 @@ void TestPlanApply(const fs::path& root) {
   WriteFile(payload / "nested" / "gow2.toml", "player config");
   WriteFile(payload / "gow2_game_path.txt", "player path");
   const auto plan = update::PlanApply(payload, install);
-  Expect(plan.size() == 2, "plan skips player files");
-  if (plan.size() == 2) {
-    Expect(plan[0].staged.generic_string() == (payload / "a.dll").generic_string(), "plan sorted first file");
-    Expect(plan[1].staged.generic_string() == (payload / "z" / "second.dll").generic_string(),
+  Expect(plan.items.size() == 2, "plan skips player files");
+  if (plan.items.size() == 2) {
+    Expect(plan.items[0].staged.generic_string() == (payload / "a.dll").generic_string(), "plan sorted first file");
+    Expect(plan.items[1].staged.generic_string() == (payload / "z" / "second.dll").generic_string(),
            "plan sorted nested file");
-    Expect(plan[0].target == install / "a.dll", "plan target uses relative path");
-    Expect(plan[0].backup == fs::path((install / "a.dll").string() + ".gow2old"),
+    Expect(plan.items[0].target == install / "a.dll", "plan target uses relative path");
+    Expect(plan.items[0].backup == fs::path((install / "a.dll").string() + ".gow2old"),
            "backup suffix appended to filename");
   }
 
+  WriteFile(install / "unchanged.dll", "keep me");
   const auto failed_plan = update::PlanApply(payload / "missing", install);
   const auto failed_result = update::ApplyPlan(failed_plan);
-  Expect(!failed_result.ok && !failed_result.error.empty(),
+  Expect(failed_plan.items.empty() && !failed_plan.error.empty(), "payload scan failure uses plan error");
+  Expect(!failed_result.ok && failed_result.error == failed_plan.error,
          "payload scan failure is not reported as an empty successful apply");
+  Expect(ReadFile(install / "unchanged.dll") == "keep me", "failed plan does not touch install files");
 
   const fs::path empty_payload = root / "empty-payload";
   std::error_code error;

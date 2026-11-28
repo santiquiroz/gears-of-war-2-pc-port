@@ -17,6 +17,7 @@ struct Release {
   std::string tag, html_url, name, download_url, checksum_url;
   bool prerelease = false;
   bool draft = false;
+  uint64_t download_size = 0;
 };
 
 #ifdef _WIN32
@@ -245,6 +246,18 @@ inline bool BoolField(const Json& object, std::string_view key, bool& result) {
   return true;
 }
 
+inline bool UInt64Field(const Json& object, std::string_view key, uint64_t& result) {
+  const auto it = object.fields.find(key);
+  if (it == object.fields.end()) return true;
+  if (it->second.kind != Json::Number) return false;
+  uint64_t value = 0;
+  const auto& text = it->second.text;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (error != std::errc{} || end != text.data() + text.size()) return false;
+  result = value;
+  return true;
+}
+
 inline std::optional<Release> ReleaseFields(const Json& object) {
   if (object.kind != Json::Object) return std::nullopt;
   Release release;
@@ -318,8 +331,11 @@ inline std::optional<Release> ParseRelease(std::string_view input, std::string_v
     const auto name = detail::Field(asset, "name", detail::Json::String);
     const auto url = detail::Field(asset, "browser_download_url", detail::Json::String);
     if (!name || !url || !name->text.ends_with(asset_suffix)) continue;
+    uint64_t download_size = 0;
+    if (!detail::UInt64Field(asset, "size", download_size)) continue;
     selected_asset = name->text;
     release->download_url = url->text;
+    release->download_size = download_size;
     break;
   }
   if (!selected_asset.empty()) {
@@ -367,6 +383,7 @@ inline std::string SerializeCache(const Cache& cache) {
          ",\"dismissed\":" + Quote(cache.dismissed) + ",\"release\":{\"tag_name\":" + Quote(release.tag) +
          ",\"html_url\":" + Quote(release.html_url) + ",\"name\":" + Quote(release.name) +
          ",\"download_url\":" + Quote(release.download_url) + ",\"checksum_url\":" + Quote(release.checksum_url) +
+         ",\"download_size\":" + std::to_string(release.download_size) +
          ",\"prerelease\":" + (release.prerelease ? "true" : "false") +
          ",\"draft\":" + (release.draft ? "true" : "false") + "}}";
 }
@@ -385,6 +402,7 @@ inline std::optional<Cache> ParseCache(std::string_view input) {
   cache.release = *fields;
   if (!detail::StringField(*release, "download_url", cache.release.download_url)) return std::nullopt;
   if (!detail::StringField(*release, "checksum_url", cache.release.checksum_url)) return std::nullopt;
+  if (!detail::UInt64Field(*release, "download_size", cache.release.download_size)) return std::nullopt;
   if (!detail::StringField(*object, "dismissed", cache.dismissed)) return std::nullopt;
   if (!detail::BoolField(*object, "failed", cache.failed)) return std::nullopt;
   return cache;

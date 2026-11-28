@@ -123,10 +123,8 @@ std::filesystem::path BackupPath(const std::filesystem::path& target) {
   return backup;
 }
 
-std::vector<Replacement> FailedPlan(std::string error) {
-  Replacement failure;
-  failure.plan_error = std::move(error);
-  return {std::move(failure)};
+Plan FailedPlan(std::string error) {
+  return {{}, std::move(error)};
 }
 
 std::optional<std::filesystem::path> UniqueCleanupPath(const std::filesystem::path& list_file,
@@ -300,8 +298,8 @@ std::filesystem::path FindPayloadRoot(const std::filesystem::path& extracted) {
   }
 }
 
-std::vector<Replacement> PlanApply(const std::filesystem::path& payload_root,
-                                   const std::filesystem::path& install_dir) {
+Plan PlanApply(const std::filesystem::path& payload_root,
+               const std::filesystem::path& install_dir) {
   struct PlannedFile {
     std::string relative;
     Replacement replacement;
@@ -333,27 +331,26 @@ std::vector<Replacement> PlanApply(const std::filesystem::path& payload_root,
     std::sort(files.begin(), files.end(), [](const PlannedFile& left, const PlannedFile& right) {
       return left.relative < right.relative;
     });
-    std::vector<Replacement> plan;
-    plan.reserve(files.size());
-    for (auto& file : files) plan.push_back(std::move(file.replacement));
+    Plan plan;
+    plan.items.reserve(files.size());
+    for (auto& file : files) plan.items.push_back(std::move(file.replacement));
     return plan;
   } catch (...) {
     return FailedPlan("payload scan failed");
   }
 }
 
-ApplyResult ApplyPlan(const std::vector<Replacement>& plan) {
+ApplyResult ApplyPlan(const Plan& plan) {
   ApplyResult result;
+  if (!plan.error.empty()) {
+    result.error = plan.error;
+    return result;
+  }
   std::vector<AppliedReplacement> applied;
   try {
-    applied.reserve(plan.size());
-    result.backups.reserve(plan.size());
-    for (const Replacement& replacement : plan) {
-      if (!replacement.plan_error.empty()) {
-        result.error = replacement.plan_error;
-        ClearFailedResult(&result, applied);
-        return result;
-      }
+    applied.reserve(plan.items.size());
+    result.backups.reserve(plan.items.size());
+    for (const Replacement& replacement : plan.items) {
       applied.push_back({&replacement, false, false});
       AppliedReplacement& current = applied.back();
       std::error_code error;
