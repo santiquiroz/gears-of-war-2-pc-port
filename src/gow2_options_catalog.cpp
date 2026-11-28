@@ -1659,6 +1659,25 @@ void AddSystem(std::vector<Setting>& out) {
       .help_en = "Opens the latest release page in your browser. In fullscreen the game minimizes so you can see it.",
       .help_es = "Abre la página de la última versión en el navegador. En pantalla completa el juego se minimiza para que la veas."});
   out.push_back(Setting{
+      .id = "update_install",
+      .tab = Tab::kSystem,
+      .kind = Kind::kAction,
+      .platforms = kDesktop,
+      .label_en = "Update and restart",
+      .label_es = "Actualizar y reiniciar",
+      .help_en = "Downloads the new version, checks it and replaces the game files in this folder, then restarts. Your settings, saves, mods and game data stay.",
+      .help_es = "Descarga la versión nueva, la verifica y reemplaza los archivos del juego en esta carpeta, y reinicia. Tus ajustes, partidas, mods y datos del juego se quedan."});
+  out.push_back(Setting{
+      .id = "gow2_update_auto_install",
+      .tab = Tab::kSystem,
+      .kind = Kind::kToggle,
+      .apply = Apply::kNow,
+      .platforms = kDesktop,
+      .label_en = "Install updates automatically",
+      .label_es = "Instalar actualizaciones automáticamente",
+      .help_en = "Downloads new versions in the background and installs them the next time the game starts.",
+      .help_es = "Descarga las versiones nuevas en segundo plano y las instala la próxima vez que abras el juego."});
+  out.push_back(Setting{
       .id = "update_check_now",
       .tab = Tab::kSystem,
       .kind = Kind::kAction,

@@ -220,6 +220,56 @@ std::vector<std::filesystem::path> RemoveListedBackups(
 
 }  // namespace
 
+bool IsHttpsUrl(std::string_view url) {
+  constexpr std::string_view prefix = "https://";
+  if (!url.starts_with(prefix)) return false;
+  url.remove_prefix(prefix.size());
+  const size_t end = url.find_first_of("/?#");
+  std::string_view authority = url.substr(0, end);
+  if (authority.empty()) return false;
+  for (const char value : authority) {
+    if (value <= ' ' || value == '\\') return false;
+  }
+  const size_t user = authority.rfind('@');
+  if (user != std::string_view::npos) authority.remove_prefix(user + 1);
+  if (authority.empty()) return false;
+  if (authority.front() == '[') {
+    const size_t close = authority.find(']');
+    return close > 1 && close != std::string_view::npos &&
+        (close + 1 == authority.size() || authority[close + 1] == ':');
+  }
+  const size_t port = authority.find(':');
+  return !authority.substr(0, port).empty();
+}
+
+std::optional<std::string> ArchiveNameFromUrl(std::string_view url) {
+  if (!IsHttpsUrl(url)) return std::nullopt;
+  url.remove_prefix(std::string_view("https://").size());
+  const size_t path = url.find_first_of("/?#");
+  if (path == std::string_view::npos || url[path] != '/') return std::nullopt;
+  const size_t suffix = url.find_first_of("?#", path);
+  if (suffix != std::string_view::npos) url = url.substr(0, suffix);
+  const size_t slash = url.rfind('/');
+  const std::string_view name = url.substr(slash + 1);
+  if (name.empty() || name == "." || name == ".." ||
+      name.find_first_of("\\:") != std::string_view::npos) {
+    return std::nullopt;
+  }
+  return std::string(name);
+}
+
+int DownloadPercent(uint64_t have, uint64_t total) {
+  if (total == 0) return -1;
+  if (have >= total) return 100;
+  const uint64_t whole = total / 100;
+  const uint64_t remainder = total % 100;
+  for (int percent = 99; percent > 0; --percent) {
+    const uint64_t threshold = whole * percent + (remainder * percent + 99) / 100;
+    if (have >= threshold) return percent;
+  }
+  return 0;
+}
+
 std::optional<std::string> ParseChecksum(std::string_view sidecar, std::string_view archive_name) {
   try {
     if (sidecar.ends_with("\r\n")) {

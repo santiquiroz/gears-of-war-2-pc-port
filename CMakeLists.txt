@@ -98,7 +98,8 @@ set(GOW2_SOURCES
 # The .rc names the .ico by path, so OBJECT_DEPENDS rebuilds the resource when the icon changes.
 if(WIN32)
     enable_language(RC)
-    list(APPEND GOW2_SOURCES src/gow2.rc src/gow2_update_check.cpp src/gow2_disc_install.cpp
+    list(APPEND GOW2_SOURCES src/gow2.rc src/gow2_update_check.cpp
+        src/gow2_update_install.cpp src/gow2_disc_install.cpp
         src/gow2_texture_pack_builder.cpp)
     set_source_files_properties(src/gow2.rc PROPERTIES
         OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/gow2.ico)
@@ -107,7 +108,8 @@ elseif(UNIX AND NOT APPLE)
     # librexruntime.so like Android, so it takes the Android stand-ins (android/gamelibs).
     list(REMOVE_ITEM GOW2_SOURCES src/gow2_xam_input_guard.cpp src/gow2_utf8_guard.cpp
         src/gow2_crash_watch.cpp)
-    list(APPEND GOW2_SOURCES android/gamelibs/gow2_android_glue.cpp src/gow2_update_check.cpp)
+    list(APPEND GOW2_SOURCES android/gamelibs/gow2_android_glue.cpp src/gow2_update_check.cpp
+        src/gow2_update_install.cpp)
 endif()
 
 add_executable(gow2 WIN32 ${GOW2_SOURCES})

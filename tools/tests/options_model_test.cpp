@@ -233,6 +233,7 @@ void TestLinuxCatalogVisibility() {
   values.current["window_mode"] = "windowed";
 
   for (const auto id : {"window_mode", "window_size", "restart_game", "update_download",
+                        "update_install", "gow2_update_auto_install",
                         "present_effect_android"}) {
     const auto* setting = FindSetting(id);
     Expect(setting != nullptr, std::string("Linux-visible row exists: ") + id);
@@ -243,6 +244,23 @@ void TestLinuxCatalogVisibility() {
     const auto* setting = FindSetting(id);
     Expect(setting != nullptr, std::string("Linux-hidden row exists: ") + id);
     if (setting) Expect(!IsVisible(*setting, values, context), std::string("hidden on Linux: ") + id);
+  }
+}
+
+void TestDesktopUpdateRows() {
+  Context context;
+  FakeValues values;
+  for (const auto id : {"update_install", "gow2_update_auto_install"}) {
+    const auto* setting = FindSetting(id);
+    Expect(setting != nullptr, std::string("desktop update row exists: ") + id);
+    if (!setting) continue;
+    Expect(setting->platforms == kDesktop && setting->tab == Tab::kSystem &&
+               setting->page == Page::kMain,
+           std::string("update row is desktop-only on System: ") + id);
+    context.platform = kWindows;
+    Expect(IsVisible(*setting, values, context), std::string("update row visible on Windows: ") + id);
+    context.platform = kAndroid;
+    Expect(!IsVisible(*setting, values, context), std::string("update row hidden on Android: ") + id);
   }
 }
 
@@ -819,6 +837,7 @@ int main() {
   TestDisabledRows();
   TestUpscalerVisibility();
   TestLinuxCatalogVisibility();
+  TestDesktopUpdateRows();
   TestTabAndPageFiltering();
   TestStepping();
   TestFormatting();

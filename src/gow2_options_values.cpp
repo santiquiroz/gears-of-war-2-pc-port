@@ -30,6 +30,7 @@
 #endif
 #if !defined(__ANDROID__)
 #include "gow2_update_check.h"
+#include "gow2_update_install.h"
 #endif
 
 #ifndef GOW2_VERSION
@@ -219,6 +220,8 @@ std::string HostStatus() {
 
 #if !defined(__ANDROID__)
 std::string UpdateStatus() {
+  const std::string install_status = UpdateInstallStatus(update_install::GetInstallSnapshot());
+  if (!install_status.empty()) return install_status;
   const auto snapshot = update::GetSnapshot();
   if (update::IsNewer(snapshot.release.tag, update::CurrentVersion()))
     return snapshot.release.tag + Localized(" available", " disponible");
@@ -374,6 +377,30 @@ Lang SystemLang() {
 }
 
 }  // namespace
+
+#if !defined(__ANDROID__)
+std::string UpdateInstallStatus(const update_install::InstallSnapshot& snapshot) {
+  switch (snapshot.state) {
+    case update_install::InstallState::kDownloading: {
+      std::string status = Localized("Downloading ", "Descargando ") + snapshot.tag;
+      if (snapshot.percent >= 0) status += " (" + std::to_string(snapshot.percent) + "%)";
+      return status;
+    }
+    case update_install::InstallState::kVerifying:
+      return Localized("Verifying ", "Verificando ") + snapshot.tag + "…";
+    case update_install::InstallState::kExtracting:
+      return Localized("Unpacking ", "Descomprimiendo ") + snapshot.tag + "…";
+    case update_install::InstallState::kReady:
+      return snapshot.tag + Localized(" ready: installs on the next start",
+                                      " lista: se instala al próximo arranque");
+    case update_install::InstallState::kFailed:
+      return Localized("Update failed: ", "Error al actualizar: ") + snapshot.error;
+    case update_install::InstallState::kIdle:
+      return {};
+  }
+  return {};
+}
+#endif
 
 CvarValues::CvarValues(GamePaths paths) : paths_(std::move(paths)) {}
 

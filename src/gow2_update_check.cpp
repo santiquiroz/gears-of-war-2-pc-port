@@ -3,6 +3,11 @@
 #include "gow2_update_check.h"
 #include "gow2_process.h"
 
+#include <rex/cvar.h>
+
+REXCVAR_DEFINE_STRING(gow2_update_feed_file, "", "UI",
+                     "Testing: read the latest-release JSON from this file instead of GitHub");
+
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
 #ifdef _WIN32
 #include <windows.h>
@@ -22,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include <rex/cvar.h>
 #include <rex/logging.h>
 
 REXCVAR_DEFINE_BOOL(gow2_update_check, true, "UI", "Check GitHub for a new PC release at most twice a day");
@@ -33,6 +37,19 @@ namespace {
 constexpr size_t kMaxResponse = 2 * 1024 * 1024;
 
 bool Enabled() { return rex::cvar::Query<bool>("gow2_update_check"); }
+
+std::optional<std::string> FetchFeedFile() {
+  const std::string path = rex::cvar::Query<std::string>("gow2_update_feed_file");
+  if (path.empty()) return std::nullopt;
+  std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
+  if (!file) throw std::runtime_error("cannot read update feed file");
+  std::string content(kMaxResponse + 1, '\0');
+  file.read(content.data(), static_cast<std::streamsize>(content.size()));
+  content.resize(static_cast<size_t>(file.gcount()));
+  if (file.bad()) throw std::runtime_error("cannot read update feed file");
+  if (content.size() > kMaxResponse) throw std::runtime_error("response too large");
+  return content;
+}
 
 int64_t NowSeconds() {
   return std::chrono::duration_cast<std::chrono::seconds>(
@@ -75,6 +92,7 @@ std::string ReadResponse(HINTERNET request) {
 }
 
 std::string FetchLatestJson() {
+  if (auto content = FetchFeedFile()) return std::move(*content);
   const auto agent = ToWide("gow2-recomp/" + CurrentVersion());
   Internet session(WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
@@ -100,6 +118,7 @@ std::string FetchLatestJson() {
 }
 #elif defined(__linux__)
 std::string FetchLatestJson() {
+  if (auto content = FetchFeedFile()) return std::move(*content);
   const process::Result result = process::Run(
       {"curl", "-fsS", "--proto", "=https", "--max-time", "8", "--max-filesize", "2097152", "-H",
        "Accept: application/vnd.github+json", "-A", "gow2-recomp/" + CurrentVersion(),

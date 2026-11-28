@@ -566,6 +566,9 @@ std::string ExecutablePath() {
       std::string path(buffer.data(), static_cast<size_t>(length));
       constexpr std::string_view deleted = " (deleted)";
       if (path.ends_with(deleted)) path.resize(path.size() - deleted.size());
+      // After an in-place update the running file was renamed; the new one sits at the old name.
+      constexpr std::string_view backup = ".gow2old";
+      if (path.ends_with(backup)) path.resize(path.size() - backup.size());
       return path;
     }
     buffer.resize(buffer.size() * 2);

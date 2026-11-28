@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Santiago Quiroz Upegui and the gow2-recomp contributors
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -10,6 +11,9 @@
 
 namespace rex::glue::update_install {
 
+bool IsHttpsUrl(std::string_view url);
+std::optional<std::string> ArchiveNameFromUrl(std::string_view url);
+int DownloadPercent(uint64_t have, uint64_t total);
 std::optional<std::string> ParseChecksum(std::string_view sidecar, std::string_view archive_name);
 bool SafeRelativePath(std::string_view relative);
 std::string StageFolderName(std::string_view tag);

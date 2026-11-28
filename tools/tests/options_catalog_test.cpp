@@ -241,7 +241,7 @@ void TestCounts() {
   Expect(CountTab(options::Tab::kMultiplayer) == 17, "multiplayer has 17 rows including friendly fire, Go to player 1 and its key and controller rows, and players 3+ dying ends the game");
   Expect(CountTab(options::Tab::kSaves) == 6, "saves has 6 rows including all chapters unlocked");
   Expect(CountTab(options::Tab::kAudio) == 3, "audio has 3 rows");
-  Expect(CountTab(options::Tab::kSystem) == 19, "system has 19 rows including skip intro videos, the skip hint, show options at start and F12 screenshots");
+  Expect(CountTab(options::Tab::kSystem) == 21, "system has 21 rows including update installation, skip intro videos, the skip hint, show options at start and F12 screenshots");
   Expect(CountPage(options::Page::kKeybinds) == 24, "keybinds page has 24 rows");
   Expect(CountPage(options::Page::kPadButtons) == 14, "controller buttons page has 14 rows");
   Expect(CountPage(options::Page::kHost) == 7, "host page has 7 rows");
@@ -380,8 +380,8 @@ void TestSplitScreenRows() {
 }
 
 void TestDesktopUpdateRows() {
-  for (const auto id : {"update_status", "gow2_update_check", "update_download",
-                        "update_check_now", "update_dismiss"}) {
+  for (const auto id : {"update_status", "gow2_update_check", "update_download", "update_install",
+                        "gow2_update_auto_install", "update_check_now", "update_dismiss"}) {
     const auto* setting = options::FindSetting(id);
     Expect(setting != nullptr, std::string("update row exists: ") + id);
     if (!setting) continue;
@@ -389,6 +389,13 @@ void TestDesktopUpdateRows() {
     Expect(setting->tab == options::Tab::kSystem && setting->page == options::Page::kMain,
            "update rows appear on the main System tab");
   }
+  const auto* install = options::FindSetting("update_install");
+  const auto* automatic = options::FindSetting("gow2_update_auto_install");
+  Expect(install && install->kind == options::Kind::kAction,
+         "update installation is an action");
+  Expect(automatic && automatic->kind == options::Kind::kToggle &&
+             automatic->apply == options::Apply::kNow,
+         "automatic update installation is an apply-now toggle");
 }
 
 void TestGpuBackendRow() {

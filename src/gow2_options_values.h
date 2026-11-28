@@ -14,6 +14,9 @@
 
 #include "gow2_options_model.h"
 #include "gow2_toml_edit.h"
+#if !defined(__ANDROID__)
+#include "gow2_update_install.h"
+#endif
 
 namespace rex::glue::options {
 
@@ -53,5 +56,9 @@ void BuildContext(bool touch_controls, OwnedContext* out);
 
 // gow2_menu_language: "en", "es", or "auto" (the system's UI language: Spanish when it starts with "es").
 Lang MenuLang();
+
+#if !defined(__ANDROID__)
+std::string UpdateInstallStatus(const update_install::InstallSnapshot& snapshot);
+#endif
 
 }  // namespace rex::glue::options

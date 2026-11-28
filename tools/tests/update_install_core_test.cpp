@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -50,6 +51,41 @@ void TestParseChecksum() {
   Expect(!update::ParseChecksum(std::string(63, 'a') + "g", "archive.zip"), "non-hex checksum rejected");
   Expect(!update::ParseChecksum(uppercase + "  archive.zip\nextra", "archive.zip"), "multiple lines rejected");
   Expect(!update::ParseChecksum(uppercase + "*archive.zip", "archive.zip"), "missing separator rejected");
+}
+
+void TestDownloadHelpers() {
+  Expect(update::IsHttpsUrl("https://example.com/archive.zip"), "HTTPS URL with host is accepted");
+  Expect(update::IsHttpsUrl("https://example.com:8443/path"), "HTTPS URL with port is accepted");
+  Expect(!update::IsHttpsUrl("http://example.com/archive.zip"), "HTTP URL is rejected");
+  Expect(!update::IsHttpsUrl("https:///archive.zip"), "HTTPS URL without host is rejected");
+  Expect(!update::IsHttpsUrl("https://?query"), "HTTPS URL with empty authority is rejected");
+
+  Expect(update::ArchiveNameFromUrl("https://example.com/releases/archive.zip?token=1#part") ==
+             "archive.zip",
+         "archive name drops query and fragment");
+  Expect(!update::ArchiveNameFromUrl("https://example.com?next=/archive.zip") &&
+             !update::ArchiveNameFromUrl("https://example.com#fragment/archive.zip"),
+         "slashes in query and fragment do not become archive names");
+  Expect(update::ArchiveNameFromUrl("https://example.com/a/archive.tar.gz") == "archive.tar.gz",
+         "archive name uses the last path segment");
+  Expect(!update::ArchiveNameFromUrl("http://example.com/archive.zip"), "non-HTTPS archive URL rejected");
+  Expect(!update::ArchiveNameFromUrl("https://example.com"), "archive URL without a path rejected");
+  Expect(!update::ArchiveNameFromUrl("https://example.com/"), "empty archive name rejected");
+  Expect(!update::ArchiveNameFromUrl("https://example.com/.") &&
+             !update::ArchiveNameFromUrl("https://example.com/.."),
+         "dot archive names rejected");
+  Expect(!update::ArchiveNameFromUrl("https://example.com/a\\b.zip") &&
+             !update::ArchiveNameFromUrl("https://example.com/a:b.zip"),
+         "unsafe archive name characters rejected");
+
+  Expect(update::DownloadPercent(0, 0) == -1, "unknown download size reports no percentage");
+  Expect(update::DownloadPercent(0, 100) == 0, "empty download reports zero percent");
+  Expect(update::DownloadPercent(1, 3) == 33, "download percentage truncates fractional values");
+  Expect(update::DownloadPercent(100, 100) == 100, "complete download reports 100 percent");
+  Expect(update::DownloadPercent(200, 100) == 100, "download percentage is clamped");
+  const uint64_t max_size = std::numeric_limits<uint64_t>::max();
+  Expect(update::DownloadPercent(max_size - 1, max_size) == 99,
+         "large download sizes do not overflow");
 }
 
 void TestSafePathsAndStageNames() {
@@ -201,6 +237,7 @@ int main() {
     return 1;
   }
   TestParseChecksum();
+  TestDownloadHelpers();
   TestSafePathsAndStageNames();
   TestFindPayloadRoot(root);
   TestPlanApply(root);

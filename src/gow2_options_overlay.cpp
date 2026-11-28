@@ -12,6 +12,7 @@
 #include "gow2_prompt_swap.h"
 #if !defined(__ANDROID__)
 #include "gow2_update_check.h"
+#include "gow2_update_install.h"
 #endif
 #ifdef _WIN32
 #include "gow2_texture_pack_builder.h"
@@ -495,6 +496,83 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     toast_ = std::string(T(TextId::kOpeningDownload)) + url;
     toast_until_ = NowMs() + 6000;
   }
+
+  void ShowToast(std::string text, int64_t duration = 3000) {
+    toast_ = std::move(text);
+    toast_until_ = NowMs() + duration;
+  }
+
+  void InstallUpdate() {
+    const auto install = update_install::GetInstallSnapshot();
+    if (install.state == update_install::InstallState::kReady) {
+      if (!SaveBeforeExit()) return;
+      CloseHostPortsBeforeExit();
+      std::string error;
+      if (!update_install::ApplyStagedUpdate(&error)) {
+        ShowToast(error, 6000);
+        return;
+      }
+      if (!options_actions::RestartGame()) {
+        ShowToast(MenuLang() == Lang::kEs ? "No se pudo reiniciar el juego" :
+                                            "Could not restart the game");
+        return;
+      }
+      Quit();
+      return;
+    }
+    if (IsBusyInstall(install.state)) {
+      ShowToast(UpdateInstallStatus(install));
+      return;
+    }
+    if ((install.state == update_install::InstallState::kIdle ||
+         install.state == update_install::InstallState::kFailed) && StartNewerInstall()) {
+      ShowToast(MenuLang() == Lang::kEs ? "Descargando actualización…" : "Downloading update…", 5000);
+      return;
+    }
+    ShowToast(MenuLang() == Lang::kEs ? "Ya estás al día" : "Already up to date");
+  }
+
+  bool StartNewerInstall() {
+    const update::Snapshot snapshot = update::GetSnapshot();
+    if (!update::IsNewer(snapshot.release.tag, update::CurrentVersion())) return false;
+    update_install::StartInstall(snapshot.release);
+    return true;
+  }
+
+  static bool IsBusyInstall(update_install::InstallState state) {
+    return state == update_install::InstallState::kDownloading ||
+        state == update_install::InstallState::kVerifying ||
+        state == update_install::InstallState::kExtracting;
+  }
+
+  void MaybeStartAutomaticInstall() {
+    if (auto_install_started_ || !rex::cvar::Query<bool>("gow2_update_check") ||
+        !rex::cvar::Query<bool>("gow2_update_auto_install")) {
+      return;
+    }
+    const update::Snapshot snapshot = update::GetSnapshot();
+    if (!update::ShouldNotify(snapshot.release, update::CurrentVersion(), snapshot.dismissed) ||
+        update_install::GetInstallSnapshot().state != update_install::InstallState::kIdle) {
+      return;
+    }
+    auto_install_started_ = true;
+    update_install::StartInstall(snapshot.release);
+  }
+
+  void MaybeShowReadyNotice(int64_t now) {
+    if (ready_notice_shown_) return;
+    const auto install = update_install::GetInstallSnapshot();
+    if (install.state != update_install::InstallState::kReady) return;
+    const bool spanish = MenuLang() == Lang::kEs;
+    update_notice_ = spanish
+        ? "Actualización " + install.tag +
+              " lista — se instala al próximo arranque (Opciones > Opciones de PC > Sistema para reiniciar ya)"
+        : "Update " + install.tag +
+              " ready — installs on the next start (Options > PC Options > System to restart now)";
+    update_notice_until_ = now + 8000;
+    ready_notice_shown_ = true;
+    ready_notice_active_ = true;
+  }
 #endif
 
   void ApplyOutcome(const Outcome& outcome) {
@@ -535,6 +613,7 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
     REXLOG_INFO("PCOPTIONS action {}", id);
 #if !defined(__ANDROID__)
     if (id == "update_download") { OpenDownloadPage(); return; }
+    if (id == "update_install") { InstallUpdate(); return; }
     if (id == "update_check_now") { update::CheckNow(); return; }
     if (id == "update_dismiss") {
       update::Dismiss();
@@ -1437,18 +1516,19 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 
 #if !defined(__ANDROID__)
   void DrawUpdateNotice(const ImGuiIO& io, int64_t now) {
-    if (!rex::cvar::Query<bool>("gow2_update_check")) {
-      update_notice_until_ = 0;
-      return;
-    }
-    if (update::TakeNotice()) {
+    const bool update_checks = rex::cvar::Query<bool>("gow2_update_check");
+    if (!update_checks && !ready_notice_active_) update_notice_until_ = 0;
+    if (update_checks && update::TakeNotice()) {
       const auto snapshot = update::GetSnapshot();
       const bool spanish = MenuLang() == Lang::kEs;
       update_notice_ = (spanish ? "Actualización disponible: " : "Update available: ") +
           snapshot.release.tag + (spanish ? " — Opciones > Opciones de PC > Sistema" :
                                             " — Options > PC Options > System");
       update_notice_until_ = now + 8000;
+      ready_notice_active_ = false;
     }
+    MaybeStartAutomaticInstall();
+    MaybeShowReadyNotice(now);
     const auto remaining = update_notice_until_ - now;
     if (remaining <= 0 || update_notice_.empty()) return;
     const float alpha = std::min(1.f,static_cast<float>(remaining)/500.f);
@@ -1572,6 +1652,9 @@ class OptionsOverlay final : public rex::ui::ImGuiDialog {
 #if !defined(__ANDROID__)
   std::string update_notice_;
   int64_t update_notice_until_ = 0;
+  bool auto_install_started_ = false;
+  bool ready_notice_shown_ = false;
+  bool ready_notice_active_ = false;
 #endif
 };
 

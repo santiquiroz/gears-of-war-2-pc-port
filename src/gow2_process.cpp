@@ -86,6 +86,39 @@ class ScopedHandle {
   HANDLE value_;
 };
 
+class ScopedProcessAttributes {
+ public:
+  ScopedProcessAttributes() = default;
+  ~ScopedProcessAttributes() {
+    if (initialized_) DeleteProcThreadAttributeList(list_);
+  }
+  ScopedProcessAttributes(const ScopedProcessAttributes&) = delete;
+  ScopedProcessAttributes& operator=(const ScopedProcessAttributes&) = delete;
+
+  bool Initialize(const HANDLE* handles, size_t count) {
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    if (size == 0) return false;
+    storage_.resize(size);
+    list_ = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(storage_.data());
+    if (!InitializeProcThreadAttributeList(list_, 1, 0, &size)) {
+      list_ = nullptr;
+      return false;
+    }
+    initialized_ = true;
+    return UpdateProcThreadAttribute(list_, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                     const_cast<HANDLE*>(handles), count * sizeof(HANDLE), nullptr,
+                                     nullptr) != FALSE;
+  }
+
+  PPROC_THREAD_ATTRIBUTE_LIST Get() const { return list_; }
+
+ private:
+  std::vector<std::byte> storage_;
+  PPROC_THREAD_ATTRIBUTE_LIST list_ = nullptr;
+  bool initialized_ = false;
+};
+
 std::string WindowsError(std::string_view operation, DWORD error) {
   return std::string(operation) + " failed (error " + std::to_string(error) + ")";
 }
@@ -147,14 +180,31 @@ bool SpawnWindows(const std::vector<std::string>& argv_utf8, HANDLE input, HANDL
     return false;
   }
   std::wstring mutable_command_line = *command_line;
-  STARTUPINFOW startup{};
-  startup.cb = sizeof(startup);
-  startup.dwFlags = STARTF_USESTDHANDLES;
-  startup.hStdInput = input;
-  startup.hStdOutput = output;
-  startup.hStdError = error_output;
+  std::array<HANDLE, 3> inherited_handles{};
+  size_t inherited_count = 0;
+  const std::array<HANDLE, 3> std_handles = {input, output, error_output};
+  for (HANDLE handle : std_handles) {
+    if (std::find(inherited_handles.begin(), inherited_handles.begin() + inherited_count, handle) !=
+        inherited_handles.begin() + inherited_count) {
+      continue;
+    }
+    inherited_handles[inherited_count++] = handle;
+  }
+  ScopedProcessAttributes attributes;
+  if (!attributes.Initialize(inherited_handles.data(), inherited_count)) {
+    *error = WindowsError("process handle list", GetLastError());
+    return false;
+  }
+  STARTUPINFOEXW startup{};
+  startup.StartupInfo.cb = sizeof(startup);
+  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  startup.StartupInfo.hStdInput = input;
+  startup.StartupInfo.hStdOutput = output;
+  startup.StartupInfo.hStdError = error_output;
+  startup.lpAttributeList = attributes.Get();
   if (CreateProcessW(executable->c_str(), mutable_command_line.data(), nullptr, nullptr, TRUE,
-                     CREATE_NO_WINDOW, nullptr, nullptr, &startup, process))
+                     CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr,
+                     &startup.StartupInfo, process))
     return true;
   *error = WindowsError("CreateProcessW", GetLastError());
   return false;
@@ -279,6 +329,7 @@ bool StartDetached(const std::vector<std::string>& argv_utf8) {
 #include <cstring>
 #include <fcntl.h>
 #include <spawn.h>
+#include <system_error>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -442,13 +493,8 @@ void WaitForChild(pid_t child, Result* result) {
 
 bool StartReaper(pid_t child) {
   try {
-    std::thread reaper([child] { Reap(child); });
-    try {
-      reaper.detach();
-    } catch (...) {
-      reaper.join();
-    }
-  } catch (...) {
+    std::thread([child] { Reap(child); }).detach();
+  } catch (const std::system_error&) {
     Reap(child);
   }
   return true;

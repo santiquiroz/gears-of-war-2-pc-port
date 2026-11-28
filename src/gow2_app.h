@@ -48,6 +48,8 @@
 
 #if !defined(__ANDROID__)
 #include "gow2_user_config.h"
+#include "gow2_update_check.h"
+#include "gow2_update_install.h"
 #endif
 
 #if defined(__ANDROID__)
@@ -460,6 +462,22 @@ class Gow2App : public rex::ReXApp {
       }
     }
     rex::glue::options_actions::WaitForPreviousInstance();
+#if !defined(__ANDROID__)
+    rex::glue::update_install::CleanupAfterUpdate();
+    if (rex::cvar::Query<bool>("gow2_update_auto_install")) {
+      const auto tag = rex::glue::update_install::ReadyStagedTag();
+      if (tag && rex::glue::update::IsNewer(*tag, rex::glue::update::CurrentVersion())) {
+        REXLOG_INFO("UPDATEINSTALL applying staged update {} at startup", *tag);
+        std::string error;
+        if (rex::glue::update_install::ApplyStagedUpdate(&error)) {
+          if (!rex::glue::options_actions::RestartGame())
+            REXLOG_WARN("UPDATEINSTALL could not restart after applying {}", *tag);
+          std::exit(0);
+        }
+        REXLOG_WARN("UPDATEINSTALL startup apply failed {}: {}", *tag, error);
+      }
+    }
+#endif
 #if defined(__ANDROID__)
     UseAttachedKeyboardAndMouse();
     AddTouchControls(config);
