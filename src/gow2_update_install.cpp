@@ -11,6 +11,7 @@ REXCVAR_DEFINE_BOOL(gow2_update_auto_install, true, "UI",
 
 #include "gow2_process.h"
 #include "gow2_sha256.h"
+#include "gow2_update_check.h"
 #include "gow2_update_install_core.h"
 
 #include <rex/filesystem.h>

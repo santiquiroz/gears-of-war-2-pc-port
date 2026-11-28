@@ -41,7 +41,7 @@ bool Enabled() { return rex::cvar::Query<bool>("gow2_update_check"); }
 std::optional<std::string> FetchFeedFile() {
   const std::string path = rex::cvar::Query<std::string>("gow2_update_feed_file");
   if (path.empty()) return std::nullopt;
-  std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
+  std::ifstream file(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary);
   if (!file) throw std::runtime_error("cannot read update feed file");
   std::string content(kMaxResponse + 1, '\0');
   file.read(content.data(), static_cast<std::streamsize>(content.size()));
