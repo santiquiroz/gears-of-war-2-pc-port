@@ -278,8 +278,8 @@ void TestScreenshotRow() {
   Expect(screenshot != nullptr, "F12 screenshots setting exists");
   if (!screenshot) return;
   Expect(screenshot->tab == options::Tab::kSystem && screenshot->kind == options::Kind::kToggle &&
-             screenshot->apply == options::Apply::kNow && screenshot->platforms == options::kDesktop,
-         "F12 screenshots is a desktop apply-now System toggle");
+             screenshot->apply == options::Apply::kNow && screenshot->platforms == options::kWindows,
+         "F12 screenshots is a Windows-only (Direct3D 12) apply-now System toggle");
 }
 
 void TestAndroidImageFilterPlatforms() {

@@ -1777,7 +1777,7 @@ void AddSystem(std::vector<Setting>& out) {
       .tab = Tab::kSystem,
       .kind = Kind::kToggle,
       .apply = Apply::kNow,
-      .platforms = kDesktop,
+      .platforms = kWindows,
       .label_en = "F12 screenshots",
       .label_es = "Capturas con F12",
       .help_en =
