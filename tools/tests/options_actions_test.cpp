@@ -1,10 +1,12 @@
 // Host-side test of the GOW2HOST result-line reader (no game data, no SDK).
 #include "gow2_host_line.h"
+#include "gow2_restart_args.h"
 
 #include <cstdio>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 using rex::glue::host_line::ParseHostLine;
 using rex::glue::host_line::IsValidAllowPeers;
@@ -15,6 +17,15 @@ using rex::glue::options_actions::HostResult;
 int g_checks = 0;
 int g_failures = 0;
 void Expect(bool ok, std::string_view what) { ++g_checks; if (ok) return; ++g_failures; std::printf("FAIL: %.*s\n", int(what.size()), what.data()); }
+
+void TestRestartArgs() {
+  const auto args = rex::glue::restart_args::RestartArgs(
+      {"gow2", "--config", "saved.toml", "--gow2_wait_pid=12", "--verbose",
+       "--gow2_wait_pid=34", "--gow2_wait_pid="}, 567);
+  const std::vector<std::string> expected{
+      "gow2", "--config", "saved.toml", "--verbose", "--gow2_wait_pid=567"};
+  Expect(args == expected, "restart args preserve argv order and replace wait pid");
+}
 
 void TestExample() {
   const std::string line =
@@ -246,6 +257,7 @@ void TestNewFieldWrongTypes() {
 }
 
 int main() {
+  TestRestartArgs();
   TestWindowsArgumentQuoting();
   TestHostnameValidation();
   TestPeerValidation();
