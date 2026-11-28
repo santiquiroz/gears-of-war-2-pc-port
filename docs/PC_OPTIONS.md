@@ -4,8 +4,8 @@ PC Options is the port's own settings menu. It lives inside the game. It
 changes the same settings as `gow2.toml` and the command line.
 
 On Android, the menu and its entry on the game's Options screen are called
-"Device Options" ("Opciones del dispositivo" in Spanish). Windows keeps
-"PC Options" ("Opciones de PC" in Spanish). Everything else is the same menu.
+"Device Options" ("Opciones del dispositivo" in Spanish). Windows and Linux
+use "PC Options" ("Opciones de PC" in Spanish). Everything else is the same menu.
 
 Verified in game on a PC on 2026-10-16, including Back + Start, which opened
 the menu, and the B that closed it, which did not reach the game. With the
@@ -19,7 +19,7 @@ language (persist.sys.locale).
 
 ## Opening it
 
-- The game's Options screen (main menu, RB) lists "PC Options" on Windows
+- The game's Options screen (main menu, RB) lists "PC Options" on Windows and Linux
   or "Device Options" on Android where
   "Storage Location" was. Selecting it opens the menu.
 - F10 opens and closes it from anywhere.
@@ -84,7 +84,9 @@ reach you. An old `gow2.toml` next to the executable is moved to your folder on
 the first start, keeping only the lines that differ from the defaults.
 
 System > Download opens the latest release page in your browser. In fullscreen,
-the game minimizes so you can see the browser.
+the game minimizes so you can see the browser. "Update and restart" downloads
+and installs the update if needed, then restarts the game; automatic installs
+apply a downloaded update on the next start.
 
 Leaving with unsaved changes asks Save / Discard / Cancel. Discard restores
 the values the menu opened with.
@@ -93,7 +95,7 @@ the values the menu opened with.
 
 Changes apply at once where the setting allows it. Rows that need a restart
 say so under the label. A banner lists the changed rows that still need a
-restart, with a "Restart now" button on Windows.
+restart, with a "Restart now" button on Windows and Linux.
 
 The menu language follows the system (English or Spanish), or
 `gow2_menu_language`. Advanced rows appear with "Show advanced options" on.
@@ -101,16 +103,18 @@ Defaults keep the original game and crossplay working.
 
 ## Display
 
+Platforms: `PC` = Windows and Linux, `Windows` = Windows only, `Android`, `all` = every platform.
+
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Window mode | `fullscreen` + `fullscreen_exclusive` | windowed, borderless, exclusive | now | Windows |
-| Display | `monitor` | detected monitors | now | Windows |
-| Window size | `window_width` + `window_height` | game resolution, 1280x720 ... 3840x2160 | now | Windows |
+| Window mode | `fullscreen` + `fullscreen_exclusive` | windowed, borderless, exclusive | now | PC |
+| Display | `monitor` | detected monitors | now | PC |
+| Window size | `window_width` + `window_height` | game resolution, 1280x720 ... 3840x2160 | now | PC |
 | Graphics card | `gow2_gpu` | automatic, detected GPUs | restart | Windows |
-| VSync | `vsync` | on, off | now | both |
-| Unlock frame rate | `gow2_unlock_fps` | on, off | now | both |
-| Frame rate limit | `gow2_fps_cap` | off, VRR, 30 ... 240 | now | both |
-| Frame counter | `gow2_show_fps` | off, on (game fps and frame time; top-left, top-center on Android) | now | both |
+| VSync | `vsync` | on, off | now | all |
+| Unlock frame rate | `gow2_unlock_fps` | on, off | now | all |
+| Frame rate limit | `gow2_fps_cap` | off, VRR, 30 ... 240 | now | all |
+| Frame counter | `gow2_show_fps` | off, on (game fps and frame time; top-left, top-center on Android) | now | all |
 | Keep 16:9 shape | `present_letterbox` | on (black bars), off (fill: crop up to 10 % top and bottom, stretch the rest) | now | Android |
 | Display refresh hint | `present_android_frame_rate` | phone default, 30 ... 120 | restart | Android |
 
@@ -119,26 +123,26 @@ Defaults keep the original game and crossplay working.
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
 | Graphics API | `gpu_backend` | automatic (Direct3D 12), Direct3D 12, Vulkan (experimental); Direct3D 12 is the tested path, Vulkan is experimental with only FSR 1 and CAS | restart | Windows |
-| Internal resolution | `resolution_scale` | 720p, 1440p, 4K | restart | both |
+| Internal resolution | `resolution_scale` | 720p, 1440p, 4K | restart | all |
 | Upscaler | `gow2_temporal` + `gow2_upscaler` | off, FSR 3.1, FSR 4 (DLSS on DLSS builds) | now | Windows |
 | Upscaling | info | internal -> screen ratio | now | Windows |
-| Final image filter | `present_effect` | bilinear, FSR 1, CAS (SGSR on Android) | restart | both |
-| FSR 1 softening | `present_fsr_sharpness_reduction` | 0 ... 2 | now | both |
-| CAS sharpness | `present_cas_additional_sharpness` | 0 ... 1 | now | both |
-| Dithering | `present_dither` | on, off | now | both |
-| Anisotropic filtering | `anisotropic_override` | game default, off, 1x ... 16x | next level | both |
-| Texture cache | `texture_cache_memory_limit_soft` + `texture_cache_memory_limit_hard` | 384 MB, 1 GB, 2 GB, 4 GB | now | both |
-| Character lighting fix | `gow2_black_shading_fix` | on, off | restart | both |
-| Bigger texture pool | `gow2_texture_streaming_fix` | on, off | restart | both |
-| 16x filtering patch | `gow2_aniso16` | on, off | restart | both |
-| Ambient occlusion fix | `gow2_ao_upscaling_fix` | on, off | now | both |
-| Depth of field fix | `gow2_dof_upscaling_fix` | on, off | now | both |
+| Final image filter | `present_effect` | bilinear, FSR 1, CAS (SGSR on Android; Vulkan list on Linux, as on Android) | restart | all |
+| FSR 1 softening | `present_fsr_sharpness_reduction` | 0 ... 2 | now | all |
+| CAS sharpness | `present_cas_additional_sharpness` | 0 ... 1 | now | all |
+| Dithering | `present_dither` | on, off | now | all |
+| Anisotropic filtering | `anisotropic_override` | game default, off, 1x ... 16x | next level | all |
+| Texture cache | `texture_cache_memory_limit_soft` + `texture_cache_memory_limit_hard` | 384 MB, 1 GB, 2 GB, 4 GB | now | all |
+| Character lighting fix | `gow2_black_shading_fix` | on, off | restart | all |
+| Bigger texture pool | `gow2_texture_streaming_fix` | on, off | restart | all |
+| 16x filtering patch | `gow2_aniso16` | on, off | restart | all |
+| Ambient occlusion fix | `gow2_ao_upscaling_fix` | on, off | now | all |
+| Depth of field fix | `gow2_dof_upscaling_fix` | on, off | now | all |
 | Texture pack | `gow2_texture_pack` | off, textures folder, the folder names in `texture_packs` next to the exe (each holds `4D53082D\replace`); empty uses `texture_replace`; it overrides `texture_replace` and `texture_pack_dir` in gow2.toml, not on the command line | restart | Windows |
 | Open texture packs folder | action | creates `texture_packs` next to the exe and opens it | now | Windows |
 | Build texture pack | opens the page below; dimmed when `tools\texconv` or `tools\realesrgan` is missing | upscales the dumped color textures with Real-ESRGAN into `texture_packs\dump-2x` and the like ([Texture packs](TEXTURE_PACKS.md)) | now | Windows |
 | Dump textures | `texture_dump` | on, off (advanced); dump with Texture pack set to Off so Build texture pack finds them | restart | Windows |
 | Sustained performance | `gow2_android_sustained_performance` | on, off | restart | Android |
-| Engine settings | `gow2_system_settings` | text (advanced) | restart | both |
+| Engine settings | `gow2_system_settings` | text (advanced) | restart | all |
 
 The "Build texture pack" page holds: Scale (`gow2_texture_build_scale`: 2x, 4x), Quality
 (`gow2_texture_build_quality`: same as the disc, BC7), the dump count with the expected video memory
@@ -150,7 +154,7 @@ away.
 
 ### Game quality
 
-Graphics includes **Game quality** (**Calidad del juego**) on Windows and Android.
+Graphics includes **Game quality** (**Calidad del juego**) on PC and Android.
 The **Quality preset** row offers Low / Medium / High (retail) / Custom. Low
 reduces optional effects and shadow/detail settings; Medium is intermediate;
 High sets all 24 controls to retail values. Individual changes display Custom
@@ -160,34 +164,34 @@ not validate the new quality controls or their visual/performance effects.
 
 | Row | Key | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Quality preset | menu action over the 24 keys below | Low, Medium, High (retail), Custom | restart | both |
-| Render scale | `gow2_render_scale` | 100 % (native), 85 %, 75 %, 50 % (75 % on phones) | restart | both |
-| Object shadows | `gow2_gfx_light_environment_shadows` | auto, on, off | restart | both |
-| Dynamic shadows | `gow2_gfx_dynamic_shadows` | auto, on, off | restart | both |
-| Dynamic lights | `gow2_gfx_dynamic_lights` | auto, on, off | restart | both |
-| Composite dynamic lights | `gow2_gfx_composite_dynamic_lights` | auto, on, off | restart | both |
-| Bloom | `gow2_gfx_bloom` | auto, on, off | restart | both |
-| High quality bloom | `gow2_gfx_use_high_quality_bloom` | auto, on, off | restart | both |
-| Motion blur | `gow2_gfx_motion_blur` | auto, on, off | restart | both |
-| Depth of field | `gow2_gfx_depth_of_field` | auto, on, off | restart | both |
-| Ambient occlusion | `gow2_gfx_ambient_occlusion` | auto, on, off | restart | both |
-| Lens flares | `gow2_gfx_lens_flares` | auto, on, off | restart | both |
-| Distortion | `gow2_gfx_distortion` | auto, on, off | restart | both |
-| Static decals | `gow2_gfx_static_decals` | auto, on, off | restart | both |
-| Dynamic decals | `gow2_gfx_dynamic_decals` | auto, on, off | restart | both |
-| Fog volumes | `gow2_gfx_fog_volumes` | auto, on, off | restart | both |
-| Tree leaves | `gow2_gfx_speed_tree_leaves` | auto, on, off | restart | both |
-| Tree fronds | `gow2_gfx_speed_tree_fronds` | auto, on, off | restart | both |
-| Shadow filter bias | `gow2_gfx_shadow_filter_quality_bias` | auto, -1, 0, 1 | restart | both |
-| World detail | `gow2_gfx_detail_mode` | auto, 0, 1, 2 | restart | both |
-| Character LOD bias | `gow2_gfx_skeletal_mesh_lod_bias` | auto, 0, 1, 2 | restart | both |
-| Particle LOD bias | `gow2_gfx_particle_lod_bias` | auto, 0, 1, 2 | restart | both |
-| Foliage draw radius | `gow2_gfx_foliage_draw_radius_multiplier` | auto, 0.25, 0.5, 1.000000 | restart | both |
-| Maximum shadow resolution | `gow2_gfx_max_shadow_resolution` | auto, 256, 512, 800 | restart | both |
-| Shadow texels per pixel | `gow2_gfx_shadow_texels_per_pixel` | auto, 0.5, 1, 1.27324 | restart | both |
-| Decal draw distance | `gow2_gfx_decal_cull_distance_scale` | auto, 0.4, 0.7, 1.0 | restart | both |
+| Quality preset | menu action over the 24 keys below | Low, Medium, High (retail), Custom | restart | all |
+| Render scale | `gow2_render_scale` | 100 % (native), 85 %, 75 %, 50 % (75 % on phones) | restart | all |
+| Object shadows | `gow2_gfx_light_environment_shadows` | auto, on, off | restart | all |
+| Dynamic shadows | `gow2_gfx_dynamic_shadows` | auto, on, off | restart | all |
+| Dynamic lights | `gow2_gfx_dynamic_lights` | auto, on, off | restart | all |
+| Composite dynamic lights | `gow2_gfx_composite_dynamic_lights` | auto, on, off | restart | all |
+| Bloom | `gow2_gfx_bloom` | auto, on, off | restart | all |
+| High quality bloom | `gow2_gfx_use_high_quality_bloom` | auto, on, off | restart | all |
+| Motion blur | `gow2_gfx_motion_blur` | auto, on, off | restart | all |
+| Depth of field | `gow2_gfx_depth_of_field` | auto, on, off | restart | all |
+| Ambient occlusion | `gow2_gfx_ambient_occlusion` | auto, on, off | restart | all |
+| Lens flares | `gow2_gfx_lens_flares` | auto, on, off | restart | all |
+| Distortion | `gow2_gfx_distortion` | auto, on, off | restart | all |
+| Static decals | `gow2_gfx_static_decals` | auto, on, off | restart | all |
+| Dynamic decals | `gow2_gfx_dynamic_decals` | auto, on, off | restart | all |
+| Fog volumes | `gow2_gfx_fog_volumes` | auto, on, off | restart | all |
+| Tree leaves | `gow2_gfx_speed_tree_leaves` | auto, on, off | restart | all |
+| Tree fronds | `gow2_gfx_speed_tree_fronds` | auto, on, off | restart | all |
+| Shadow filter bias | `gow2_gfx_shadow_filter_quality_bias` | auto, -1, 0, 1 | restart | all |
+| World detail | `gow2_gfx_detail_mode` | auto, 0, 1, 2 | restart | all |
+| Character LOD bias | `gow2_gfx_skeletal_mesh_lod_bias` | auto, 0, 1, 2 | restart | all |
+| Particle LOD bias | `gow2_gfx_particle_lod_bias` | auto, 0, 1, 2 | restart | all |
+| Foliage draw radius | `gow2_gfx_foliage_draw_radius_multiplier` | auto, 0.25, 0.5, 1.000000 | restart | all |
+| Maximum shadow resolution | `gow2_gfx_max_shadow_resolution` | auto, 256, 512, 800 | restart | all |
+| Shadow texels per pixel | `gow2_gfx_shadow_texels_per_pixel` | auto, 0.5, 1, 1.27324 | restart | all |
+| Decal draw distance | `gow2_gfx_decal_cull_distance_scale` | auto, 0.4, 0.7, 1.0 | restart | all |
 
-`auto` keeps platform defaults: Windows retains retail quality; Android disables
+`auto` keeps platform defaults: PC retains retail quality; Android disables
 Object shadows only. High explicitly enables Object shadows on Android. The
 advanced Engine settings row (`gow2_system_settings`, empty by default) applies
 last, so existing raw `Key=Value;OtherKey=Value` pairs override quality rows and
@@ -201,16 +205,16 @@ inventory, every preset value, scope of verification, and the bundle size rule.
 
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Keyboard and mouse | `mnk_mode` | on, off | now | both |
-| Native mouse aim | `gow2_mouse_aim` | on, off | restart | both |
-| Mouse sensitivity | `gow2_mouse_scale` or `mnk_sensitivity` | 0.05x ... 10x | now | both |
-| Invert mouse Y | `gow2_mouse_invert_y` | on, off | now | both |
-| Aim assist with the mouse | `gow2_mouse_aim_assist` | on, off | now | both |
-| Button prompts | `gow2_prompts` | automatic (last device used), keyboard, controller (Xbox buttons), playstation (Windows) | restart | both |
+| Keyboard and mouse | `mnk_mode` | on, off | now | all |
+| Native mouse aim | `gow2_mouse_aim` | on, off | restart | all |
+| Mouse sensitivity | `gow2_mouse_scale` or `mnk_sensitivity` | 0.05x ... 10x | now | all |
+| Invert mouse Y | `gow2_mouse_invert_y` | on, off | now | all |
+| Aim assist with the mouse | `gow2_mouse_aim_assist` | on, off | now | all |
+| Button prompts | `gow2_prompts` | automatic (last device used), keyboard, controller (Xbox buttons), playstation (Windows) | restart | all |
 | Keycap pictures | `gow2_keycaps` | on, off | restart | Windows |
-| Controller look dead zone | `pad_right_stick_deadzone` | 0 ... 0.9 | now | both |
-| Key bindings | opens the page below | | now | both |
-| Controller layout | info | in the game's own Options | now | both |
+| Controller look dead zone | `pad_right_stick_deadzone` | 0 ... 0.9 | now | all |
+| Key bindings | opens the page below | | now | all |
+| Controller layout | info | in the game's own Options | now | all |
 
 The Key bindings page holds one row per action (`keybind_*`, 24 rows).
 Accept, then press the new key. Default restores the original keys. Open it
@@ -236,66 +240,78 @@ next start. Menu prompts update after a restart.
 
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Your name | `user_name` | text, up to 15 characters | restart | both |
-| System Link (LAN and internet) | `net_link_active` | on, off | restart | both |
-| Co-op players | `gow2_coop_players` | 2, 3, 4, 8, 10 (8 and 10 experimental) | restart | both |
-| Friendly fire (co-op) | `gow2_friendly_fire` | on, off | now | both |
-| Go to player 1 | action | | now | both |
-| Key: go to player 1 | `bind_coop_go_to_player1` | a key, F6 by default | now | both |
-| Controller: go to player 1 | `gow2_coop_go_to_player1_pad` | off, Back + D-pad up, Back + D-pad down, both stick clicks (LS + RS) | now | both |
-| Players 3+ dying ends the game | `gow2_coop_extra_players_game_over` | on, off | restart | both |
-| Co-op check code | info | the combined hash | now | both |
-| Join a host (name or IP) | `net_peers` | text | restart | both |
+| Your name | `user_name` | text, up to 15 characters | restart | all |
+| System Link (LAN and internet) | `net_link_active` | on, off | restart | all |
+| Co-op players | `gow2_coop_players` | 2, 3, 4, 8, 10 (8 and 10 experimental) | restart | all |
+| Friendly fire (co-op) | `gow2_friendly_fire` | on, off | now | all |
+| Go to player 1 | action | | now | all |
+| Key: go to player 1 | `bind_coop_go_to_player1` | a key, F6 by default | now | all |
+| Controller: go to player 1 | `gow2_coop_go_to_player1_pad` | off, Back + D-pad up, Back + D-pad down, both stick clicks (LS + RS) | now | all |
+| Players 3+ dying ends the game | `gow2_coop_extra_players_game_over` | on, off | restart | all |
+| Co-op check code | info | the combined hash | now | all |
+| Join a host (name or IP) | `net_peers` | text | restart | all |
 | Host over the internet | opens the page below | | now | Windows |
-| This device's LAN address | `net_local_ip` | text (advanced) | restart | both |
-| Port offset | `net_port_offset` | 1024 ... 64512 | restart | both |
-| Co-op check | `net_beacon_gate` | on, off (advanced) | restart | both |
-| Network log | `system_link_trace` | on, off (advanced) | now | both |
+| This device's LAN address | `net_local_ip` | text (advanced) | restart | all |
+| Port offset | `net_port_offset` | 1024 ... 64512 | restart | all |
+| Co-op check | `net_beacon_gate` | on, off (advanced) | restart | all |
+| Network log | `system_link_trace` | on, off (advanced) | now | all |
 
 The "Host over the internet" page holds: Status (info), Keep open for
 (`gow2_host_lease_hours`: 2, 6, 12, 24 h), Open ports now (action), Close
 ports (action), Address friends use (`net_public_address`: text), Friends
 allowed (`net_allow_peers`: text), Close ports when the game exits
-(`gow2_host_close_on_exit`: toggle). All Windows. See below.
+(`gow2_host_close_on_exit`: toggle). Address friends use and Friends allowed
+are available on PC; the port controls are Windows-only. See below.
 
 ## Saves
 
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Save location | `gow2_save_dir` | default, portable, detected cloud folders | restart | both |
+| Save location | `gow2_save_dir` | default, portable, detected cloud folders | restart | all |
 | Choose a folder | picks `gow2_save_dir` | folder picker | now | Windows |
-| Folder path | `gow2_save_dir` | text (advanced) | restart | both |
-| Saves are in | info | the folder this session uses | now | both |
-| Open the saves folder | action | opens File Explorer | now | Windows |
-| All chapters and Insane unlocked | `gow2_unlock_all_chapters` | on, off | restart | both |
+| Folder path | `gow2_save_dir` | text (advanced) | restart | all |
+| Saves are in | info | the folder this session uses | now | all |
+| Open the saves folder | action | opens the folder | now | PC |
+| All chapters and Insane unlocked | `gow2_unlock_all_chapters` | on, off | restart | all |
 
 ## Audio
 
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Volume | `gow2_audio_volume` | 0% ... 100% | now | both |
-| Mute | `audio_mute` | on, off | now | both |
-| Audio buffer | `audio_maxqframes` | 4 ... 64 (advanced) | restart | both |
+| Volume | `gow2_audio_volume` | 0% ... 100% | now | all |
+| Mute | `audio_mute` | on, off | now | all |
+| Audio buffer | `audio_maxqframes` | 4 ... 64 (advanced) | restart | all |
 
 ## System
 
 | Row | Key(s) | Values | Applies | Platforms |
 |---|---|---|---|---|
-| Menu language | `gow2_menu_language` | automatic, English, Spanish | now | both |
-| Subtitles and text | `user_language` | English, Latin American Spanish, French, German, Italian, Polish, Russian, Korean, Traditional Chinese | restart | both |
-| Voices | `gow2_voice_language` | same as subtitles, English, Latin American Spanish, French | restart | both |
-| Skip intro videos | `gow2_skip_intro_movies` | on, off | restart | both |
-| Show how to skip cinematics | `gow2_skip_hint` | on, off | now | Windows |
+| Menu language | `gow2_menu_language` | automatic, English, Spanish | now | all |
+| Subtitles and text | `user_language` | English, Latin American Spanish, French, German, Italian, Polish, Russian, Korean, Traditional Chinese | restart | all |
+| Voices | `gow2_voice_language` | same as subtitles, English, Latin American Spanish, French | restart | all |
+| Skip intro videos | `gow2_skip_intro_movies` | on, off | restart | all |
+| Show how to skip cinematics | `gow2_skip_hint` | on, off | now | PC |
 | Show options at start | `gow2_launcher` | on, off | at start | Windows |
-| Show advanced options | `gow2_menu_advanced` | on, off | now | both |
-| All runtime settings | action | opens the F4 list | now | both |
-| Restart the game | action | save first: it saves nothing | now | Windows |
-| Quit the game | action | quit, then open the game again | now | both |
-| Settings file | info | where the menu saves | now | both |
-| Version | info | this build of the port | now | both |
-| Open this menu | info | F10, Back + Start | now | both |
+| Show advanced options | `gow2_menu_advanced` | on, off | now | all |
+| All runtime settings | action | opens the F4 list | now | all |
+| F12 screenshots | `present_screenshot_key_enabled` | on, off (Direct3D 12 only) | now | Windows |
+| Update status | info | latest release, or the download/install progress | now | PC |
+| Check for updates | `gow2_update_check` | on, off | now | PC |
+| Download | action | opens the release page | now | PC |
+| Update and restart | action | downloads, checks, installs and restarts | now | PC |
+| Install updates automatically | `gow2_update_auto_install` | on, off | now | PC |
+| Check now | action | asks GitHub again | now | PC |
+| Dismiss | action | hides this release's notice | now | PC |
+| Restart the game | action | save first: it saves nothing | now | PC |
+| Quit the game | action | quit, then open the game again | now | all |
+| Settings file | info | where the menu saves | now | all |
+| Version | info | this build of the port | now | all |
+| Open this menu | info | F10, Back + Start | now | all |
 
 ## New settings this release
+
+0.4.11: `gow2_update_auto_install` and the "Update and restart" action. Linux
+shows the PC rows instead of the Android ones.
 
 0.4.2: `gow2_friendly_fire` and the "Go to player 1" action. FSR 1 softening,
 CAS sharpness and Dithering now apply at once (SDK patch 0077). Runtime list

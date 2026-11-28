@@ -57,11 +57,20 @@ start, so player choices win and new defaults arrive automatically. An old `gow2
 executable is moved to the user config folder on first start. A `portable.txt` beside the executable
 keeps settings and the remembered game path beside it.
 
+## Updating
+
+Linux updates itself like Windows: when `gow2_update_check` and
+`gow2_update_auto_install` are on, it downloads and checks the release archive,
+unpacks it into `.gow2-update/` inside the game folder, and installs it on the
+next start. It needs `curl` and `tar`, which SteamOS and desktop distributions
+include. The restart banner's "Restart now" button and opening folders and
+links with `xdg-open` work on Linux.
+
 ## What is different from Windows
 
 - Graphics always run on Vulkan, which is experimental on Windows too. The Direct3D 12 features are
   not available: FSR and DLSS upscaling, frame generation, HDR10 and texture packs.
-- No in-game disc image extraction and no automatic update download.
+- No in-game disc image extraction.
 - The PC Options page "Host over the internet" opens ports with a PowerShell script, so on Linux open
   UDP 14001 and 41000 on your router yourself (see [ONLINE.md](ONLINE.md)).
 - The game needs an audio output (PipeWire, PulseAudio or ALSA). Without one it stops at the first

@@ -51,7 +51,7 @@ Read in English: [README.md](README.md)
 - [x] Fuego amigo y "Ir con el jugador 1" en la campaña cooperativa (0.4.2): los jugadores solo se pueden herir entre sí mientras todos activan PC Options > Multijugador > Fuego amigo (cooperativo), y solo entre jugadores humanos; "Ir con el jugador 1" (mismo menú) lleva a un invitado atorado junto al jugador 1 ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md#friendly-fire-and-go-to-player-1), en inglés). Todos los jugadores necesitan la 0.4.2. Desde la 0.4.5 el mismo menú trae una tecla (F6) y una combinación del mando para ir con el jugador 1, y todos los capítulos de la campaña vienen desbloqueados por defecto con Locura disponible desde el inicio (Partidas > Todos los capítulos y Locura desbloqueados)
 - [x] Menú de opciones en el juego (Opciones de PC; Opciones del dispositivo en Android) ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md)): verificado en un PC y en un Galaxy S25 Ultra el 2026-10-16
 - [x] Opciones de calidad del juego: Gráficos > Calidad del juego con perfiles Bajo/Medio/Alto/Personalizado y 24 ajustes del motor del propio juego (sombras, luces, bloom, desenfoque de movimiento, profundidad de campo, oclusión ambiental, destellos, distorsión, calcomanías, niebla, vegetación, nivel de detalle); las 76 claves en [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)
-- [x] Comprobación de actualizaciones en PC y Android (GitHub Releases, como máximo dos veces al día, `gow2_update_check`)
+- [x] Comprobación de actualizaciones en PC y Android, e instalación automática en Windows y Linux (`gow2_update_check`, `gow2_update_auto_install`)
 - [x] Ajustes automáticos para GPU integradas (720p interno, filtrado anisotrópico 2x, sin re-subida de memoria guest por cuadro) para portátiles y consolas portátiles
 - [x] Android: los objetos/efectos blancos del renderizador Vulkan están corregidos (0.2.3); las sombras de objetos son una opción, apagada por defecto en Android
 - [x] VSync espera a la pantalla en D3D12 y el límite de 30 fps se mantiene con VSync apagado (0.2.4)
@@ -176,9 +176,11 @@ Las voces (inglés, español latino o francés; `gow2_voice_language`) y los sub
 
 Los parches comunitarios vienen de [xenia-canary/game-patches](https://github.com/xenia-canary/game-patches) (autores illusion y boma); los sitios y valores parcheados para este XEX se aplican al código generado, cada uno detrás de su ajuste `gow2_*`.
 
-En Windows, el juego consulta GitHub para buscar una nueva versión como máximo dos veces al día y no envía ningún otro dato. Puedes desactivarlo en Opciones de PC > Sistema o poner `gow2_update_check = false` en `gow2.toml`.
+En Windows y Linux, el juego consulta GitHub para buscar una nueva versión como máximo dos veces al día y no envía ningún otro dato. Puedes desactivarlo en Opciones de PC > Sistema o poner `gow2_update_check = false` en `gow2.toml`. Android conserva su propio sistema de comprobación.
 
-Para actualizar, usa Opciones de PC > Sistema > Descargar (o la página de Releases), abre el zip nuevo y copia todo lo que hay dentro de su carpeta `gow2-recomp-<versión>-win64` en la carpeta del juego, reemplazando archivos. Tus ajustes de usuario, partidas y caché de shaders se conservan. El zip trae los valores por defecto como `gow2.default.toml`; se cargan en cada arranque para incorporar cambios sin reemplazar tus opciones.
+Si `gow2_update_check` está activado y hay una versión más reciente, el juego descarga en segundo plano el archivo de la plataforma cuando `gow2_update_auto_install` está activado (por defecto). Comprueba el archivo con el `.sha256` de la versión y lo descomprime en `.gow2-update/`, dentro de la carpeta del juego. La instala en el siguiente arranque: reemplaza los archivos del juego y conserva los anteriores como `*.gow2old` hasta que inicia la nueva versión; después los elimina. Se conservan los ajustes, las partidas, los mods, los paquetes de texturas y los datos instalados del juego. Usa `curl` y `tar`, incluidos con Windows 10/11 y Linux. Opciones de PC > Sistema > «Actualizar y reiniciar» descarga la actualización si hace falta, la instala y reinicia de inmediato.
+
+Para actualizar manualmente, copia todo lo que hay dentro de la carpeta principal del archivo sobre la carpeta del juego (el `.zip` en Windows o el `.tar.gz` en Linux). El archivo trae los valores por defecto como `gow2.default.toml`; se cargan en cada arranque para incorporar cambios sin reemplazar tus opciones.
 
 ## Rendimiento
 
