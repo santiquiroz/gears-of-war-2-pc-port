@@ -51,7 +51,7 @@ Leer en español: [README.es.md](README.es.md)
 - [x] Co-op friendly fire and Go to player 1 (0.4.2, campaign co-op): players can hurt each other only while every player turns on PC Options > Multiplayer > Friendly fire (co-op), and only between human players; Go to player 1 (same menu) moves a stuck guest next to player 1 ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md#friendly-fire-and-go-to-player-1)). Every player needs 0.4.2. Since 0.4.5 the same menu holds a key (F6) and a controller combo for Go to player 1, and every campaign chapter is unlocked by default with Insane available from the start (Saves > All chapters and Insane unlocked)
 - [x] In-game options menu (PC Options; Device Options on Android) ([docs/PC_OPTIONS.md](docs/PC_OPTIONS.md)): verified on a PC and on a Galaxy S25 Ultra on 2026-10-16
 - [x] Game quality options: Graphics > Game quality with Low/Medium/High/Custom presets and 24 of the game's own engine settings (shadows, lights, bloom, motion blur, depth of field, ambient occlusion, flares, distortion, decals, fog, foliage, level of detail); all 76 keys in [docs/SYSTEM_SETTINGS.md](docs/SYSTEM_SETTINGS.md)
-- [x] Update checker on PC and Android (GitHub Releases, at most twice a day, `gow2_update_check`)
+- [x] Update checker on PC and Android, and self-install on Windows and Linux (`gow2_update_check`, `gow2_update_auto_install`)
 - [x] Automatic settings for integrated GPUs (720p internal, 2x anisotropic filtering, no per-frame guest memory re-upload) for handhelds and laptops
 - [x] Android: the white objects/effects of the Vulkan renderer are fixed (0.2.3); object shadows are an option, off by default on Android
 - [x] VSync waits for the display on D3D12 and the 30 fps cap holds with VSync off (0.2.4)
@@ -176,9 +176,11 @@ Voices (English, Latin American Spanish or French; `gow2_voice_language`) and su
 
 The community patches come from [xenia-canary/game-patches](https://github.com/xenia-canary/game-patches) (authors illusion and boma); the patched sites and values for this XEX are applied to the generated code, each behind its `gow2_*` setting.
 
-On Windows, the game checks GitHub for a new release at most twice a day and sends nothing else. Turn this off in PC Options > System, or set `gow2_update_check = false` in `gow2.toml`.
+On Windows and Linux, the game checks GitHub for a new release at most twice a day and sends nothing else. Turn this off in PC Options > System, or set `gow2_update_check = false` in `gow2.toml`. Android keeps its own checker.
 
-To update, use PC Options > System > Download (or the Releases page), open the new zip and copy everything inside its `gow2-recomp-<version>-win64` folder into your game folder, replacing files. Your per-user settings, saves and shader cache are kept. The zip ships defaults as `gow2.default.toml`; they are loaded every start, so changed defaults arrive without replacing your choices.
+When `gow2_update_check` is on and a newer release exists, the game downloads its platform's archive in the background when `gow2_update_auto_install` is on (the default). It checks the archive against the release's `.sha256` file and unpacks it into `.gow2-update/` inside the game folder. It installs on the next start, replacing the game files in place and keeping the old ones as `*.gow2old` until the new version has started; it then deletes them. Settings, saves, mods, texture packs and installed game data stay. The game uses the `curl` and `tar` included with Windows 10/11 and Linux. PC Options > System > "Update and restart" downloads the update if needed, installs it and restarts now.
+
+To update manually, copy everything inside the archive's top-level folder over the game folder (the `.zip` on Windows or `.tar.gz` on Linux). The archive ships defaults as `gow2.default.toml`; they load on every start, so changed defaults arrive without replacing your choices.
 
 ## Performance
 
