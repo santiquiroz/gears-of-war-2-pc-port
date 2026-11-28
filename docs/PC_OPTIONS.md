@@ -70,14 +70,18 @@ Text rows open an editor. Controllers get an on-screen keyboard there.
 
 ## Saving
 
-Only the rows you changed are written into `gow2.toml` next to `gow2.exe`.
+Only the rows you changed are written into your `gow2.toml`:
+`%LOCALAPPDATA%\GearsOfWar2PC\gow2.toml` on Windows, `~/.config/gow2/gow2.toml`
+on Linux (a `portable.txt` file next to the executable keeps it there instead).
 On Android the file is
 `Android/data/com.santiquiroz.gow2recomp/files/gow2.toml`. Every comment in
 the file is kept. Windows paths are written as literal strings.
 
 A build from source and the release zip ship `config/gow2.toml` as
-`gow2.default.toml`. The game creates `gow2.toml` from it only when the file is
-missing, so rebuilding or extracting an update keeps your settings.
+`gow2.default.toml` next to the executable. The game loads it on every start
+before your `gow2.toml`, so your choices win and new defaults from an update
+reach you. An old `gow2.toml` next to the executable is moved to your folder on
+the first start, keeping only the lines that differ from the defaults.
 
 System > Download opens the latest release page in your browser. In fullscreen,
 the game minimizes so you can see the browser.

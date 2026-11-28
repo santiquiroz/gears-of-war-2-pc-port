@@ -141,7 +141,7 @@ Un mando funciona al mismo tiempo. Sus botones se reasignan en Opciones de PC > 
 
 ## Ajustes
 
-Todo esto se puede cambiar en el juego desde Opciones > Opciones de PC (o F10, o Back+Start); ver [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). En Windows, Opciones de PC también se abre antes de cargar el juego, con un botón Jugar (se desactiva en Sistema > Mostrar opciones al iniciar). `gow2.toml` se encuentra junto al exe. Se lee al arrancar; las opciones de línea de comandos (`--nombre=valor`) tienen prioridad sobre él. Claves principales:
+Todo esto se puede cambiar en el juego desde Opciones > Opciones de PC (o F10, o Back+Start); ver [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). En Windows, Opciones de PC también se abre antes de cargar el juego, con un botón Jugar (se desactiva en Sistema > Mostrar opciones al iniciar). Los ajustes del jugador están en `%LOCALAPPDATA%\GearsOfWar2PC\gow2.toml` en Windows y `~/.config/gow2/gow2.toml` en Linux. `gow2.default.toml`, junto al ejecutable, se carga primero en cada arranque y luego los ajustes del jugador lo sobrescriben; un `gow2.toml` antiguo junto al ejecutable se mueve a la carpeta del usuario al arrancar por primera vez. Crea `portable.txt` junto al ejecutable para mantener allí los ajustes y la ruta de juego recordada. Las opciones de línea de comandos (`--nombre=valor`) tienen prioridad sobre el archivo. Claves principales:
 
 La pestaña Gráficos incluye **Calidad del juego**: perfiles Bajo / Medio / Alto (original) y 24 controles de calidad del motor; requieren reiniciar. Alto restaura la calidad original; Automático conserva los valores de la plataforma (en PC, los originales, que ya son la opción más alta de cada fila; Android apaga las sombras de objetos). Ver [el inventario de claves y perfiles](docs/SYSTEM_SETTINGS.md).
 
@@ -178,7 +178,7 @@ Los parches comunitarios vienen de [xenia-canary/game-patches](https://github.co
 
 En Windows, el juego consulta GitHub para buscar una nueva versión como máximo dos veces al día y no envía ningún otro dato. Puedes desactivarlo en Opciones de PC > Sistema o poner `gow2_update_check = false` en `gow2.toml`.
 
-Para actualizar, usa Opciones de PC > Sistema > Descargar (o la página de Releases), abre el zip nuevo y copia todo lo que hay dentro de su carpeta `gow2-recomp-<versión>-win64` en la carpeta del juego, reemplazando archivos. Tus ajustes de `gow2.toml`, tus partidas y la caché de shaders se conservan: el zip trae sus valores por defecto como `gow2.default.toml` y el juego crea `gow2.toml` a partir de él solo si falta.
+Para actualizar, usa Opciones de PC > Sistema > Descargar (o la página de Releases), abre el zip nuevo y copia todo lo que hay dentro de su carpeta `gow2-recomp-<versión>-win64` en la carpeta del juego, reemplazando archivos. Tus ajustes de usuario, partidas y caché de shaders se conservan. El zip trae los valores por defecto como `gow2.default.toml`; se cargan en cada arranque para incorporar cambios sin reemplazar tus opciones.
 
 ## Rendimiento
 

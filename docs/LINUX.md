@@ -21,7 +21,7 @@ folder the Windows build made.
 
 The game folder is found without asking when the gow2 files are inside it or right next to it. Any
 other place works with `--game_data_root=/path/to/game`, or with that path written on the first line of
-`gow2_game_path.txt` next to `gow2`.
+`gow2_game_path.txt` in the user config folder (or beside the executable in portable mode).
 
 ### Steam Deck and Legion Go (SteamOS)
 
@@ -45,11 +45,17 @@ storage or to a card formatted by SteamOS.
 
 | What | Where |
 |---|---|
-| Settings (`gow2.toml`), logs | next to `gow2` |
+| Settings (`gow2.toml`) | `~/.config/gow2/gow2.toml` (or `$XDG_CONFIG_HOME/gow2/gow2.toml`) |
+| Defaults (`gow2.default.toml`), logs | next to `gow2` |
 | Saves, profile, achievements | `~/.local/share/gow2` (or `$XDG_DATA_HOME/gow2`) |
 | Shader cache, edited Coalesced copies | `~/.local/share/gow2/cache` |
 
 `gow2_save_dir` in `gow2.toml` moves the saves, as on Windows (see [SAVES.md](SAVES.md)).
+
+Defaults from `gow2.default.toml` next to the executable load before the player settings on every
+start, so player choices win and new defaults arrive automatically. An old `gow2.toml` beside the
+executable is moved to the user config folder on first start. A `portable.txt` beside the executable
+keeps settings and the remembered game path beside it.
 
 ## What is different from Windows
 

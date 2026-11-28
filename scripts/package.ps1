@@ -40,7 +40,7 @@
   Output folder for the zip and staging area. Default: out\package.
 
 .PARAMETER Config
-  Settings file shipped as gow2.default.toml; the game makes gow2.toml from it on the first start.
+  Default settings shipped as gow2.default.toml and loaded before per-user settings on every start.
 
 .EXAMPLE
   .\scripts\build-sdk.ps1 -NoDlss
@@ -327,9 +327,12 @@ function Write-QuickstartFile([string]$StageDir) {
         'SETTINGS AND LOGS',
         'F10 (or Back+Start) opens PC Options; its Quit game button closes the game.',
         'Language: PC Options > System > Subtitles and text, and Voices (English, Latin American Spanish or French); restart to apply.',
-        'Settings live in gow2.toml next to the exe (made from gow2.default.toml on the first start).',
+        'Settings: %LOCALAPPDATA%\GearsOfWar2PC\gow2.toml (Windows) or ~/.config/gow2/gow2.toml (Linux).',
+        'gow2.default.toml beside the exe loads first on every start; an old gow2.toml beside the exe',
+        'moves to the user folder on first start. Add portable.txt beside the exe to keep settings and',
+        'the remembered game path there.',
         'To update, copy everything inside the new zip''s folder into this folder and replace the files:',
-        'your gow2.toml, saves and shader cache stay.',
+        'your user settings, saves and shader cache stay.',
         'Logs and crash reports are written next to the exe (gow2_crash.log).',
         '',
         'Not affiliated with Microsoft, Epic Games or The Coalition.',
@@ -367,9 +370,12 @@ function Write-QuickstartFile([string]$StageDir) {
         'AJUSTES Y REGISTROS',
         'F10 (o Back+Start) abre Opciones de PC; su boton Salir del juego cierra el juego.',
         'Idioma: Opciones de PC > Sistema > Subtitulos y textos, y Voces (ingles, espanol latino o frances); se aplica al reiniciar.',
-        'Los ajustes estan en gow2.toml junto al exe (se crea desde gow2.default.toml al primer arranque).',
+        'Ajustes: %LOCALAPPDATA%\GearsOfWar2PC\gow2.toml (Windows) o ~/.config/gow2/gow2.toml (Linux).',
+        'gow2.default.toml junto al exe se carga primero siempre; un gow2.toml antiguo junto al exe',
+        'se mueve a la carpeta del usuario al primer arranque. portable.txt junto al exe deja los ajustes',
+        'y la ruta de juego recordada alli.',
         'Para actualizar, copia todo lo que hay dentro de la carpeta del zip nuevo en esta carpeta y reemplaza',
-        'los archivos: tu gow2.toml, partidas y shaders se conservan.',
+        'los archivos: tus ajustes de usuario, partidas y shaders se conservan.',
         'Los registros e informes de fallo se escriben junto al exe (gow2_crash.log).',
         '',
         'Sin afiliacion con Microsoft, Epic Games o The Coalition.',

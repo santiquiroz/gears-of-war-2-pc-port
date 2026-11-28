@@ -64,7 +64,7 @@ set(GOW2_SOURCES
     src/gow2_unlock_chapters_table.cpp
     # In-game PC Options menu (src/gow2_options_*), its saving, actions and the settings it adds.
     src/gow2_toml_edit.cpp
-    src/gow2_config_seed.cpp
+    src/gow2_user_config.cpp
     src/gow2_options_catalog.cpp
     src/gow2_options_model.cpp
     src/gow2_options_input.cpp
@@ -204,11 +204,12 @@ add_executable(gow2_cine_hint_test EXCLUDE_FROM_ALL
 )
 target_include_directories(gow2_cine_hint_test PRIVATE src)
 
-add_executable(gow2_config_seed_test EXCLUDE_FROM_ALL
-    tools/tests/config_seed_test.cpp
-    src/gow2_config_seed.cpp
+add_executable(gow2_user_config_test EXCLUDE_FROM_ALL
+    tools/tests/user_config_test.cpp
+    src/gow2_user_config.cpp
+    src/gow2_toml_edit.cpp
 )
-target_include_directories(gow2_config_seed_test PRIVATE src)
+target_include_directories(gow2_user_config_test PRIVATE src)
 
 # Host-side tests of the PC Options menu's pure parts (no game data, no SDK).
 add_executable(gow2_toml_edit_test EXCLUDE_FROM_ALL tools/tests/toml_edit_test.cpp src/gow2_toml_edit.cpp)
@@ -246,7 +247,7 @@ foreach(_options_test gow2_toml_edit_test gow2_options_catalog_test gow2_options
         gow2_audio_volume_test gow2_coalesced_text_test gow2_keycaps_test gow2_gpu_pick_test gow2_widescreen_math_test gow2_xex_identity_test gow2_frame_stats_test
         gow2_update_check_test gow2_native_renderer_math_test gow2_native_frontend_test gow2_prompt_device_test
         gow2_disc_install_test gow2_key_names_test gow2_voice_language_test gow2_launcher_test gow2_cine_hint_test
-        gow2_config_seed_test
+        gow2_user_config_test
         gow2_texture_packs_test gow2_texture_pack_plan_test gow2_mods_test)
     target_include_directories(${_options_test} PRIVATE src)
 endforeach()
@@ -258,8 +259,7 @@ add_custom_command(TARGET gow2 POST_BUILD
             $<TARGET_FILE_DIR:gow2>/gamecontrollerdb.txt
     COMMENT "Installing gamecontrollerdb.txt beside gow2.exe")
 
-# Default settings; the game makes gow2.toml from them on the first start, so a rebuild keeps
-# the player's gow2.toml.
+# Shipped defaults are loaded on every start before the player's separate per-user settings file.
 add_custom_command(TARGET gow2 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/config/gow2.toml

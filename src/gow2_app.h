@@ -20,7 +20,6 @@
 #include <rex/system.h>
 
 #include "gow2_coalesced.h"
-#include "gow2_config_seed.h"
 #include "gow2_widescreen.h"
 #include "gow2_audio_volume.h"
 #include "gow2_native_keys.h"
@@ -46,6 +45,10 @@
 #include "gow2_mods.h"
 #include "gow2_xam_input_guard.h"
 #include "gow2_xex_identity.h"
+
+#if !defined(__ANDROID__)
+#include "gow2_user_config.h"
+#endif
 
 #if defined(__ANDROID__)
 #include "gow2_android_devices.h"
@@ -98,6 +101,7 @@ class Gow2App : public rex::ReXApp {
   }
 
   static std::filesystem::path RememberedGamePathFile() {
+    if (!user_config_dir_.empty()) return user_config_dir_ / "gow2_game_path.txt";
     return AppHome() / "gow2_game_path.txt";
   }
 
@@ -448,6 +452,13 @@ class Gow2App : public rex::ReXApp {
 #endif
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
+    if (!settings_startup_message_.empty()) {
+      if (settings_startup_warning_) {
+        REXLOG_WARN("gow2 settings: {}", settings_startup_message_);
+      } else {
+        REXLOG_INFO("gow2 settings: {}", settings_startup_message_);
+      }
+    }
     rex::glue::options_actions::WaitForPreviousInstance();
 #if defined(__ANDROID__)
     UseAttachedKeyboardAndMouse();
@@ -570,7 +581,19 @@ class Gow2App : public rex::ReXApp {
   }
 
   void OnConfigurePaths(rex::PathConfig& paths) override {
-    rex::glue::SeedConfigFromDefault(paths.config_path);
+#if !defined(__ANDROID__)
+    const rex::glue::user_config::ConfigDirInputs config_inputs = MakeConfigDirInputs();
+    const std::filesystem::path config_dir = rex::glue::user_config::ChooseConfigDir(config_inputs);
+    const rex::glue::user_config::PrepareResult config_result =
+        rex::glue::user_config::PrepareConfigFile(config_dir, config_inputs.exe_dir);
+    rex::glue::user_config::MigrateGamePathFile(config_dir, AppHome());
+    user_config_dir_ = config_dir;
+    // Shipped defaults load first; the SDK loads paths.config_path next and the player's values win.
+    rex::cvar::LoadConfig(config_inputs.exe_dir / "gow2.default.toml");
+    paths.config_path = config_result.config_path;
+    settings_startup_warning_ = !config_result.error.empty();
+    settings_startup_message_ = SettingsStartupMessage(config_result, config_inputs.exe_dir);
+#endif
     // Find the disc folder next to the exe so a double-click boots without --game_data_root.
     paths.game_data_root = ResolveContentRoot(paths.game_data_root);
     paths.update_data_root = paths.game_data_root / "$SystemUpdate";
@@ -625,9 +648,13 @@ class Gow2App : public rex::ReXApp {
       rex::glue::options::UpdatePcOptionsPaths(options_paths_);
       return paths;
     }
+#if defined(__ANDROID__)
+    const std::filesystem::path save_folder = paths.config_path.parent_path();
+#else
+    const std::filesystem::path save_folder = AppHome();
+#endif
     const rex::glue::SaveDirChoice saves = rex::glue::ChooseUserDataRoot(
-        rex::glue::SaveDirSetting(), paths.user_data_root, paths.cache_root,
-        paths.config_path.parent_path());
+        rex::glue::SaveDirSetting(), paths.user_data_root, paths.cache_root, save_folder);
     ReportSaveDir(saves);
     PinMachineXuid(paths.user_data_root, saves.user_data_root != paths.user_data_root);
     paths.user_data_root = saves.user_data_root;
@@ -762,6 +789,55 @@ class Gow2App : public rex::ReXApp {
   // void OnShutdown() override {}
 
  private:
+#if !defined(__ANDROID__)
+#ifdef _WIN32
+  static std::filesystem::path ReadWindowsEnvironmentPath(const wchar_t* name) {
+    const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
+    if (!size) return {};
+    std::wstring value(size, L'\0');
+    const DWORD length = GetEnvironmentVariableW(name, value.data(), size);
+    if (!length || length >= size) return {};
+    value.resize(length);
+    return value;
+  }
+#else
+  static std::filesystem::path ReadPosixEnvironmentPath(const char* name) {
+    const char* value = std::getenv(name);
+    return value && *value ? std::filesystem::path(value) : std::filesystem::path{};
+  }
+#endif
+
+  static std::string SettingsOrigin(const rex::glue::user_config::PrepareResult& result,
+                                    const std::filesystem::path& exe_dir) {
+    if (result.migrated) return "moved from " + PathUtf8(exe_dir / "gow2.toml");
+    return result.created ? "created" : "existing";
+  }
+
+  static std::string SettingsStartupMessage(const rex::glue::user_config::PrepareResult& result,
+                                            const std::filesystem::path& exe_dir) {
+    std::string message = PathUtf8(result.config_path) + " " + SettingsOrigin(result, exe_dir);
+    if (!result.error.empty()) message += " error: " + result.error;
+    return message;
+  }
+
+  static rex::glue::user_config::ConfigDirInputs MakeConfigDirInputs() {
+    rex::glue::user_config::ConfigDirInputs inputs;
+    inputs.exe_dir = rex::filesystem::GetExecutablePath().parent_path();
+    std::error_code ec;
+    inputs.portable = std::filesystem::exists(inputs.exe_dir / "portable.txt", ec) && !ec;
+#ifdef _WIN32
+    inputs.gow2_home = ReadWindowsEnvironmentPath(L"GOW2_HOME");
+    inputs.local_app_data = ReadWindowsEnvironmentPath(L"LOCALAPPDATA");
+    inputs.windows = true;
+#else
+    inputs.gow2_home = ReadPosixEnvironmentPath("GOW2_HOME");
+    inputs.xdg_config_home = ReadPosixEnvironmentPath("XDG_CONFIG_HOME");
+    inputs.home = ReadPosixEnvironmentPath("HOME");
+#endif
+    return inputs;
+  }
+#endif
+
   // Releases other than the US retail disc this port was recompiled from can crash at random (issue #34).
   void LogGameExecutableIdentity() {
     const auto identity =
@@ -779,6 +855,9 @@ class Gow2App : public rex::ReXApp {
   std::filesystem::path game_data_root_;
   std::filesystem::path cache_root_;
   std::filesystem::path voice_overrides_file_;
+  inline static std::filesystem::path user_config_dir_;
+  std::string settings_startup_message_;
+  bool settings_startup_warning_ = false;
   rex::glue::mods::Setup mods_setup_;
   std::vector<std::string> mod_texture_folders_;
   std::vector<rex::glue::HashSecEntry> coalesced_hashes_;

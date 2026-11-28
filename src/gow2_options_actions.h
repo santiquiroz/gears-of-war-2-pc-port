@@ -25,7 +25,8 @@ std::vector<NamedValue> ListMonitors();
 // "auto" first, then each hardware adapter's index with its name. Empty outside Windows.
 std::vector<NamedValue> ListGpus();
 
-// "" (default folder), "saves" (portable, next to gow2.toml), the cloud folders found on this PC
+// "" (default folder), "saves" (portable, next to the game's executable), the cloud folders found
+// on this PC
 // (OneDrive, Google Drive, Dropbox, each as "<root>\GearsOfWar2\saves"), and `current` when it is none
 // of them. Labels name the place and show the folder.
 std::vector<NamedValue> ListSaveFolders(std::string_view current);

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Starts the game from its own folder: gow2 reads gamecontrollerdb.txt from the working directory,
-# and gow2.toml, logs and the remembered game path live beside it.
+# Player settings and the remembered game path use the user config folder; logs stay beside the game.
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 # Files extracted on Windows lose the executable bit; the player may have fixed only this script.
 [ -x ./gow2 ] || chmod +x ./gow2 2>/dev/null

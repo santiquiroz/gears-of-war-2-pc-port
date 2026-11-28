@@ -141,7 +141,7 @@ A controller works at the same time. Its buttons can be remapped in PC Options >
 
 ## Settings
 
-Everything here can be changed in game from Options > PC Options (or F10, or Back+Start); see [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). On Windows PC Options also opens before the game loads, with a Play button (turn it off in System > Show options at start). `gow2.toml` sits next to the exe. It is read at start-up; command-line flags (`--name=value`) override it. Main keys:
+Everything here can be changed in game from Options > PC Options (or F10, or Back+Start); see [docs/PC_OPTIONS.md](docs/PC_OPTIONS.md). On Windows PC Options also opens before the game loads, with a Play button (turn it off in System > Show options at start). Player settings live in `%LOCALAPPDATA%\GearsOfWar2PC\gow2.toml` on Windows and `~/.config/gow2/gow2.toml` on Linux. `gow2.default.toml` beside the executable is loaded first on every start, then player settings override it; an old `gow2.toml` beside the executable is moved to the user folder on first start. Add `portable.txt` beside the executable to keep settings and the remembered game path there. Command-line flags (`--name=value`) override the file. Main keys:
 
 The Graphics tab includes **Game quality**: Low / Medium / High (retail) presets and 24 individual engine quality controls, all applied after a restart. High restores retail quality; Auto keeps platform defaults (retail on PC, which is already the highest choice in every row; Android turns object shadows off). See [the key inventory and presets](docs/SYSTEM_SETTINGS.md).
 
@@ -178,7 +178,7 @@ The community patches come from [xenia-canary/game-patches](https://github.com/x
 
 On Windows, the game checks GitHub for a new release at most twice a day and sends nothing else. Turn this off in PC Options > System, or set `gow2_update_check = false` in `gow2.toml`.
 
-To update, use PC Options > System > Download (or the Releases page), open the new zip and copy everything inside its `gow2-recomp-<version>-win64` folder into your game folder, replacing files. Your settings in `gow2.toml`, your saves and the shader cache are kept: the zip ships its defaults as `gow2.default.toml`, and the game makes `gow2.toml` from it only when it is missing.
+To update, use PC Options > System > Download (or the Releases page), open the new zip and copy everything inside its `gow2-recomp-<version>-win64` folder into your game folder, replacing files. Your per-user settings, saves and shader cache are kept. The zip ships defaults as `gow2.default.toml`; they are loaded every start, so changed defaults arrive without replacing your choices.
 
 ## Performance
 
