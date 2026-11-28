@@ -445,6 +445,8 @@ void BuildContext(bool touch_controls, OwnedContext* out) {
   out->text.clear();
 #ifdef _WIN32
   out->ctx.platform = kWindows;
+#elif defined(__linux__) && !defined(__ANDROID__)
+  out->ctx.platform = kLinux;
 #else
   out->ctx.platform = kAndroid;
 #endif

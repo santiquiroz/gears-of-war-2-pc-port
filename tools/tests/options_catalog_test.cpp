@@ -278,8 +278,16 @@ void TestScreenshotRow() {
   Expect(screenshot != nullptr, "F12 screenshots setting exists");
   if (!screenshot) return;
   Expect(screenshot->tab == options::Tab::kSystem && screenshot->kind == options::Kind::kToggle &&
-             screenshot->apply == options::Apply::kNow && screenshot->platforms == options::kWindows,
-         "F12 screenshots is a Windows-only apply-now System toggle");
+             screenshot->apply == options::Apply::kNow && screenshot->platforms == options::kDesktop,
+         "F12 screenshots is a desktop apply-now System toggle");
+}
+
+void TestAndroidImageFilterPlatforms() {
+  const auto* filter = options::FindSetting("present_effect_android");
+  Expect(filter != nullptr, "Android image filter row exists");
+  if (!filter) return;
+  Expect(filter->platforms == (options::kAndroid | options::kLinux),
+         "Android image filter appears on Android and Linux");
 }
 
 void TestGraphicsQualityRows() {
@@ -371,13 +379,13 @@ void TestSplitScreenRows() {
   }
 }
 
-void TestWindowsUpdateRows() {
+void TestDesktopUpdateRows() {
   for (const auto id : {"update_status", "gow2_update_check", "update_download",
                         "update_check_now", "update_dismiss"}) {
     const auto* setting = options::FindSetting(id);
     Expect(setting != nullptr, std::string("update row exists: ") + id);
     if (!setting) continue;
-    Expect(setting->platforms == options::kWindows, "update rows only appear on Windows");
+    Expect(setting->platforms == options::kDesktop, "update rows appear on desktop");
     Expect(setting->tab == options::Tab::kSystem && setting->page == options::Page::kMain,
            "update rows appear on the main System tab");
   }
@@ -624,7 +632,8 @@ int main() {
     TestCounts();
     TestHdrRows();
     TestScreenshotRow();
-    TestWindowsUpdateRows();
+    TestAndroidImageFilterPlatforms();
+    TestDesktopUpdateRows();
     TestCoopPlayersRow();
     TestSplitScreenRows();
     TestGraphicsQualityRows();
